@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>
+    {% if lang == 'en' %}Manage your subscription{% else %}Abonnement verwalten{% endif %}
+  </h1>
+
+  <form action="/manage/{{ token }}" method="post">
+    <label>{% if lang == 'en' %}Appointment type{% else %}Anliegen{% endif %}
+      <select name="appointment_type" required>
+        {% for name, uuid in appointment_types.items() %}
+          <option value="{{ uuid }}">{{ name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>
+      <input type="checkbox" name="all_locations" value="1" checked>
+      {% if lang == 'en' %}All locations{% else %}Alle Standorte{% endif %}
+    </label>
+
+    <fieldset>
+      <legend>{% if lang == 'en' %}Specific locations (uncheck "all" first){% else %}Bestimmte Standorte (oben Häkchen entfernen){% endif %}</legend>
+      {% for name, uuid in locations.items() %}
+        <label><input type="checkbox" name="locations" value="{{ uuid }}"> {{ name }}</label>
+      {% endfor %}
+    </fieldset>
+
+    <label>{% if lang == 'en' %}Time window{% else %}Zeitfenster{% endif %}
+      <input type="time" name="time_start" value="00:00">
+      –
+      <input type="time" name="time_end" value="23:59">
+    </label>
+
+    <fieldset>
+      <legend>{% if lang == 'en' %}Days of week{% else %}Wochentage{% endif %}</legend>
+      {% for n, label_de, label_en in [(1,'Mo','Mon'),(2,'Di','Tue'),(3,'Mi','Wed'),(4,'Do','Thu'),(5,'Fr','Fri'),(6,'Sa','Sat'),(7,'So','Sun')] %}
+        <label><input type="checkbox" name="weekdays" value="{{ n }}" {% if n <= 5 %}checked{% endif %}>
+          {% if lang == 'en' %}{{ label_en }}{% else %}{{ label_de }}{% endif %}</label>
+      {% endfor %}
+    </fieldset>
+
+    <button type="submit">
+      {% if lang == 'en' %}Update{% else %}Aktualisieren{% endif %}
+    </button>
+  </form>
+{% endblock %}
