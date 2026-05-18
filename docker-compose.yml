@@ -1,0 +1,41 @@
+services:
+  caddy:
+    image: caddy:2
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+  web:
+    build: { context: ., dockerfile: Dockerfile.web }
+    env_file: .env
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+    expose:
+      - "8000"
+
+  poller:
+    build: { context: ., dockerfile: Dockerfile.poller }
+    env_file: .env
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
+
+  backup:
+    build: { context: ., dockerfile: Dockerfile.backup }
+    environment:
+      - DB_PATH=/data/app.db
+    volumes:
+      # RW (not :ro) so the backup loop can record meta.last_backup_at after
+      # each successful snapshot. The script only INSERTs/UPDATEs that one
+      # row; the .backup operation itself reads.
+      - ./data:/data
+      - /mnt/backup:/backup
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
