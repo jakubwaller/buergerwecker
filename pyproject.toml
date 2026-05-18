@@ -1,0 +1,32 @@
+[project]
+name = "termine-notifier"
+version = "0.1.0"
+description = "Free email notifier for German municipal appointment systems"
+requires-python = ">=3.12"
+license = { text = "AGPL-3.0-only" }
+authors = [{ name = "Jakub Waller" }]
+dependencies = [
+  "flask>=3.0",
+  "gunicorn>=22.0",
+  "requests>=2.32",
+  "beautifulsoup4>=4.12",
+  "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+  "freezegun>=1.5",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
