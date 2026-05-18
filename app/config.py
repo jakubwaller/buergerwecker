@@ -28,12 +28,16 @@ class Config:
 
 def _req(key: str) -> str:
     val = os.environ.get(key)
-    if val is None:
+    if not val:
         raise KeyError(f"Missing required env var: {key}")
     return val
 
 def _req_int(key: str) -> int:
-    return int(_req(key))
+    raw = _req(key)
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError(f"Env var {key} must be an integer, got: {raw!r}")
 
 def load_config() -> Config:
     return Config(
