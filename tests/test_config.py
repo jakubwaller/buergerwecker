@@ -34,6 +34,57 @@ def test_load_config_from_env(monkeypatch):
     assert cfg.kofi_url == "https://ko-fi.com/jakubwaller"
 
 def test_load_config_missing_required(monkeypatch):
-    monkeypatch.delenv("MAILJET_API_KEY", raising=False)
-    with pytest.raises(KeyError):
+    # Establish a complete valid environment, then remove ONE required var,
+    # so the test fails for the right reason regardless of the shell's state.
+    for k, v in {
+        "MAILJET_API_KEY":"x","MAILJET_API_SECRET":"x","MAILJET_FROM_EMAIL":"x@x",
+        "MAILJET_FROM_NAME":"x","MAILJET_DAILY_QUOTA":"6000","RESEND_API_KEY":"x",
+        "TOKEN_SECRET_PRIMARY":"a"*32,"TOKEN_SECRET_PREVIOUS":"",
+        "ADMIN_TOKEN":"b"*32,"PUBLIC_BASE_URL":"https://x",
+        "DEDUP_WINDOW_HOURS":"24","RATE_LIMIT_MINUTES":"15",
+        "SUBSCRIPTION_TTL_DAYS":"90","RENEWAL_REMINDER_DAYS_BEFORE":"10",
+        "MAX_PLANS_PER_CITY":"10","PARSER_CANARY_THRESHOLD_HOURS":"2",
+        "SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR":"5",
+        "SUBSCRIBE_RATELIMIT_PER_EMAIL_PER_DAY":"1",
+        "DEVELOPER_EMAIL":"d@x","KOFI_URL":"https://k",
+    }.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("MAILJET_API_KEY")
+    with pytest.raises(KeyError, match="MAILJET_API_KEY"):
+        load_config()
+
+def test_load_config_rejects_empty_required(monkeypatch):
+    for k, v in {
+        "MAILJET_API_KEY":"x","MAILJET_API_SECRET":"x","MAILJET_FROM_EMAIL":"x@x",
+        "MAILJET_FROM_NAME":"x","MAILJET_DAILY_QUOTA":"6000","RESEND_API_KEY":"x",
+        "TOKEN_SECRET_PRIMARY":"a"*32,"TOKEN_SECRET_PREVIOUS":"",
+        "ADMIN_TOKEN":"b"*32,"PUBLIC_BASE_URL":"https://x",
+        "DEDUP_WINDOW_HOURS":"24","RATE_LIMIT_MINUTES":"15",
+        "SUBSCRIPTION_TTL_DAYS":"90","RENEWAL_REMINDER_DAYS_BEFORE":"10",
+        "MAX_PLANS_PER_CITY":"10","PARSER_CANARY_THRESHOLD_HOURS":"2",
+        "SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR":"5",
+        "SUBSCRIBE_RATELIMIT_PER_EMAIL_PER_DAY":"1",
+        "DEVELOPER_EMAIL":"d@x","KOFI_URL":"https://k",
+    }.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("ADMIN_TOKEN", "")  # explicit blank
+    with pytest.raises(KeyError, match="ADMIN_TOKEN"):
+        load_config()
+
+def test_load_config_int_error_names_the_var(monkeypatch):
+    for k, v in {
+        "MAILJET_API_KEY":"x","MAILJET_API_SECRET":"x","MAILJET_FROM_EMAIL":"x@x",
+        "MAILJET_FROM_NAME":"x","MAILJET_DAILY_QUOTA":"6000","RESEND_API_KEY":"x",
+        "TOKEN_SECRET_PRIMARY":"a"*32,"TOKEN_SECRET_PREVIOUS":"",
+        "ADMIN_TOKEN":"b"*32,"PUBLIC_BASE_URL":"https://x",
+        "DEDUP_WINDOW_HOURS":"24","RATE_LIMIT_MINUTES":"15",
+        "SUBSCRIPTION_TTL_DAYS":"90","RENEWAL_REMINDER_DAYS_BEFORE":"10",
+        "MAX_PLANS_PER_CITY":"10","PARSER_CANARY_THRESHOLD_HOURS":"2",
+        "SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR":"5",
+        "SUBSCRIBE_RATELIMIT_PER_EMAIL_PER_DAY":"1",
+        "DEVELOPER_EMAIL":"d@x","KOFI_URL":"https://k",
+    }.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("DEDUP_WINDOW_HOURS", "not-a-number")
+    with pytest.raises(ValueError, match="DEDUP_WINDOW_HOURS"):
         load_config()
