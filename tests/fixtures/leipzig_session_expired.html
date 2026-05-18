@@ -1,0 +1,1323 @@
+
+
+
+
+
+
+
+
+<!DOCTYPE html>
+<html lang="de">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+
+		<title>
+			Stadt Leipzig Bürgerservice - Terminvereinbarung Bürgerbüros  - Session abgelaufen
+</title>
+
+		<link id="favicon" rel="shortcut icon" href="https://terminvereinbarung.leipzig.de/m/leipzig-ba/assets/images/favicon.png" type="image/x-icon" />
+		<link rel="apple-touch-icon" href="/assets/images/favicon/apple-touch-icon.png" />
+		<link rel="shortcut icon" href="/assets/images/favicon/android-icon.png" sizes="196x196">
+		<meta name="msapplication-square70x70logo" content="/assets/images/favicon/msapplication-square70x70logo.png" />
+		<meta name="msapplication-square150x150logo" content="/assets/images/favicon/msapplication-square150x150logo.png" />
+		<meta name="msapplication-wide310x150logo" content="/assets/images/favicon/msapplication-wide310x150logo.png" />
+		<meta name="msapplication-square310x310logo" content="/assets/images/favicon/msapplication-square310x310logo.png" />
+
+		<!--link href="/m/leipzig-ba/extern/libs/font-lato-1.0.0/font-lato.css" rel="stylesheet" /-->
+
+		<script src="/m/leipzig-ba/extern/libs/jquery-3.6.1/jquery.min.js"></script>
+
+		<script src="/m/leipzig-ba/extern/assets/js/rc.core.js?rev=20260518T020213"></script>
+		<script src="/m/leipzig-ba/extern/assets/js/rc.logging.js?rev=20260518T020213"></script>
+		<script src="/m/leipzig-ba/extern/assets/js/rc.page.js?rev=20260518T020213"></script>
+		<script src="/m/leipzig-ba/extern/assets/js/rc.url.js?rev=20260518T020213"></script>
+		
+		<script src="/libs/moment-2.29.4/moment.min.js" type="text/javascript"></script>
+		<script src="/libs/moment-2.29.4/locales.min.js" type="text/javascript"></script>
+		<script src="/libs/moment-2.29.4/moment-timezone-with-data.js" type="text/javascript"></script>
+		<script src="/libs/moment-2.29.4/windows-iana.js" type="text/javascript"></script>
+		<script src="/libs/semantic-ui-2.4.1/semantic.min.js" type="text/javascript"></script>
+		<script src="/libs/dompurify-2.4.1/dist/purify.min.js" type="text/javascript"></script>
+		<!-- <link href="/libs/semantic-ui-2.4.1/semantic.css" rel="stylesheet" /> -->
+		<link href="/assets/css/bitv/semantic_custom.css?rev=20260518T020213" rel="stylesheet" />
+
+		<script>
+			$(function () {
+				rc.page.init({
+					"tenant_fullurl": "https://terminvereinbarung.leipzig.de/m/leipzig-ba",
+					"baseurl": "/m/leipzig-ba",
+					"language_ui": "de",
+					"version": "1.13.0.0"
+				});
+			});
+		</script>
+
+		<style>
+		
+			@font-face {
+				font-family: 'Leipzig Sans';
+				src: url(https://static.leipzig.de/_assets/74dc7f3d48b9b3e9733c15783f1c75b6/Fonts/LeipzigSans-Regular.woff) format("woff");
+				font-weight: normal;
+				font-style: normal;
+			}
+
+			/* Schriftfamilie website anpassen */
+
+			body {
+				font-family: 'Leipzig Sans' !important;
+			}
+		
+			html {
+				margin: 0;
+				padding: 0;
+			}
+			body {
+				margin: 0;
+				padding: 0;
+				font-family: 'Leipzig Sans';
+				font-size: 12pt;
+				color: black;
+				background-color: white;
+			}
+
+			.rc_page {
+				max-width: 1024px;
+				margin: auto;
+			}
+
+			a, a:visited, a:active {
+				color: #0E3AB6;
+				background-color: white;
+			}
+
+			a:hover {
+				text-decoration: none;
+			}
+
+			a:focus, a:focus-within, a:focus-visible, a:active {
+				text-decoration: none;
+				outline: solid .25rem rgba(0,0,0,.5);
+			}
+
+			header {
+				margin-bottom: 1em;
+			}
+			header::after {
+				content: "";
+				display: block;
+				clear: both;
+				height: 1px;
+			}
+			header .rc_tenant_logo {
+				float: left;
+				margin-top: -1rem;
+			}
+
+			header .rc_tenant_logo img {
+				height: 60px;
+				width: auto;
+				padding: 1.5rem;
+			}
+
+			header .rc_wizard_name {
+				font-size: 1.5em !important;
+				padding: 0.5rem;
+				margin: 0;
+			}
+			header .rc_wizard_name span {
+				background-color: white;
+				color: black;
+			}
+
+			nav.steps {
+				margin-top: 1em;
+				margin-bottom: 1em;
+				clear: both;
+			}
+			nav.steps ol {
+				display: flex;
+				flex-wrap: wrap;
+				list-style: none;
+				counter-reset: step;
+				padding: 0;
+				margin: 0;
+			}
+			nav.steps li {
+				flex-grow: 1;
+				position: relative;
+			}
+			nav.steps li .step {
+				display: block;
+				text-align: center;
+				background-color: #EBEBEB;
+				color: black;
+				padding: 10px;
+				border: 1px solid white;
+			}
+			nav.steps li a.step, nav.steps li a.step:hover, nav.steps li a.step:focus {
+				color: black;
+			}
+			nav.steps li.active .step {
+				background-color: #0E3AB6;
+				color: white;
+			}
+			
+			nav.steps li a.step:focus {
+				position: relative;
+				z-index: 1;
+			}
+
+			/*
+			nav.steps li .step:after {
+				position: absolute;
+				z-index: 2;
+				content: '';
+				background-color: #EBEBEB;
+				border-bottom: 0.25em solid white;
+				border-right: 0.25em solid white;
+				top: 50%;
+				right: 0;
+				height: 1.5em;
+				width: 1.5em;
+				transform: translateY(-50%) translateX(50%) rotate(-45deg);
+			}
+			
+			nav.steps li.active .step:after {
+				background-color: #E1141C;
+			}
+			
+			nav.steps li:last-child .step:after {
+				display: none;
+			}
+			*/
+
+			.rc_step_introduction {
+				margin-top: 1em;
+				margin-bottom: 1em;
+			}
+
+			main {
+				padding: 0.5rem;
+			}
+			
+			fieldset {
+				border: none;
+				margin: 0;
+				padding: 10px;
+				margin-right: -10px;
+				margin-left: -10px;
+				margin-top: .5rem;
+				margin-bottom: .5rem;
+			}
+			
+			fieldset legend {
+				display: block;
+				width: 100%;
+				padding: 10px 0 0 10px;
+				margin-left: -10px;
+			}
+			
+		
+			fieldset .field {
+				margin-bottom: 0.75em;
+			}
+			fieldset .field label {
+				display: block;
+				padding: 0.25em;
+			}
+			
+			fieldset .field select {
+				display: block;
+				width: 100%;
+				padding: 0.5em;
+				box-sizing: border-box;
+				border: solid 2px black;
+				border-radius: 0;
+				font-family: 'Leipzig Sans';
+				font-size: 1rem;
+				font-weight: 500;
+			}
+
+
+			fieldset .field input[type='text'] {
+				display: block;
+				width: 100%;
+				padding: 0.5em;
+				box-sizing: border-box;
+				border: solid 2px black;
+				border-radius: 0;
+				font-family: 'Leipzig Sans';
+				font-size: 1rem;
+				font-weight: 500;
+			}
+
+			fieldset .field input[type='email'] {
+				width: 100%;
+				flex-grow: 1;
+				padding: 0.5em;
+				box-sizing: border-box;
+				border: solid 2px black;
+				border-radius: 0;
+				font-family: 'Leipzig Sans';
+				font-size: 1rem;
+				font-weight: 500;
+			}
+			
+			fieldset .field textarea {
+				display: block;
+				width: 100%;
+				padding: 0.5em;
+				box-sizing: border-box;
+				border: solid 2px black;
+				border-radius: 0;
+				font-family: 'Leipzig Sans';
+				font-size: 1rem;
+				font-weight: 500;
+			}
+			
+			select {
+				border: solid 2px black;
+				font-family: 'Leipzig Sans';
+				background-color: white;
+				color: black;
+			}
+			select option {
+				font-family: 'Leipzig Sans';
+				background-color: white;
+				color: black;
+			}
+
+			select:focus {
+				outline: solid .25rem rgba(0,0,0,.5);
+			}
+
+			textarea:focus {
+				outline: solid .25rem rgba(0,0,0,.5);
+			}
+
+			input[type='text'] {
+				border: solid 1px black;
+			}
+
+			input[type='text']:focus {
+				outline: solid .25rem rgba(0,0,0,.5);	
+			}
+
+			input[type='email'] {
+				border: solid 1px black;
+			}
+
+			input[type='email']:focus {
+				outline: solid .25rem rgba(0,0,0,.5);	
+			}
+
+			input[type='checkbox'] {
+				border: solid 1px black;
+				outline: solid 1px black;
+				width: 1rem;
+				height: 1rem;
+				vertical-align: top;
+				box-sizing: border-box;
+			}
+
+			input[type='checkbox']:focus {
+				outline: solid .25rem rgba(0,0,0,.5);
+			}
+
+			.errors {
+				background-color: #cf0000;
+				color: #FFFFFF;
+				margin: .5em 1em 2em 1em;
+			}
+			.errors p {
+				padding: 1em;
+				margin: 0;
+			}
+			.actions {
+				margin-top: 1em;
+				padding: 1em;
+				box-sizing: border-box;
+			}
+			.actions.right {
+				text-align: right;
+			}
+			.actions.right button, .actions.right .button {
+				margin-right: 0;
+				margin-left: 0.5em;
+			}
+			.actions button, .actions a.button, .earliest-appointment {
+				display: inline-block;
+				background-color: #EBEBEB;
+				color: #000000;
+				border: none;
+				border-radius: 0;
+				padding: 0.5em 1.25em;
+				font-family: 'Leipzig Sans';
+				font-size: 1rem;
+				font-weight: 500;
+				text-decoration: none;
+				margin-right: 0.5em;
+				margin-left: 0;
+			}
+			.actions button, .actions a.button {
+				cursor: pointer;
+			}
+			
+			.actions button:focus, .actions button:focus-within,.actions button:focus-visible,
+			.actions .button:focus, .actions .button:focus-within,.actions .button:focus-visible {
+				outline: solid .25rem rgba(0,0,0,.5);
+				/*border: solid 2px black !important;*/
+				/*box-shadow: 0 0 0 .25rem rgba(0,0,0,.5);*/
+			}
+
+			.actions button:hover, .actions a.button:hover {
+				background-color: #6C655F;
+				color: white;
+			}
+
+			footer {
+				background-color: white;
+				color: black;
+				border-top: 1px solid lightgray;
+				margin-top: 1em;
+				/* padding-top: 1em; */
+				padding-left: 0.5rem;
+				padding-right: 0.5rem;
+				clear: both;
+				
+			}
+			footer nav {
+				display: block;
+			}
+			footer nav ul {
+				list-style: none;
+				display: flex;
+				flex-wrap: wrap;
+				padding: 0;
+			}
+			footer nav ul li {
+				border-right: 1px solid black;
+				padding-right: 5px;
+				margin-right: 5px;
+			}
+			footer nav ul li:last-child {
+				border-right: none;
+				padding-right: 0;
+			}
+			footer nav button {
+				padding: 12px 16px;
+				color: #0E3AB6;
+				border: 0;
+				background: white;
+				font-family: 'Leipzig Sans';
+				font-size: inherit;
+				text-decoration: underline;
+				min-height: 44px;
+				min-width: 44px;
+				box-sizing: border-box;
+			}
+			footer nav button:hover {
+				text-decoration: none;
+			}
+			footer nav button:focus, footer nav button:focus-within, footer nav button:focus-visible, footer nav button:active {
+				text-decoration: none;
+				outline: solid .25rem rgba(0,0,0,.5);
+			}
+			footer nav a {
+				display: inline-block;
+				padding: 12px 16px;
+				color: #0E3AB6;
+				min-height: 44px;
+				min-width: 44px;
+				box-sizing: border-box;
+			}
+			footer nav a:visited {
+				color: #0E3AB6;
+			}
+			footer p {
+			}
+			
+			.debug {
+				color: lightgray;
+			}
+			/*
+			@media only screen and (max-width: 400px)
+			{
+				.actions {
+					position: sticky;
+					bottom: 0;
+					width: 100%;
+					background-color: white;
+					color: black;
+				}
+			}
+			*/
+			@media only screen and (max-width: 767px)
+			{
+				body {
+					font-size: 10pt;
+				}
+				header {
+					background: none;
+				}
+				nav.steps li .step {
+					font-size: 0.75em;
+					padding: 5px;
+				}
+				footer nav ul {
+					flex-direction: column;
+					align-items: flex-start;
+				}
+				footer nav ul li {
+					border-right: none;
+					border-bottom: 1px solid black;
+					margin-right: 0;
+					margin-bottom: 8px;
+					width: 100%;
+				}
+				footer nav ul li:last-child {
+					border-bottom: none;
+					margin-bottom: 0;
+				}
+				footer nav a, footer nav button {
+					display: block;
+					width: 100%;
+					text-align: left;
+					padding: 16px;
+					min-height: 44px;
+				}
+			}
+			@media only screen and (min-width: 767px)
+			{
+				/*form {
+					display: flex;
+				}
+				form :first-child {
+					flex-grow: 1;
+				}*/
+			}
+			
+			#rc_session_timeout_counter {
+				background-color: #FFF6A6;
+				color: #0E3AB6;
+				border: 1px solid rgb(201, 186, 155);
+				padding: 10px;
+			}
+			#rc_session_timeout_counter p {
+				margin: 0; padding: 0;
+			}
+			#rc_session_timeout_counter button {
+				margin: 0;
+				padding: 0;
+				background-color: #fffaf3;
+				color: #573a08;
+				float: right;
+				border: none;
+				font-size: 12pt;
+				font-family: 'Leipzig Sans';
+			}
+			#rc_session_timeout_counter button:focus, #rc_session_timeout_counter button:focus-within,#rc_session_timeout_counter button:focus-visible {
+				outline: solid .25rem rgba(0,0,0,.5);
+			}
+
+			form section h3 {
+					
+					font-size: 1.25em;
+				}
+
+			@media only screen and (min-width: 767px)
+			{
+				.rc_form_layout_70_30 {
+					/*display: flex;
+					flex-direction: row;*/
+
+				}
+
+				.rc_form_layout_70_30 section.left {
+					width: 70%;
+					float: left;
+				}
+				.rc_form_layout_70_30 section.right {
+					width: 30%;
+					float: right;
+				}
+				.rc_form_layout_70_30_reverse section h3, .rc_form_layout_70_30 section h3 {
+					padding: 0.5rem;
+					background-color: #EBEBEB;
+					color: black;
+				}
+				.rc_form_layout_70_30 section.left h3 {
+					margin-left: -0.5rem;
+				}
+
+				.rc_form_layout_70_30_reverse {
+					/*display: flex;
+					flex-direction: row-reverse;*/
+				}
+				.rc_form_layout_70_30_reverse section.right {
+					width: 30%;
+					float: right;
+				}
+				.rc_form_layout_70_30_reverse section.left {
+					width: 70%;
+					float: left;
+				}
+
+				.rc_form_layout_70_30 div.actions {
+					width: 70%;
+					clear: both;
+				}
+				.rc_form_layout_70_30_reverse div.actions {
+					width: 70%;
+					clear: both;
+				}
+			}
+			.rc_hide_me {
+				position: absolute;
+				top: -32768px;
+				left: -32768px;
+			}
+
+			.visually-hidden {
+				position: absolute;
+				width: 1px;
+				height: 1px;
+				padding: 0;
+				margin: -1px;
+				overflow: hidden;
+				clip: rect(0, 0, 0, 0);
+				white-space: nowrap;
+				border: 0;
+			}
+
+			#step_services fieldset {
+				margin: .2rem 0 .5rem 0;
+			}
+
+			.service_category_label {
+				font-size: 1.2em;
+			}
+
+			.service_container {
+				padding: 1em;
+			}
+
+			.service_container:nth-child(2n+1), .service_container:nth-child(2n+1) a {
+				background-color: #EBEBEB;
+			}
+
+			.service_selection {
+				min-width: 32px;
+				text-align: right;
+			}
+			
+			.service_title {
+				font-weight: bold;
+			}
+
+			.service_description > label, .service_description > div, .service_description > a {
+				display: block;
+				padding-left: 1em;
+			}
+
+			.service_container a:after {
+				background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABEAAAAMCAYAAACEJVa/AAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAE1JREFUeNpibGFg+M9APGDEJsjEQAXAQoae/9QwhBHdQEq88x9mIAspAYjNAHJd8h/dEiZKDQDxWbAI/ichUBmplk5omthIyQoMAAEGAPkiCqeXMeadAAAAAElFTkSuQmCC) right no-repeat;
+				content: '';
+				margin-left: 0.5em;
+				display: inline-block;
+				width: 1em;
+				height: 1em;
+				vertical-align: middle;
+			}
+
+			.location-table {
+				display: table;
+			}
+
+			.location-container {
+				display: table-row;
+				flex-direction: row;
+				flex-wrap: nowrap;
+				
+			}
+			
+			.location-container div.location_choice {
+				display: table-cell;
+				vertical-align: top;
+				padding: 1em;
+				border-top: 1px solid #EBEBEB;
+			}
+			.location-container:first-of-type div {
+				border-top: 0;
+			}
+			
+			.location_image {
+				max-width: 20vw;
+				overflow: hidden;
+			}
+			.location_image img {
+				max-width: 150px;
+			}
+			
+			.earliest {
+				padding-left: 20px; 
+  				display: table-cell;
+				vertical-align: top;
+			}
+
+				
+			/* #booking_summary dd {
+				margin-inline-start: 0px;
+			} */
+
+				/* #booking_summary dt {        
+						margin-top: 10px;
+						font-weight: bold;
+				} */
+
+				/* #booking_summary dt:nth-child(1) {        
+						margin-top: 0px;
+				} */
+
+				/* #booking_summary a {
+						display: block;
+						margin: 5px 0px;
+				} */
+
+
+			#booking_summary dt {
+				margin: 0 0 .3em 0;
+			}
+
+			#booking_summary em {
+				display: block;
+			}
+
+			#booking_summary .summary_container {
+				margin-bottom: 1em;
+			}
+
+			#booking_summary .summary_container em {
+				margin: .3em 0;
+			}
+
+			#booking_summary dl {
+				padding: 1rem;
+			}
+
+			#booking_summary ul {
+				list-style-type:none;
+				padding-left: 0;
+				margin: 0;
+			}
+
+			#booking_summary dd p {
+				margin: 0 0 .45em 0;
+			}
+
+			#booking_summary dd p div {
+				white-space: pre-line;
+			}
+
+			#booking_summary a:after {
+				background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABEAAAAMCAYAAACEJVa/AAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAE1JREFUeNpibGFg+M9APGDEJsjEQAXAQoae/9QwhBHdQEq88x9mIAspAYjNAHJd8h/dEiZKDQDxWbAI/ichUBmplk5omthIyQoMAAEGAPkiCqeXMeadAAAAAElFTkSuQmCC) right no-repeat;
+				content: ' ';
+				margin-left: 0.5em;
+				display: inline-block;
+				width: 1em;
+				height: 1em;
+				vertical-align: middle;
+			}
+
+			#booking_summary .back_url::after {
+				content: "";
+				padding: inherit;
+			}
+
+			.field label {
+				font-weight: bold;
+			}
+
+			.field.error label {
+				color: #cf0000;
+			}
+			fieldset .field.error input[type='text'] {
+				color: #cf0000;
+				border-color: #cf0000;
+			}
+			fieldset .field.error input[type='email'] {
+				color: #cf0000;
+				border-color: #cf0000;
+			}
+			fieldset .field.error input[type='file'] {
+				color: #cf0000;
+				border-color: #cf0000;
+			}
+			.field.error .error_message {
+				color: #cf0000;
+			}
+			
+			.field.checkbox {
+				position: relative;
+			}
+			
+			.field.checkbox label {
+				padding-left: 2em;
+			}
+			.field.checkbox input {
+				margin-top: -1.5em;
+				position: absolute;
+				
+			}
+
+			.location-container input[type=checkbox] {
+				/*position: absolute;
+				margin-left: 1.5rem;
+				margin-top: 0.7em;*/
+			}
+			.location-container label {
+				/*margin-left: 4rem;
+				margin-top: 0.5em;
+				margin-bottom: 0.5em;*/
+			}
+
+			/*
+				.field input[id*="name"], li.nat_contactform input[id*="artner"], li.nat_contactform input[id*="erson"] {
+					background-image: url('data:image/gif;base64,R0lGODlhFAAUAKIAAJmZmf///7m5uczMzMXFxQAAAAAAAAAAACH5BAUUAAEALAAAAAAUABQAAAM0GLrc/jAuAgCRjVaL196d8lVhoFVXqaVl642kBH/RPD423IB2AL6iWRDSwxQlApjAxQwlAAA7');
+					background-repeat: no-repeat;
+					background-position: 0.5%;
+					padding-left: 30px !important;
+				}
+
+				.field input[id*="mail"] {
+					background-image: url('data:image/gif;base64,R0lGODlhFAAUALMAAGZmZv///5mZmczMzLW1tXt7e+fn58TExPb29qWlpY6Ojtvb2/Hx8a6urtfX1wAAACH5BAUUAAEALAAAAAAUABQAAARMMMhJq7046wu6/yBBAUrCZEcBjAghLJYhKMg62U7RTMghHIiATTJEJAQGhAB5G1F6B8ChMhRumthrFQDbOKoEkNgjuprP6LR6zVZHAAA7');
+					background-repeat: no-repeat;
+					background-position: 0.5% 10px;
+					padding-left: 30px !important;
+			}
+
+				.field input[id*="phone"] {
+					background-image: url('data:image/gif;base64,R0lGODlhEAAQAMQAAGZmZrW1tfDw8JmZmYyMjMzMzIWFhaWlpXt7e9bW1r29vf///3R0dK2trd7e3pmZmcXFxWZmZurq6vf39wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACH5BAUUAAsALAAAAAAQABAAAAWI4CKOZLlMR6oOA0EYBoIIB+TcTqInRV8MgEZBoSAoBooAIYBgNYJDpQIGYxoODYbqwCtAvt8YA/A7BBKNlosASRsCokDAISEFFIfBiFZwCEgQA0ojRn0TJAlGAw0iA14JJQ5vDQaNeHgsLTAuCCJLmWouMECeDaYNW6AAIjIxMgywsQB6JrUjIQA7');
+					background-repeat: no-repeat;
+					background-position: 0.8% 10px;
+					padding-left: 30px !important;
+			}
+			*/
+			h3 {
+				/* text-align: center; */
+				display: block;
+				/*border-bottom: 1px solid #6C655F;*/
+				padding-bottom: 5px;
+			}
+
+			#step_search_results ol {
+				display: flex;
+				flex-direction: row;
+				flex-wrap: wrap;
+				justify-content: start;
+
+				list-style: none;
+				padding-left: 0;
+			}
+
+	
+
+			.card {
+				display: inline-block;
+				text-align: center;
+				color: black;
+				line-height: 1.5em;
+				border: none;
+				padding: 1em;
+				margin: 0.5rem;
+				cursor: pointer;
+			}
+			.card:focus {
+				outline: solid .25rem rgba(0,0,0,.5);
+			}
+
+			.card.big {
+				min-width: 180px;
+			}
+
+			.card:hover {
+				background-color: #6C655F;
+				color: white;
+			}
+
+			.slot_container {
+				display: none;
+			}
+
+			.timeslot_cards .actions {
+				width: 100% !important;
+			}
+
+			.rc_appointment_possible {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				margin-top: 1.25em;
+			}
+			.rc_appointment_more {
+				margin-top: 20px;
+			}
+			.rc_appointment_more a {
+			}
+			
+			.modal_overlay {
+				position: fixed; top: 0; left: 0; bottom: 0; right: 0; background: rgba(255,255,255,0.8);
+			}
+
+			.modal_overlay {
+				display: none;
+			}
+			.modal_overlay.visible {
+				display: block;
+			}
+			
+			.modal_overlay .modal_dialog {
+				position: relative; top: 50%; transform: translateY(-50%); margin: auto; width: 80%; padding: 5px; border: solid 1px black; background-color: #FFFFFF; color: black; z-index: 2;
+			}
+
+			.modal_overlay .modal_dialog {
+				display: none;
+			}
+			.modal_overlay .modal_dialog.visible {
+				display: block;
+			}
+
+			@media only screen and (min-width: 767px) {
+				.modal_overlay .modal_dialog {
+					width: 50%;
+				}
+				
+				.location_image img {
+					max-width: 250px;
+				}
+			}
+			
+			.modal_overlay .modal_dialog h1 {
+				text-align: center;
+			}
+			.modal_overlay .modal_dialog p {
+				text-align: center;
+			}
+			.reminder_buttons {
+				text-align: center;
+			}
+			.reminder_buttons button { 
+			}
+
+			.modal_overlay .modal_dialog .content {
+				max-height: 80vH;
+				overflow: auto;
+			}
+			
+			.modal_overlay .modal_dialog .actions.center {
+				text-align: center;
+			}
+
+			#liveregion {
+				display: none;
+			}
+			.loading-indicator-wrapper {
+				display: flex;
+    		justify-content: center;
+			}
+
+			.loading-indicator {
+				display: flex;
+				align-items: center;
+			}
+
+			.pe-loadingSpinner {
+				width: 25px;
+				height: 25px;
+				position: relative;
+				margin-right: 1em;
+			}
+
+			.pe-loadingSpinner-container1 > div, .pe-loadingSpinner-container2 > div {
+				width: 4px;
+				height: 4px;
+				background-color: rgba(0, 0, 0, 0.75);
+				border-radius: 100%;
+				position: absolute;
+				-webkit-animation: bouncedelay 1.6s infinite ease-in-out;
+				animation: bouncedelay 1.6s infinite ease-in-out;
+				/* Prevent first frame from flickering when animation starts */
+				-webkit-animation-fill-mode: both;
+				animation-fill-mode: both;
+			}
+
+			.pe-loadingSpinner .pe-loadingSpinner-container {
+				position: absolute;
+				width: 100%;
+				height: 100%; 
+			}
+
+			.pe-loadingSpinner-container2 {
+				-webkit-transform: rotateZ(45deg);
+				transform: rotateZ(45deg); 
+			}
+
+			.circle1 {
+				top: 0;
+				left: 0;
+			}
+
+			.circle2 {
+				top: 0;
+				right: 0;
+			}
+
+			.circle3 {
+				right: 0;
+				bottom: 0;
+			}
+
+			.circle4 {
+				left: 0;
+				bottom: 0;
+			}
+
+			.pe-loadingSpinner-container2 .circle1 {
+				-webkit-animation-delay: -1.4s;
+				animation-delay: -1.4s; 
+			}
+
+			.pe-loadingSpinner-container1 .circle2 {
+				-webkit-animation-delay: -1.2s;
+				animation-delay: -1.2s; 
+			}
+
+			.pe-loadingSpinner-container2 .circle2 {
+				-webkit-animation-delay: -1.0s;
+				animation-delay: -1.0s; 
+			}
+
+			.pe-loadingSpinner-container1 .circle3 {
+				-webkit-animation-delay: -0.8s;
+				animation-delay: -0.8s; 
+			}
+
+			.pe-loadingSpinner-container2 .circle3 {
+				-webkit-animation-delay: -0.6s;
+				animation-delay: -0.6s; 
+			}
+
+			.pe-loadingSpinner-container1 .circle4 {
+				-webkit-animation-delay: -0.4s;
+				animation-delay: -0.4s; 
+			}
+
+			.pe-loadingSpinner-container2 .circle4 {
+				-webkit-animation-delay: -0.2s;
+				animation-delay: -0.2s; 
+			}
+
+			@-webkit-keyframes bouncedelay {
+				0%, 25%, 100% {
+					-webkit-transform: scale(1); }
+				12.5% {
+					-webkit-transform: scale(1.5); } 
+			}
+
+			@keyframes bouncedelay {
+				0%, 25%, 100% {
+					transform: scale(1);
+					-webkit-transform: scale(1); }
+				12.5% {
+					transform: scale(1.5);
+					-webkit-transform: scale(1.5); } 
+			}
+			#info_timezone_mismatch{
+				font-weight: bold;
+			}
+		</style>
+
+		<style>/* Termintemplate - Leistungen -  Abstand */
+.rc_appointment_wizard_bitv .service_container {
+    padding: 1em;
+}
+/* Termintemplate - Leistungen - graues Raster */
+.rc_appointment_wizard_bitv .service_container:nth-child(2n+0), .rc_appointment_wizard_bitv .service_container:nth-child(2n+0) a {
+    background-color: #EBEBEB;
+}
+
+/* Terminbuchung - Aktionsbutton - Hintergrund */
+.actions.right {
+  text-align: left;
+}
+
+/* Terminbuchung - Aktionsbutton - zurück */
+.actions.right .button {
+  margin-right: 0.5em;
+  margin-left: 0;
+}
+
+/* Terminbuchung - Aktionsbutton - weiter */
+.actions button {
+ background-color: #A4A4A4;
+}
+
+/* Terminbuchung - errormeldung farbe*/
+.errors {
+background-color: #0856ad;
+}
+
+/* Touchscreen - Liebertwolkwitz - Mitra - Buttons Schriftgröße */
+.touch-screen.station_b68cd2f0-4593-45c8-9945-2c25554abefe .seven .title {
+    font-size: 1.8vw;
+}
+
+</style>
+		<script type="text/javascript">
+		let timezone_mismatch = false;
+		</script>
+	</head>
+	<body class="rc_appointment_wizard rc_appointment_wizard_bitv ">
+<div class="rc_page">
+
+
+
+
+<header>
+	<h1 class="rc_wizard_name">
+		<span>Terminvereinbarung Bürgerbüros </span>
+		<span class="rc_tenant_logo"><img src="https://terminvereinbarung.leipzig.de/m/leipzig-ba/extern/assets/images/logo.png?rev=20260430T190624" alt="Logo Stadt Leipzig Bürgerservice" /></span>
+	</h1>
+</header>
+
+<main class="message">
+
+	<h2 id="page_title">Ihre Sitzung ist abgelaufen.</h2>
+
+	<p id="expired_message">Nach 20 min. Inaktivität wird Ihre Sitzung automatisch beendet.</p>
+
+	<div class="actions">
+			<a class="button" href="/m/leipzig-ba/extern/calendar/?uid=b76cab25-49bd-44e3-950d-aab715881ea7&lang=de&set_lang_ui=de">Neuen Termin buchen</a>
+	</div>
+
+<style></style>
+<script>
+
+</script>
+
+<script src=https://static.leipzig.de/typo3conf/ext/mkleipzig/Resources/Public/js/webtrekk/webtrekk_v4.min.js></script>
+
+<script type="text/javascript">
+    var pageconfig = {
+        contentId: getContentIdByURL(),
+        linkTrack: "link",
+        linkTrackAttribute: "id"
+    };
+
+    var wt = new webtrekkV3(pageconfig);
+    wt.sendinfo();
+    
+    function getContentIdByURL() {
+        try {
+            var url = document.location.href;
+            var anchor_value = '';
+            var split_anchors = '';
+            if (url && url !== null) {
+                split_anchors = url.split("#");
+            if (split_anchors && split_anchors !== null)
+            if (split_anchors.length > 1)
+                anchor_value = '#' + url.split("#")[1].toLowerCase();
+                url = url.split("#")[0].toLowerCase();
+                return url.split("?")[0].toLowerCase() + anchor_value;
+            }
+
+        return "no_content";
+    } catch (err) {
+    console.log('WTK - an error was encountered while cleaning up the URL, tracking document.location.href instead.\n' + err);
+    return document.location.href;
+    }
+    }
+</script>
+
+<noscript>
+<img src="http://data.leipzig.de/498716889887543/wt?p=457,0" height="1" width="1" alt="">
+</noscript>
+
+<script></script>
+
+</main>
+
+<footer>
+	<nav aria-label="Links zur rechtlichen Informationen">
+		<ul id="footer_buttons">
+			
+				<li id="button-website"><a data-testid="button-websitee" href="https://www.leipzig.de" title="neues Fenster: Link zur Website" target="_blank">Stadt Leipzig Bürgerservice</a></li>
+			
+			
+				<li id="button-imprint"><a data-testid="button-imprint" href="https://www.leipzig.de/impressum/online-terminvereinbarung " title="neues Fenster: Link zum Impressum" target="_blank">Impressum</a></li>
+			
+			
+				<li id="button-privacy"><a data-testid="button-privacy" href="https://www.leipzig.de/datenschutzerklaerung/datenschutz-buergerservice  " title="neues Fenster: Link zur Datenschutzerklärung" target="_blank">Datenschutz</a></li>
+			
+			
+
+					<li id="button-accessibility"><a data-testid="button-accessibility" href="" target="_blank" id="btn_dialog_accessibility" aria-haspopup="dialog" title="Erklärung zur Barrierefreiheit öffnet im Popup">Erklärung zur Barrierefreiheit</a></li>
+			
+		</ul>
+	</nav>
+	<p data-template_version="BITV">
+			BITV/WCAG-Template | &copy; Smart CJM 'Licensed for Stadt Leipzig, leipzig-ba'| Sprache: de
+		</p>
+</footer>
+
+<div class="modal_overlay" id="dialog_accessibility_overlay" aria-hidden="true">
+	<div></div>
+	<section id="dialog_accessibility" class="modal_dialog" role="alertdialog" aria-modal="false" aria-labelledby="dialog_accessibility_header" aria-describedby="dialog_accessibility_content" tabindex="-1">
+		<h2 id="dialog_accessibility_header">Erklärung zur Barrierefreiheit</h2>
+		<div id="dialog_accessibility_content" class="content">
+			<div id="dialog_accessibility_text"></div>
+			<div class="actions center">
+				<button class="modal_dialog_close_button">Schließen</button>
+			</div>
+		</div>
+	</section>
+	<div></div>
+</div>
+
+<script>
+	function dialog_accessibility() {
+		aria_dialog.set_location_hash("dialog_accessibility");
+		var url = $("#btn_dialog_accessibility").attr("href");
+		// 
+		$("#dialog_accessibility_text").html(``.replace('\n', "<br />"));
+		// 
+		var dialog_overlay = $("#dialog_accessibility_overlay");
+		dialog_overlay.addClass("visible");
+		dialog_overlay.attr("aria-hidden", "false");
+		var dialog = $("#dialog_accessibility");
+		dialog.addClass("visible");
+		dialog.attr("aria-modal", "true");
+
+		$(".modal_dialog_close_button", "#dialog_accessibility").click(dialog_accessibility_close).focus();
+		/*$.get("/m/leipzig-ba/extern/info/infopoint/dialog_accessibility", null, function(data) {
+
+		}, "html");*/
+		var overlay_divs = $("div", dialog_overlay);
+		overlay_divs.first().attr("tabindex", "0").on("focus.dialog_accessibility", function() { aria_dialog.focusLastDescendant(document.getElementById("dialog_accessibility")); });
+		overlay_divs.last().attr("tabindex", "0").on("focus.dialog_accessibility", function() { aria_dialog.focusFirstDescendant(document.getElementById("dialog_accessibility")); });
+		return false;
+	}
+	function dialog_accessibility_close() {
+		aria_dialog.set_location_hash("");
+		var dialog_overlay = $("#dialog_accessibility_overlay");
+		dialog_overlay.removeClass("visible");
+		dialog_overlay.attr("aria-hidden", "true");
+		var dialog = $("#dialog_accessibility");
+		dialog.removeClass("visible");
+		dialog.attr("aria-modal", "false");
+
+		var overlay_divs = $("div", dialog_overlay);
+		overlay_divs.first().removeAttr("tabindex").off("focus.dialog_accessibility");
+		overlay_divs.last().removeAttr("tabindex").off("focus.dialog_accessibility");
+
+		$("#btn_dialog_accessibility").focus();
+	}
+
+	var aria_dialog = {};
+	$(function() {
+
+		aria_dialog.set_location_hash = function(hash_value) {
+			if(history.pushState) {
+				history.pushState(null, null, "#" + hash_value);
+			}
+			else {
+				location.hash = "#"+ hash_value;
+			}
+		};
+
+		aria_dialog.is_focusable = function (element) {
+			if (element.tabIndex > 0 || (element.tabIndex === 0 && element.getAttribute('tabIndex') !== null)) {
+				return true;
+			}
+
+			if (element.disabled) {
+				return false;
+			}
+
+			switch (element.nodeName) {
+				case 'A':
+					return !!element.href && element.rel != 'ignore';
+				case 'INPUT':
+					return element.type != 'hidden' && element.type != 'file';
+				case 'BUTTON':
+				case 'SELECT':
+				case 'TEXTAREA':
+					return true;
+				default:
+					return false;
+			}
+		};
+
+		aria_dialog.focusFirstDescendant = function (element) {
+			for (var i = 0; i < element.childNodes.length; i++) {
+				var child = element.childNodes[i];
+				if (aria_dialog.attemptFocus(child) ||
+					aria_dialog.focusFirstDescendant(child)) {
+					return true;
+				}
+			}
+			return false;
+		}; // end focusFirstDescendant
+
+		aria_dialog.focusLastDescendant = function (element) {
+			for (var i = element.childNodes.length - 1; i >= 0; i--) {
+				var child = element.childNodes[i];
+				if (aria_dialog.attemptFocus(child) ||
+					aria_dialog.focusLastDescendant(child)) {
+					return true;
+				}
+			}
+			return false;
+		}; // end focusLastDescendant
+
+		aria_dialog.attemptFocus = function (element) {
+			if (!aria_dialog.is_focusable(element)) {
+				return false;
+			}
+
+			try {
+				element.focus();
+			}
+			catch (e) {
+			}
+			return (document.activeElement === element);
+		}; // end attemptFocus
+
+
+		if (window.location.hash == "#dialog_accessibility")
+		{
+			dialog_accessibility();
+		}
+
+		$(document).focus();
+		//aria_dialog.focusFirstDescendant(document);
+	});
+</script>
+
+
+
+
+		</div>
+		
+		<!-- BITV-Template v1.4 -->
+	</body>
+
+</html>
+<script type="text/javascript">
+const is_editor_session = sessionStorage.getItem("is_editor_session")==="true";
+if(is_editor_session){
+	sessionStorage.removeItem("is_editor_session");
+	window.location=`/m/leipzig-ba/extern/calendar/?uid=b76cab25-49bd-44e3-950d-aab715881ea7&settings=true`;
+}
+</script>

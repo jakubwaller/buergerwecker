@@ -1,0 +1,1932 @@
+<!--
+
+
+-->
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!-- Do not modify: Workaround to handle special characters like }{"' -->
+
+
+	
+
+	
+
+	
+
+<!-- Do not modify: Workaround to handle special characters like }{"' -->
+
+
+
+	
+
+<!-- Do not modify: Workaround to handle special characters like }{"' -->
+
+
+	
+
+<!-- Do not modify: Workaround to handle special characters like }{"' -->
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!DOCTYPE html>
+<html lang="de">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+
+		<title>
+			Stadt Leipzig Bürgerservice - Terminvereinbarung Bürgerbüros  - Auswahl des Termins
+</title>
+
+		<link id="favicon" rel="shortcut icon" href="https://terminvereinbarung.leipzig.de/m/leipzig-ba/assets/images/favicon.png" type="image/x-icon" />
+		<link rel="apple-touch-icon" href="/assets/images/favicon/apple-touch-icon.png" />
+		<link rel="shortcut icon" href="/assets/images/favicon/android-icon.png" sizes="196x196">
+		<meta name="msapplication-square70x70logo" content="/assets/images/favicon/msapplication-square70x70logo.png" />
+		<meta name="msapplication-square150x150logo" content="/assets/images/favicon/msapplication-square150x150logo.png" />
+		<meta name="msapplication-wide310x150logo" content="/assets/images/favicon/msapplication-wide310x150logo.png" />
+		<meta name="msapplication-square310x310logo" content="/assets/images/favicon/msapplication-square310x310logo.png" />
+
+		<!--link href="/m/leipzig-ba/extern/libs/font-lato-1.0.0/font-lato.css" rel="stylesheet" /-->
+
+		<script src="/m/leipzig-ba/extern/libs/jquery-3.6.1/jquery.min.js"></script>
+
+		<script src="/m/leipzig-ba/extern/assets/js/rc.core.js?rev=20260518T020213"></script>
+		<script src="/m/leipzig-ba/extern/assets/js/rc.logging.js?rev=20260518T020213"></script>
+		<script src="/m/leipzig-ba/extern/assets/js/rc.page.js?rev=20260518T020213"></script>
+		<script src="/m/leipzig-ba/extern/assets/js/rc.url.js?rev=20260518T020213"></script>
+		
+		<script src="/libs/moment-2.29.4/moment.min.js" type="text/javascript"></script>
+		<script src="/libs/moment-2.29.4/locales.min.js" type="text/javascript"></script>
+		<script src="/libs/moment-2.29.4/moment-timezone-with-data.js" type="text/javascript"></script>
+		<script src="/libs/moment-2.29.4/windows-iana.js" type="text/javascript"></script>
+		<script src="/libs/semantic-ui-2.4.1/semantic.min.js" type="text/javascript"></script>
+		<script src="/libs/dompurify-2.4.1/dist/purify.min.js" type="text/javascript"></script>
+		<!-- <link href="/libs/semantic-ui-2.4.1/semantic.css" rel="stylesheet" /> -->
+		<link href="/assets/css/bitv/semantic_custom.css?rev=20260518T020213" rel="stylesheet" />
+
+		<script>
+			$(function () {
+				rc.page.init({
+					"tenant_fullurl": "https://terminvereinbarung.leipzig.de/m/leipzig-ba",
+					"baseurl": "/m/leipzig-ba",
+					"language_ui": "de",
+					"version": "1.13.0.0"
+				});
+			});
+		</script>
+
+		<style>
+		
+			@font-face {
+				font-family: 'Leipzig Sans';
+				src: url(https://static.leipzig.de/_assets/74dc7f3d48b9b3e9733c15783f1c75b6/Fonts/LeipzigSans-Regular.woff) format("woff");
+				font-weight: normal;
+				font-style: normal;
+			}
+
+			/* Schriftfamilie website anpassen */
+
+			body {
+				font-family: 'Leipzig Sans' !important;
+			}
+		
+			html {
+				margin: 0;
+				padding: 0;
+			}
+			body {
+				margin: 0;
+				padding: 0;
+				font-family: 'Leipzig Sans';
+				font-size: 12pt;
+				color: black;
+				background-color: white;
+			}
+
+			.rc_page {
+				max-width: 1024px;
+				margin: auto;
+			}
+
+			a, a:visited, a:active {
+				color: #0E3AB6;
+				background-color: white;
+			}
+
+			a:hover {
+				text-decoration: none;
+			}
+
+			a:focus, a:focus-within, a:focus-visible, a:active {
+				text-decoration: none;
+				outline: solid .25rem rgba(0,0,0,.5);
+			}
+
+			header {
+				margin-bottom: 1em;
+			}
+			header::after {
+				content: "";
+				display: block;
+				clear: both;
+				height: 1px;
+			}
+			header .rc_tenant_logo {
+				float: left;
+				margin-top: -1rem;
+			}
+
+			header .rc_tenant_logo img {
+				height: 60px;
+				width: auto;
+				padding: 1.5rem;
+			}
+
+			header .rc_wizard_name {
+				font-size: 1.5em !important;
+				padding: 0.5rem;
+				margin: 0;
+			}
+			header .rc_wizard_name span {
+				background-color: white;
+				color: black;
+			}
+
+			nav.steps {
+				margin-top: 1em;
+				margin-bottom: 1em;
+				clear: both;
+			}
+			nav.steps ol {
+				display: flex;
+				flex-wrap: wrap;
+				list-style: none;
+				counter-reset: step;
+				padding: 0;
+				margin: 0;
+			}
+			nav.steps li {
+				flex-grow: 1;
+				position: relative;
+			}
+			nav.steps li .step {
+				display: block;
+				text-align: center;
+				background-color: #EBEBEB;
+				color: black;
+				padding: 10px;
+				border: 1px solid white;
+			}
+			nav.steps li a.step, nav.steps li a.step:hover, nav.steps li a.step:focus {
+				color: black;
+			}
+			nav.steps li.active .step {
+				background-color: #0E3AB6;
+				color: white;
+			}
+			
+			nav.steps li a.step:focus {
+				position: relative;
+				z-index: 1;
+			}
+
+			/*
+			nav.steps li .step:after {
+				position: absolute;
+				z-index: 2;
+				content: '';
+				background-color: #EBEBEB;
+				border-bottom: 0.25em solid white;
+				border-right: 0.25em solid white;
+				top: 50%;
+				right: 0;
+				height: 1.5em;
+				width: 1.5em;
+				transform: translateY(-50%) translateX(50%) rotate(-45deg);
+			}
+			
+			nav.steps li.active .step:after {
+				background-color: #E1141C;
+			}
+			
+			nav.steps li:last-child .step:after {
+				display: none;
+			}
+			*/
+
+			.rc_step_introduction {
+				margin-top: 1em;
+				margin-bottom: 1em;
+			}
+
+			main {
+				padding: 0.5rem;
+			}
+			
+			fieldset {
+				border: none;
+				margin: 0;
+				padding: 10px;
+				margin-right: -10px;
+				margin-left: -10px;
+				margin-top: .5rem;
+				margin-bottom: .5rem;
+			}
+			
+			fieldset legend {
+				display: block;
+				width: 100%;
+				padding: 10px 0 0 10px;
+				margin-left: -10px;
+			}
+			
+		
+			fieldset .field {
+				margin-bottom: 0.75em;
+			}
+			fieldset .field label {
+				display: block;
+				padding: 0.25em;
+			}
+			
+			fieldset .field select {
+				display: block;
+				width: 100%;
+				padding: 0.5em;
+				box-sizing: border-box;
+				border: solid 2px black;
+				border-radius: 0;
+				font-family: 'Leipzig Sans';
+				font-size: 1rem;
+				font-weight: 500;
+			}
+
+
+			fieldset .field input[type='text'] {
+				display: block;
+				width: 100%;
+				padding: 0.5em;
+				box-sizing: border-box;
+				border: solid 2px black;
+				border-radius: 0;
+				font-family: 'Leipzig Sans';
+				font-size: 1rem;
+				font-weight: 500;
+			}
+
+			fieldset .field input[type='email'] {
+				width: 100%;
+				flex-grow: 1;
+				padding: 0.5em;
+				box-sizing: border-box;
+				border: solid 2px black;
+				border-radius: 0;
+				font-family: 'Leipzig Sans';
+				font-size: 1rem;
+				font-weight: 500;
+			}
+			
+			fieldset .field textarea {
+				display: block;
+				width: 100%;
+				padding: 0.5em;
+				box-sizing: border-box;
+				border: solid 2px black;
+				border-radius: 0;
+				font-family: 'Leipzig Sans';
+				font-size: 1rem;
+				font-weight: 500;
+			}
+			
+			select {
+				border: solid 2px black;
+				font-family: 'Leipzig Sans';
+				background-color: white;
+				color: black;
+			}
+			select option {
+				font-family: 'Leipzig Sans';
+				background-color: white;
+				color: black;
+			}
+
+			select:focus {
+				outline: solid .25rem rgba(0,0,0,.5);
+			}
+
+			textarea:focus {
+				outline: solid .25rem rgba(0,0,0,.5);
+			}
+
+			input[type='text'] {
+				border: solid 1px black;
+			}
+
+			input[type='text']:focus {
+				outline: solid .25rem rgba(0,0,0,.5);	
+			}
+
+			input[type='email'] {
+				border: solid 1px black;
+			}
+
+			input[type='email']:focus {
+				outline: solid .25rem rgba(0,0,0,.5);	
+			}
+
+			input[type='checkbox'] {
+				border: solid 1px black;
+				outline: solid 1px black;
+				width: 1rem;
+				height: 1rem;
+				vertical-align: top;
+				box-sizing: border-box;
+			}
+
+			input[type='checkbox']:focus {
+				outline: solid .25rem rgba(0,0,0,.5);
+			}
+
+			.errors {
+				background-color: #cf0000;
+				color: #FFFFFF;
+				margin: .5em 1em 2em 1em;
+			}
+			.errors p {
+				padding: 1em;
+				margin: 0;
+			}
+			.actions {
+				margin-top: 1em;
+				padding: 1em;
+				box-sizing: border-box;
+			}
+			.actions.right {
+				text-align: right;
+			}
+			.actions.right button, .actions.right .button {
+				margin-right: 0;
+				margin-left: 0.5em;
+			}
+			.actions button, .actions a.button, .earliest-appointment {
+				display: inline-block;
+				background-color: #EBEBEB;
+				color: #000000;
+				border: none;
+				border-radius: 0;
+				padding: 0.5em 1.25em;
+				font-family: 'Leipzig Sans';
+				font-size: 1rem;
+				font-weight: 500;
+				text-decoration: none;
+				margin-right: 0.5em;
+				margin-left: 0;
+			}
+			.actions button, .actions a.button {
+				cursor: pointer;
+			}
+			
+			.actions button:focus, .actions button:focus-within,.actions button:focus-visible,
+			.actions .button:focus, .actions .button:focus-within,.actions .button:focus-visible {
+				outline: solid .25rem rgba(0,0,0,.5);
+				/*border: solid 2px black !important;*/
+				/*box-shadow: 0 0 0 .25rem rgba(0,0,0,.5);*/
+			}
+
+			.actions button:hover, .actions a.button:hover {
+				background-color: #6C655F;
+				color: white;
+			}
+
+			footer {
+				background-color: white;
+				color: black;
+				border-top: 1px solid lightgray;
+				margin-top: 1em;
+				/* padding-top: 1em; */
+				padding-left: 0.5rem;
+				padding-right: 0.5rem;
+				clear: both;
+				
+			}
+			footer nav {
+				display: block;
+			}
+			footer nav ul {
+				list-style: none;
+				display: flex;
+				flex-wrap: wrap;
+				padding: 0;
+			}
+			footer nav ul li {
+				border-right: 1px solid black;
+				padding-right: 5px;
+				margin-right: 5px;
+			}
+			footer nav ul li:last-child {
+				border-right: none;
+				padding-right: 0;
+			}
+			footer nav button {
+				padding: 12px 16px;
+				color: #0E3AB6;
+				border: 0;
+				background: white;
+				font-family: 'Leipzig Sans';
+				font-size: inherit;
+				text-decoration: underline;
+				min-height: 44px;
+				min-width: 44px;
+				box-sizing: border-box;
+			}
+			footer nav button:hover {
+				text-decoration: none;
+			}
+			footer nav button:focus, footer nav button:focus-within, footer nav button:focus-visible, footer nav button:active {
+				text-decoration: none;
+				outline: solid .25rem rgba(0,0,0,.5);
+			}
+			footer nav a {
+				display: inline-block;
+				padding: 12px 16px;
+				color: #0E3AB6;
+				min-height: 44px;
+				min-width: 44px;
+				box-sizing: border-box;
+			}
+			footer nav a:visited {
+				color: #0E3AB6;
+			}
+			footer p {
+			}
+			
+			.debug {
+				color: lightgray;
+			}
+			/*
+			@media only screen and (max-width: 400px)
+			{
+				.actions {
+					position: sticky;
+					bottom: 0;
+					width: 100%;
+					background-color: white;
+					color: black;
+				}
+			}
+			*/
+			@media only screen and (max-width: 767px)
+			{
+				body {
+					font-size: 10pt;
+				}
+				header {
+					background: none;
+				}
+				nav.steps li .step {
+					font-size: 0.75em;
+					padding: 5px;
+				}
+				footer nav ul {
+					flex-direction: column;
+					align-items: flex-start;
+				}
+				footer nav ul li {
+					border-right: none;
+					border-bottom: 1px solid black;
+					margin-right: 0;
+					margin-bottom: 8px;
+					width: 100%;
+				}
+				footer nav ul li:last-child {
+					border-bottom: none;
+					margin-bottom: 0;
+				}
+				footer nav a, footer nav button {
+					display: block;
+					width: 100%;
+					text-align: left;
+					padding: 16px;
+					min-height: 44px;
+				}
+			}
+			@media only screen and (min-width: 767px)
+			{
+				/*form {
+					display: flex;
+				}
+				form :first-child {
+					flex-grow: 1;
+				}*/
+			}
+			
+			#rc_session_timeout_counter {
+				background-color: #FFF6A6;
+				color: #0E3AB6;
+				border: 1px solid rgb(201, 186, 155);
+				padding: 10px;
+			}
+			#rc_session_timeout_counter p {
+				margin: 0; padding: 0;
+			}
+			#rc_session_timeout_counter button {
+				margin: 0;
+				padding: 0;
+				background-color: #fffaf3;
+				color: #573a08;
+				float: right;
+				border: none;
+				font-size: 12pt;
+				font-family: 'Leipzig Sans';
+			}
+			#rc_session_timeout_counter button:focus, #rc_session_timeout_counter button:focus-within,#rc_session_timeout_counter button:focus-visible {
+				outline: solid .25rem rgba(0,0,0,.5);
+			}
+
+			form section h3 {
+					
+					font-size: 1.25em;
+				}
+
+			@media only screen and (min-width: 767px)
+			{
+				.rc_form_layout_70_30 {
+					/*display: flex;
+					flex-direction: row;*/
+
+				}
+
+				.rc_form_layout_70_30 section.left {
+					width: 70%;
+					float: left;
+				}
+				.rc_form_layout_70_30 section.right {
+					width: 30%;
+					float: right;
+				}
+				.rc_form_layout_70_30_reverse section h3, .rc_form_layout_70_30 section h3 {
+					padding: 0.5rem;
+					background-color: #EBEBEB;
+					color: black;
+				}
+				.rc_form_layout_70_30 section.left h3 {
+					margin-left: -0.5rem;
+				}
+
+				.rc_form_layout_70_30_reverse {
+					/*display: flex;
+					flex-direction: row-reverse;*/
+				}
+				.rc_form_layout_70_30_reverse section.right {
+					width: 30%;
+					float: right;
+				}
+				.rc_form_layout_70_30_reverse section.left {
+					width: 70%;
+					float: left;
+				}
+
+				.rc_form_layout_70_30 div.actions {
+					width: 70%;
+					clear: both;
+				}
+				.rc_form_layout_70_30_reverse div.actions {
+					width: 70%;
+					clear: both;
+				}
+			}
+			.rc_hide_me {
+				position: absolute;
+				top: -32768px;
+				left: -32768px;
+			}
+
+			.visually-hidden {
+				position: absolute;
+				width: 1px;
+				height: 1px;
+				padding: 0;
+				margin: -1px;
+				overflow: hidden;
+				clip: rect(0, 0, 0, 0);
+				white-space: nowrap;
+				border: 0;
+			}
+
+			#step_services fieldset {
+				margin: .2rem 0 .5rem 0;
+			}
+
+			.service_category_label {
+				font-size: 1.2em;
+			}
+
+			.service_container {
+				padding: 1em;
+			}
+
+			.service_container:nth-child(2n+1), .service_container:nth-child(2n+1) a {
+				background-color: #EBEBEB;
+			}
+
+			.service_selection {
+				min-width: 32px;
+				text-align: right;
+			}
+			
+			.service_title {
+				font-weight: bold;
+			}
+
+			.service_description > label, .service_description > div, .service_description > a {
+				display: block;
+				padding-left: 1em;
+			}
+
+			.service_container a:after {
+				background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABEAAAAMCAYAAACEJVa/AAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAE1JREFUeNpibGFg+M9APGDEJsjEQAXAQoae/9QwhBHdQEq88x9mIAspAYjNAHJd8h/dEiZKDQDxWbAI/ichUBmplk5omthIyQoMAAEGAPkiCqeXMeadAAAAAElFTkSuQmCC) right no-repeat;
+				content: '';
+				margin-left: 0.5em;
+				display: inline-block;
+				width: 1em;
+				height: 1em;
+				vertical-align: middle;
+			}
+
+			.location-table {
+				display: table;
+			}
+
+			.location-container {
+				display: table-row;
+				flex-direction: row;
+				flex-wrap: nowrap;
+				
+			}
+			
+			.location-container div.location_choice {
+				display: table-cell;
+				vertical-align: top;
+				padding: 1em;
+				border-top: 1px solid #EBEBEB;
+			}
+			.location-container:first-of-type div {
+				border-top: 0;
+			}
+			
+			.location_image {
+				max-width: 20vw;
+				overflow: hidden;
+			}
+			.location_image img {
+				max-width: 150px;
+			}
+			
+			.earliest {
+				padding-left: 20px; 
+  				display: table-cell;
+				vertical-align: top;
+			}
+
+				
+			/* #booking_summary dd {
+				margin-inline-start: 0px;
+			} */
+
+				/* #booking_summary dt {        
+						margin-top: 10px;
+						font-weight: bold;
+				} */
+
+				/* #booking_summary dt:nth-child(1) {        
+						margin-top: 0px;
+				} */
+
+				/* #booking_summary a {
+						display: block;
+						margin: 5px 0px;
+				} */
+
+
+			#booking_summary dt {
+				margin: 0 0 .3em 0;
+			}
+
+			#booking_summary em {
+				display: block;
+			}
+
+			#booking_summary .summary_container {
+				margin-bottom: 1em;
+			}
+
+			#booking_summary .summary_container em {
+				margin: .3em 0;
+			}
+
+			#booking_summary dl {
+				padding: 1rem;
+			}
+
+			#booking_summary ul {
+				list-style-type:none;
+				padding-left: 0;
+				margin: 0;
+			}
+
+			#booking_summary dd p {
+				margin: 0 0 .45em 0;
+			}
+
+			#booking_summary dd p div {
+				white-space: pre-line;
+			}
+
+			#booking_summary a:after {
+				background: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABEAAAAMCAYAAACEJVa/AAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAE1JREFUeNpibGFg+M9APGDEJsjEQAXAQoae/9QwhBHdQEq88x9mIAspAYjNAHJd8h/dEiZKDQDxWbAI/ichUBmplk5omthIyQoMAAEGAPkiCqeXMeadAAAAAElFTkSuQmCC) right no-repeat;
+				content: ' ';
+				margin-left: 0.5em;
+				display: inline-block;
+				width: 1em;
+				height: 1em;
+				vertical-align: middle;
+			}
+
+			#booking_summary .back_url::after {
+				content: "";
+				padding: inherit;
+			}
+
+			.field label {
+				font-weight: bold;
+			}
+
+			.field.error label {
+				color: #cf0000;
+			}
+			fieldset .field.error input[type='text'] {
+				color: #cf0000;
+				border-color: #cf0000;
+			}
+			fieldset .field.error input[type='email'] {
+				color: #cf0000;
+				border-color: #cf0000;
+			}
+			fieldset .field.error input[type='file'] {
+				color: #cf0000;
+				border-color: #cf0000;
+			}
+			.field.error .error_message {
+				color: #cf0000;
+			}
+			
+			.field.checkbox {
+				position: relative;
+			}
+			
+			.field.checkbox label {
+				padding-left: 2em;
+			}
+			.field.checkbox input {
+				margin-top: -1.5em;
+				position: absolute;
+				
+			}
+
+			.location-container input[type=checkbox] {
+				/*position: absolute;
+				margin-left: 1.5rem;
+				margin-top: 0.7em;*/
+			}
+			.location-container label {
+				/*margin-left: 4rem;
+				margin-top: 0.5em;
+				margin-bottom: 0.5em;*/
+			}
+
+			/*
+				.field input[id*="name"], li.nat_contactform input[id*="artner"], li.nat_contactform input[id*="erson"] {
+					background-image: url('data:image/gif;base64,R0lGODlhFAAUAKIAAJmZmf///7m5uczMzMXFxQAAAAAAAAAAACH5BAUUAAEALAAAAAAUABQAAAM0GLrc/jAuAgCRjVaL196d8lVhoFVXqaVl642kBH/RPD423IB2AL6iWRDSwxQlApjAxQwlAAA7');
+					background-repeat: no-repeat;
+					background-position: 0.5%;
+					padding-left: 30px !important;
+				}
+
+				.field input[id*="mail"] {
+					background-image: url('data:image/gif;base64,R0lGODlhFAAUALMAAGZmZv///5mZmczMzLW1tXt7e+fn58TExPb29qWlpY6Ojtvb2/Hx8a6urtfX1wAAACH5BAUUAAEALAAAAAAUABQAAARMMMhJq7046wu6/yBBAUrCZEcBjAghLJYhKMg62U7RTMghHIiATTJEJAQGhAB5G1F6B8ChMhRumthrFQDbOKoEkNgjuprP6LR6zVZHAAA7');
+					background-repeat: no-repeat;
+					background-position: 0.5% 10px;
+					padding-left: 30px !important;
+			}
+
+				.field input[id*="phone"] {
+					background-image: url('data:image/gif;base64,R0lGODlhEAAQAMQAAGZmZrW1tfDw8JmZmYyMjMzMzIWFhaWlpXt7e9bW1r29vf///3R0dK2trd7e3pmZmcXFxWZmZurq6vf39wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACH5BAUUAAsALAAAAAAQABAAAAWI4CKOZLlMR6oOA0EYBoIIB+TcTqInRV8MgEZBoSAoBooAIYBgNYJDpQIGYxoODYbqwCtAvt8YA/A7BBKNlosASRsCokDAISEFFIfBiFZwCEgQA0ojRn0TJAlGAw0iA14JJQ5vDQaNeHgsLTAuCCJLmWouMECeDaYNW6AAIjIxMgywsQB6JrUjIQA7');
+					background-repeat: no-repeat;
+					background-position: 0.8% 10px;
+					padding-left: 30px !important;
+			}
+			*/
+			h3 {
+				/* text-align: center; */
+				display: block;
+				/*border-bottom: 1px solid #6C655F;*/
+				padding-bottom: 5px;
+			}
+
+			#step_search_results ol {
+				display: flex;
+				flex-direction: row;
+				flex-wrap: wrap;
+				justify-content: start;
+
+				list-style: none;
+				padding-left: 0;
+			}
+
+	
+
+			.card {
+				display: inline-block;
+				text-align: center;
+				color: black;
+				line-height: 1.5em;
+				border: none;
+				padding: 1em;
+				margin: 0.5rem;
+				cursor: pointer;
+			}
+			.card:focus {
+				outline: solid .25rem rgba(0,0,0,.5);
+			}
+
+			.card.big {
+				min-width: 180px;
+			}
+
+			.card:hover {
+				background-color: #6C655F;
+				color: white;
+			}
+
+			.slot_container {
+				display: none;
+			}
+
+			.timeslot_cards .actions {
+				width: 100% !important;
+			}
+
+			.rc_appointment_possible {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				margin-top: 1.25em;
+			}
+			.rc_appointment_more {
+				margin-top: 20px;
+			}
+			.rc_appointment_more a {
+			}
+			
+			.modal_overlay {
+				position: fixed; top: 0; left: 0; bottom: 0; right: 0; background: rgba(255,255,255,0.8);
+			}
+
+			.modal_overlay {
+				display: none;
+			}
+			.modal_overlay.visible {
+				display: block;
+			}
+			
+			.modal_overlay .modal_dialog {
+				position: relative; top: 50%; transform: translateY(-50%); margin: auto; width: 80%; padding: 5px; border: solid 1px black; background-color: #FFFFFF; color: black; z-index: 2;
+			}
+
+			.modal_overlay .modal_dialog {
+				display: none;
+			}
+			.modal_overlay .modal_dialog.visible {
+				display: block;
+			}
+
+			@media only screen and (min-width: 767px) {
+				.modal_overlay .modal_dialog {
+					width: 50%;
+				}
+				
+				.location_image img {
+					max-width: 250px;
+				}
+			}
+			
+			.modal_overlay .modal_dialog h1 {
+				text-align: center;
+			}
+			.modal_overlay .modal_dialog p {
+				text-align: center;
+			}
+			.reminder_buttons {
+				text-align: center;
+			}
+			.reminder_buttons button { 
+			}
+
+			.modal_overlay .modal_dialog .content {
+				max-height: 80vH;
+				overflow: auto;
+			}
+			
+			.modal_overlay .modal_dialog .actions.center {
+				text-align: center;
+			}
+
+			#liveregion {
+				display: none;
+			}
+			.loading-indicator-wrapper {
+				display: flex;
+    		justify-content: center;
+			}
+
+			.loading-indicator {
+				display: flex;
+				align-items: center;
+			}
+
+			.pe-loadingSpinner {
+				width: 25px;
+				height: 25px;
+				position: relative;
+				margin-right: 1em;
+			}
+
+			.pe-loadingSpinner-container1 > div, .pe-loadingSpinner-container2 > div {
+				width: 4px;
+				height: 4px;
+				background-color: rgba(0, 0, 0, 0.75);
+				border-radius: 100%;
+				position: absolute;
+				-webkit-animation: bouncedelay 1.6s infinite ease-in-out;
+				animation: bouncedelay 1.6s infinite ease-in-out;
+				/* Prevent first frame from flickering when animation starts */
+				-webkit-animation-fill-mode: both;
+				animation-fill-mode: both;
+			}
+
+			.pe-loadingSpinner .pe-loadingSpinner-container {
+				position: absolute;
+				width: 100%;
+				height: 100%; 
+			}
+
+			.pe-loadingSpinner-container2 {
+				-webkit-transform: rotateZ(45deg);
+				transform: rotateZ(45deg); 
+			}
+
+			.circle1 {
+				top: 0;
+				left: 0;
+			}
+
+			.circle2 {
+				top: 0;
+				right: 0;
+			}
+
+			.circle3 {
+				right: 0;
+				bottom: 0;
+			}
+
+			.circle4 {
+				left: 0;
+				bottom: 0;
+			}
+
+			.pe-loadingSpinner-container2 .circle1 {
+				-webkit-animation-delay: -1.4s;
+				animation-delay: -1.4s; 
+			}
+
+			.pe-loadingSpinner-container1 .circle2 {
+				-webkit-animation-delay: -1.2s;
+				animation-delay: -1.2s; 
+			}
+
+			.pe-loadingSpinner-container2 .circle2 {
+				-webkit-animation-delay: -1.0s;
+				animation-delay: -1.0s; 
+			}
+
+			.pe-loadingSpinner-container1 .circle3 {
+				-webkit-animation-delay: -0.8s;
+				animation-delay: -0.8s; 
+			}
+
+			.pe-loadingSpinner-container2 .circle3 {
+				-webkit-animation-delay: -0.6s;
+				animation-delay: -0.6s; 
+			}
+
+			.pe-loadingSpinner-container1 .circle4 {
+				-webkit-animation-delay: -0.4s;
+				animation-delay: -0.4s; 
+			}
+
+			.pe-loadingSpinner-container2 .circle4 {
+				-webkit-animation-delay: -0.2s;
+				animation-delay: -0.2s; 
+			}
+
+			@-webkit-keyframes bouncedelay {
+				0%, 25%, 100% {
+					-webkit-transform: scale(1); }
+				12.5% {
+					-webkit-transform: scale(1.5); } 
+			}
+
+			@keyframes bouncedelay {
+				0%, 25%, 100% {
+					transform: scale(1);
+					-webkit-transform: scale(1); }
+				12.5% {
+					transform: scale(1.5);
+					-webkit-transform: scale(1.5); } 
+			}
+			#info_timezone_mismatch{
+				font-weight: bold;
+			}
+		</style>
+
+		<style>/* Termintemplate - Leistungen -  Abstand */
+.rc_appointment_wizard_bitv .service_container {
+    padding: 1em;
+}
+/* Termintemplate - Leistungen - graues Raster */
+.rc_appointment_wizard_bitv .service_container:nth-child(2n+0), .rc_appointment_wizard_bitv .service_container:nth-child(2n+0) a {
+    background-color: #EBEBEB;
+}
+
+/* Terminbuchung - Aktionsbutton - Hintergrund */
+.actions.right {
+  text-align: left;
+}
+
+/* Terminbuchung - Aktionsbutton - zurück */
+.actions.right .button {
+  margin-right: 0.5em;
+  margin-left: 0;
+}
+
+/* Terminbuchung - Aktionsbutton - weiter */
+.actions button {
+ background-color: #A4A4A4;
+}
+
+/* Terminbuchung - errormeldung farbe*/
+.errors {
+background-color: #0856ad;
+}
+
+/* Touchscreen - Liebertwolkwitz - Mitra - Buttons Schriftgröße */
+.touch-screen.station_b68cd2f0-4593-45c8-9945-2c25554abefe .seven .title {
+    font-size: 1.8vw;
+}
+
+</style>
+		<script type="text/javascript">
+		let timezone_mismatch = false;
+		</script>
+	</head>
+	<body class="rc_appointment_wizard rc_appointment_wizard_bitv 31_2_externer_buchungslink_fuer_die_oeffentlichkeit">
+<div class="rc_page">
+
+
+
+
+<header>
+	<h1 class="rc_wizard_name">
+		<span>Terminvereinbarung Bürgerbüros </span>
+		<span class="rc_tenant_logo"><img src="https://terminvereinbarung.leipzig.de/m/leipzig-ba/extern/assets/images/logo.png?rev=20260430T190624" alt="Logo Stadt Leipzig Bürgerservice" /></span>
+	</h1>
+</header>
+<nav class="steps" aria-label="Schritte der Terminbuchung">
+	<ol id="steplist">
+			<li id="step_0" class="completed ">
+				<a href="				index?uid=b76cab25-49bd-44e3-950d-aab715881ea7&wsid=878b40ce-47ce-4538-88a4-dbf8317c3b9d&lang=de&set_lang_ui=de&step_goto=0&rev=30zwK#top
+" class="step">Anliegen</a>
+			</li>
+			<li id="step_1" class="completed ">
+				<a href="				index?uid=b76cab25-49bd-44e3-950d-aab715881ea7&wsid=878b40ce-47ce-4538-88a4-dbf8317c3b9d&lang=de&set_lang_ui=de&step_goto=1&rev=30zwK#top
+" class="step">Standort</a>
+			</li>
+			<li id="step_2" class="active ">
+				<span class="step"aria-current="step">Termin</span>
+			</li>
+			<li id="step_3" class="">
+				<span class="step">Ihre Daten</span>
+			</li>
+			<li id="step_4" class="">
+				<span class="step">Bestätigung</span>
+			</li>
+	</ol>
+
+		<div id="steps_info_text" style="margin-top: 15px; font-weight: bold;">Sollten Sie Fragen zur Terminbuchung haben, wenden Sie sich bitte an das Bürgertelefon unter der Nummer (0341) 115. Bitte beachten Sie, dass auch dem Bürgertelefon nur die im Terminsystem angezeigte Auswahl zur Verfügung steht. Telefonisch können wir daher leider keine zusätzlichen Termine anbieten.</br></br>
+
+Tipps zur Terminvergabe finden Sie außerdem auf <a href="https:\\terminvereinbarung.leipzig.de" target="_blank">terminvereinbarung.leipzig.de</a>
+<p>Besuchen Sie die Bürgerbüros während der Öffnungszeiten ohne Termin oder nutzen Sie die unten stehenden Onlineanträge. Die aktuellen Wartezeiten in den Bürgerbüros finden Sie online unter <a target="_blank" rel="noopener noreferrer" href="https://www.leipzig.de/buergerservice-und-verwaltung/aemter-und-behoerdengaenge/buergerbueros/wartezeiten">www.leipzig.de/wartezeiten-buergerbueros</a>.</p></div>
+</nav>
+
+
+
+
+<style>
+		.actions.right {
+			position: sticky;
+			bottom: 0;
+			padding-right: 10px;
+			background: white;
+		}
+</style>
+
+<main>
+	
+	
+	<h2 id="page_title">Auswahl des Termins</h2>
+	
+	
+<div id="rc_session_timeout_counter"></div>
+
+<script src="/m/leipzig-ba/extern/assets/js/SmartCX_session.js?rev=20260518T020213"></script>
+<script>
+	var session_reminder = null;
+	$(function() {
+		session_reminder = new SmartCX.session.refresher({
+		
+			// setttings like texts, limits, ...
+			show_reminder: true,
+			show_countdown: "#rc_session_timeout_counter",
+			
+			url_refresh: "session_refresh?uid=b76cab25-49bd-44e3-950d-aab715881ea7&wsid=878b40ce-47ce-4538-88a4-dbf8317c3b9d&lang=de&set_lang_ui=de",
+			url_expired: "session_expired?uid=b76cab25-49bd-44e3-950d-aab715881ea7&wsid=878b40ce-47ce-4538-88a4-dbf8317c3b9d&lang=de&set_lang_ui=de",
+			
+			// init values timestamp, length of timeout
+			expired_on: "2026-05-18T13:16:16+02:00",
+			timeout: "20",
+
+			// text
+			text_info_message: "Ihre Sitzung läuft in %n% Minuten ab.",
+			text_yes: "Ja",
+			text_no: "Nein",
+			text_reminder_header: "Ihre Sitzung läuft in kürze aus.",
+			text_reminder_content: "Möchten Sie ihre Sitzung verlängern?"
+		});
+	});
+</script>
+	<form id="calendar_15af2e8e-14f3-45e3-995d-046c8200b91e" name="calendar_15af2e8e-14f3-45e3-995d-046c8200b91e_search_results" method="post" action="?uid=b76cab25-49bd-44e3-950d-aab715881ea7&wsid=878b40ce-47ce-4538-88a4-dbf8317c3b9d&lang=de&set_lang_ui=de&rev=EbVjY#top">
+
+		<input type='hidden' id='RequestVerificationToken' name='__RequestVerificationToken' value='Uac6GiHRDlvYeXqIwhLSl_KG17_3_u62KOm7NTWpY5RseBaO5Gs1p-dcYrlNVFjku_kl5BsCQZIM-gwAjxmemrM80vrmt0RGCWXLIPnDe081' />
+		<input type="hidden" id="action_type" name="action_type" value="" />
+
+		<input type="hidden" id="steps" name="steps" value="serviceslocationssearch_resultsbookingfinish" />
+		<input type="hidden" id="step_current" name="step_current" value="search_results" />
+		<input type="hidden" id="step_current_index" name="step_current_index" value="2" />
+		<input type="hidden" id="step_goto" name="step_goto" value="booking" />
+		<input type="hidden" id="access_code_key" name="access_code_key" value="" />
+		
+
+
+
+<style>
+	#times_back{
+		display: none;
+	}
+</style>
+<script type="text/javascript">
+
+	function highlightOriginAppointment() {
+		// if sessionStorage contains origin_datetime
+		if (sessionStorage.getItem("origin_datetime") != null) {
+			let origin_datetime = sessionStorage.getItem("origin_datetime");
+			let date = origin_datetime.split("T")[0];
+			let time = origin_datetime.split("T")[1];
+			// then higlight .card.big with id = origin_datetime split by "T"
+			let cardBig = document.getElementById("'" + date + "'");
+			if (cardBig != null) {
+				cardBig.classList.add("highlight");
+				cardBig.focus();
+			}
+			
+			// get locale from url lang
+			const url_params = new URLSearchParams( window.location.search );
+			let lang = url_params.get( 'lang' ) ?? 'en';
+			moment.locale(lang);
+			let cardTime = moment(origin_datetime).format('LT');
+
+			let slot_container = document.querySelector(".slot_container.day_" + date);
+
+			// get element in slot_container with strong and contains cardTime
+			if (slot_container) {
+				let strongElements = slot_container.querySelectorAll("strong");
+				strongElements.forEach(function(strong) {
+					if (strong.textContent.includes(cardTime)) {
+						strong.parentElement.classList.add("highlight");
+						strong.parentElement.focus();
+					}
+				});
+			}
+		}
+	}
+
+	// after page is loaded
+	$(document).ready(function() {
+		highlightOriginAppointment();
+	});
+
+	var buttonBackTop = null;
+
+	function showDateCards() {
+
+		$('.slot_container').hide().attr("aria-hidden", "true");
+		$('.timeslot_cards .actions').hide().attr("aria-hidden", "true");
+		$('.date_cards').show().attr("aria-hidden", "false");
+		$("#dates_back").show().attr("aria-hidden", "false");
+		$("#times_back").hide().attr("aria-hidden", "true");
+		// $('.date_cards li button:first').focus();
+
+		if(sessionStorage.getItem("search_period_until") != null) {
+			$(".date_cards h4").hide().attr("aria-hidden", "true");
+			$(".date_cards ol").hide().attr("aria-hidden", "true");
+
+			let search_period_until = moment(sessionStorage.getItem("search_period_until"), "YYYY-MM-DD");
+			$(".date_cards .card.big").each((i, date_card) => {
+				let current_date = moment($(date_card)[0].id, "YYYY-MM-DD");
+				if(current_date <= search_period_until) {
+					$(date_card.parentElement.parentElement).show().attr("aria-hidden", "false");
+					$(date_card.parentElement.parentElement.previousElementSibling).show().attr("aria-hidden", "false");
+				}
+				else {
+					$(date_card).hide().attr("aria-hidden", "true");
+				}
+			});
+		}
+
+		highlightOriginAppointment();
+	}
+	
+	function showTimeSlots(date){
+		var groups = $('.day_' + date + ' h4');
+		const backButtonTime = $("#times_back");
+		if(groups != undefined && groups.length < 3){
+			buttonBackTop = $('.day_' + date + ' .back_button');
+			buttonBackTop.hide().attr("aria-hidden", "true");
+			backButtonTime.show().attr("aria-hidden", "false");
+		} else {
+			buttonBackTop = $('.day_' + date + ' .back_button');
+			buttonBackTop.show().attr("aria-hidden", "false");
+			backButtonTime.hide().attr("aria-hidden", "true");
+		}
+
+		// window.location.replace(date);
+
+		$('.date_cards').hide().attr("aria-hidden", "true");
+		$('.day_' + date).show().attr("aria-hidden", "false");
+		$('.timeslot_cards .actions').show().attr("aria-hidden", "false");;
+		// $('.day_' + date + ' li button:first').focus();		
+		$("#dates_back").hide().attr("aria-hidden", "true");;
+		window.location.hash = "day_" + date;
+
+		highlightOriginAppointment();
+	}
+
+	function appointment_reserve(appointment_datetime, appointment_duration, location, resource) {
+		window.location='/m/leipzig-ba/extern/calendar/booking?uid=b76cab25-49bd-44e3-950d-aab715881ea7&wsid=878b40ce-47ce-4538-88a4-dbf8317c3b9d&lang=de&set_lang_ui=de&rev=EbVjY&appointment_datetime=' + appointment_datetime 
+			+ '&appointment_duration=' + appointment_duration + '&location=' + location + '&resources=' + resource;
+		return false;
+	}
+
+	$(function() {
+		try {
+			if (window.location.hash.indexOf("day_") == 1)
+			{
+				showTimeSlots(window.location.hash.substring(5,15));
+				return;
+			}
+		} catch (e) { }
+		showDateCards();
+	});
+	$(document).ready(function() {
+		moment.locale("de");
+		document.querySelectorAll('.slot_from_parsed').forEach(function(slotFromElement) {
+			let slotTime = slotFromElement.getAttribute('data-slot-from');
+			let formattedSlotTime = moment(slotTime, "YYYY-MM-DDTHH:mm:ssZ").format('LT');
+			let tenantSlotTime = moment(slotTime, "YYYY-MM-DDTHH:mm:ssZ").tz(getIanaFromWindows("W. Europe Standard Time")).format('LT');
+			if(formattedSlotTime!=tenantSlotTime){
+				formattedSlotTime+=` (${tenantSlotTime})`;
+				timezone_mismatch = true;
+			}
+			slotFromElement.textContent = formattedSlotTime;
+		});
+		if(timezone_mismatch){
+			$("#info_timezone_mismatch").show();
+		}
+	});
+</script>
+
+<p id="info_please_click_on_date_and_day_and_time"><strong>Suchen Sie sich bitte ein Datum und anschließend eine verfügbare Uhrzeit aus. Die Daten sind gruppiert nach Monat und Tag bzw. nach Stunden aufgelistet.</strong></p>
+
+
+	<p id="info_appointment_forwarded_to">Mit Auswahl eines Termins werden Sie zum nächsten Schritt weitergeleitet.</p>
+
+
+<p id="info_timezone_mismatch" style="display: none;">Achtung! Ihre Zeitzone weicht von der Ihres Terminstandortes ab. Die Ortszeit Ihres Termins wird in Klammern angezeigt.</p>
+
+<div class="rc_form_layout_70_30">
+	<!-- APPOINTMENT LIST -->
+	<section id="step_search_results" class="left">
+		<div class="date_cards">
+			<h3 id="title_days_with_available_appointments">Tage mit verfügbaren Terminen</h3>
+						<h4 data-testid="month_heading-1">Termine Mai</h4>
+						<ol data-testid="month_ol-1">
+						<li data-testid="slot_date-1">
+							<button class="card big" id="'2026-05-20'" onclick="showTimeSlots('2026-05-20'); return false;" aria-label="20.05.2026" data-testid="slot_date_button-1">
+								<strong>Mittwoch</strong>
+								<br/>
+								20.05.2026
+							</button>
+						</li>
+						<li data-testid="slot_date-2">
+							<button class="card big" id="'2026-05-21'" onclick="showTimeSlots('2026-05-21'); return false;" aria-label="21.05.2026" data-testid="slot_date_button-2">
+								<strong>Donnerstag</strong>
+								<br/>
+								21.05.2026
+							</button>
+						</li>
+						<li data-testid="slot_date-3">
+							<button class="card big" id="'2026-05-22'" onclick="showTimeSlots('2026-05-22'); return false;" aria-label="22.05.2026" data-testid="slot_date_button-3">
+								<strong>Freitag</strong>
+								<br/>
+								22.05.2026
+							</button>
+						</li>
+				</ol data-testid="ending_ol-">
+		</div>
+				<div class="timeslot_cards">
+							<div class="slot_container day_2026-05-20" data-testid="slot_container-1" style="display: none;">
+								<h3 data-testid="slot_date_heading-1">
+									Termine Mittwoch, 20.05.2026
+								</h3>
+									<div class="actions right" data-testid="actions_right-1">
+										<button data-testid="button_back-1" class="back_button" onclick="showDateCards(); return false;">
+											Zurück
+										</button>
+									</div>
+								<h4 class="timeslot_cards_locations" data-testid="timeslot_cards_locations-1">
+									Bürgerbüro Ratzelbogen (Grünau)
+								</h4>
+							<ol data-testid="timeslot_cards_ol-1">
+						<li data-testid="slot_button_li-1">
+							<button 
+							class="card" 
+							id="slot_38d7e18d-e2cc-42b2-be73-8b186954edb7" 
+							aria-label="Termin um 09:15 Uhr auswählen und zum nächsten Schritt wechseln." 
+							onclick="return appointment_reserve('2026-05-20T09%3a15%3a00%2b02%3a00', '10', '868036ae-d404-4804-a6b3-3ccccac44071', '187fc76b-160a-4c82-9705-deda199a72ca');" 
+							data-testid="slot_button-1">
+								<strong class="slot_from_parsed" data-slot-from="2026-05-20T09:15:00.0000000+02:00">
+									2026-05-20T09:15:00.0000000+02:00
+								</strong>
+							</button>
+						</li>
+								</ol></div>
+							<div class="slot_container day_2026-05-21" data-testid="slot_container-2" style="display: none;">
+								<h3 data-testid="slot_date_heading-2">
+									Termine Donnerstag, 21.05.2026
+								</h3>
+									<div class="actions right" data-testid="actions_right-2">
+										<button data-testid="button_back-2" class="back_button" onclick="showDateCards(); return false;">
+											Zurück
+										</button>
+									</div>
+								<h4 class="timeslot_cards_locations" data-testid="timeslot_cards_locations-2">
+									Bürgerbüro Otto-Schill-Straße (Zentrum)
+								</h4>
+							<ol data-testid="timeslot_cards_ol-2">
+						<li data-testid="slot_button_li-2">
+							<button 
+							class="card" 
+							id="slot_2f0e5aed-8422-4388-9ca1-3171daf10d83" 
+							aria-label="Termin um 12:50 Uhr auswählen und zum nächsten Schritt wechseln." 
+							onclick="return appointment_reserve('2026-05-21T12%3a50%3a00%2b02%3a00', '10', 'acf4e0bb-a78c-4670-95fc-50cf15348e0b', '6ce5bc5f-20ee-4df3-a139-d4d017468dec');" 
+							data-testid="slot_button-2">
+								<strong class="slot_from_parsed" data-slot-from="2026-05-21T12:50:00.0000000+02:00">
+									2026-05-21T12:50:00.0000000+02:00
+								</strong>
+							</button>
+						</li>
+								</ol></div>
+							<div class="slot_container day_2026-05-22" data-testid="slot_container-3" style="display: none;">
+								<h3 data-testid="slot_date_heading-3">
+									Termine Freitag, 22.05.2026
+								</h3>
+									<div class="actions right" data-testid="actions_right-3">
+										<button data-testid="button_back-3" class="back_button" onclick="showDateCards(); return false;">
+											Zurück
+										</button>
+									</div>
+								<h4 class="timeslot_cards_locations" data-testid="timeslot_cards_locations-3">
+									Bürgerbüro Ratzelbogen (Grünau)
+								</h4>
+							<ol data-testid="timeslot_cards_ol-3">
+						<li data-testid="slot_button_li-3">
+							<button 
+							class="card" 
+							id="slot_5bd325a3-8378-4d49-88c0-acec54c62de9" 
+							aria-label="Termin um 10:50 Uhr auswählen und zum nächsten Schritt wechseln." 
+							onclick="return appointment_reserve('2026-05-22T10%3a50%3a00%2b02%3a00', '10', '868036ae-d404-4804-a6b3-3ccccac44071', '187fc76b-160a-4c82-9705-deda199a72ca');" 
+							data-testid="slot_button-3">
+								<strong class="slot_from_parsed" data-slot-from="2026-05-22T10:50:00.0000000+02:00">
+									2026-05-22T10:50:00.0000000+02:00
+								</strong>
+							</button>
+						</li>
+					</ol data-testid="ending_ol-">
+				</div>
+			</div>
+	</section>
+<section id="booking_summary" class="right">
+
+			<h3>Ihre bisherigen Angaben</h3>
+	
+
+
+
+
+        
+            
+        
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+	<dl>
+		
+		<dt class="summary_title">Dienstleistung</dt>
+		<dd data-testid="services-container">
+					<ul data-testid="services-list" id="services-list">
+											
+													
+											
+											<li class="summary_container services" data-testid="service-summary-container-4">
+													<p data-testid="service-name-4" style="display: flex; justify-content: space-between;">
+															<span>1x&nbsp;An- oder Ummeldung Wohnsitz </span>
+													</p>
+
+
+
+															<p data-testid="service-link-4"><a href="https://www.leipzig.de/buergerservice-und-verwaltung/aemter-und-behoerdengaenge/behoerden-und-dienstleistungen/dienstleistung/wohnung-an-oder-ummelden-5333e768c725b" title="neues Fenster: Weitere Details zum Anliegen An- oder Ummeldung Wohnsitz " target="_blank">Weitere Details<span class="rc_hide_me"> zum Anliegen An- oder Ummeldung Wohnsitz </span></a></p>
+
+											</li>
+					</ul>
+
+			
+		</dd>
+		
+		<dt class="summary_title">Standort</dt>
+		<dd data-testid="locations-container">
+		
+		
+					<ul data-testid="locations-list" id="locations-list">
+								<li class="summary_container location" data-testid="summary-container-1">
+									<p data-testid="location-name-1">
+										Ausbildungsbürgerbüro Gohlis-Center
+											<br data-testid="location-address-1" />Elsbethstraße 19-25
+											<br data-testid="location-postal-city-1"/>04155 Leipzig
+									</p>
+										<p data-testid="location-url-1"><a href="https://www.leipzig.de/buergerservice-und-verwaltung/aemter-und-behoerdengaenge/behoerden-und-dienstleistungen/dienststelle/buergeramt-gohlis-center-10007018/" title="neues Fenster: Weitere Details zum Standort Ausbildungsbürgerbüro Gohlis-Center" target="_blank">Weitere Details<span class="rc_hide_me"> zum Standort Ausbildungsbürgerbüro Gohlis-Center</span></a></p>
+								</li>
+								<li class="summary_container location" data-testid="summary-container-2">
+									<p data-testid="location-name-2">
+										Bürgerbüro Leutzsch
+											<br data-testid="location-address-2" />Georg-Schwarz-Straße 140
+											<br data-testid="location-postal-city-2"/>04179 Leipzig
+									</p>
+										<p data-testid="location-url-2"><a href="https://www.leipzig.de/buergerservice-und-verwaltung/aemter-und-behoerdengaenge/behoerden-und-dienstleistungen/dienststelle/buergeramt-leutzsch-10007016/" title="neues Fenster: Weitere Details zum Standort Bürgerbüro Leutzsch" target="_blank">Weitere Details<span class="rc_hide_me"> zum Standort Bürgerbüro Leutzsch</span></a></p>
+								</li>
+								<li class="summary_container location" data-testid="summary-container-3">
+									<p data-testid="location-name-3">
+										Bürgerbüro Liebertwolkwitz
+											<br data-testid="location-address-3" />Liebertwolkwitzer Markt 1
+											<br data-testid="location-postal-city-3"/>04288 Leipzig
+									</p>
+										<p data-testid="location-url-3"><a href="https://www.leipzig.de/buergerservice-und-verwaltung/aemter-und-behoerdengaenge/behoerden-und-dienstleistungen/dienststelle/buergeramt-liebertwolkwitz-10007024/" title="neues Fenster: Weitere Details zum Standort Bürgerbüro Liebertwolkwitz" target="_blank">Weitere Details<span class="rc_hide_me"> zum Standort Bürgerbüro Liebertwolkwitz</span></a></p>
+								</li>
+								<li class="summary_container location" data-testid="summary-container-4">
+									<p data-testid="location-name-4">
+										Bürgerbüro Otto-Schill-Straße (Zentrum)
+											<br data-testid="location-address-4" />Otto-Schill-Straße 2
+											<br data-testid="location-postal-city-4"/>04109 Leipzig
+									</p>
+										<p data-testid="location-url-4"><a href="https://www.leipzig.de/buergerservice-und-verwaltung/aemter-und-behoerdengaenge/behoerden-und-dienstleistungen/dienststelle/buergeramt-stadthaus-10007011/" title="neues Fenster: Weitere Details zum Standort Bürgerbüro Otto-Schill-Straße (Zentrum)" target="_blank">Weitere Details<span class="rc_hide_me"> zum Standort Bürgerbüro Otto-Schill-Straße (Zentrum)</span></a></p>
+								</li>
+								<li class="summary_container location" data-testid="summary-container-5">
+									<p data-testid="location-name-5">
+										Bürgerbüro Paunsdorf-Center (Paunsdorf)
+											<br data-testid="location-address-5" />Paunsdorfer Allee 1
+											<br data-testid="location-postal-city-5"/>04329 Leipzig
+									</p>
+										<p data-testid="location-url-5"><a href="https://www.leipzig.de/buergerservice-und-verwaltung/aemter-und-behoerdengaenge/behoerden-und-dienstleistungen/dienststelle/buergeramt-paunsdorf-center-10007012/" title="neues Fenster: Weitere Details zum Standort Bürgerbüro Paunsdorf-Center (Paunsdorf)" target="_blank">Weitere Details<span class="rc_hide_me"> zum Standort Bürgerbüro Paunsdorf-Center (Paunsdorf)</span></a></p>
+								</li>
+								<li class="summary_container location" data-testid="summary-container-6">
+									<p data-testid="location-name-6">
+										Bürgerbüro Ratzelbogen (Grünau)
+											<br data-testid="location-address-6" />Kiewer Straße 1-3
+											<br data-testid="location-postal-city-6"/>04209 Leipzig
+									</p>
+										<p data-testid="location-url-6"><a href="https://www.leipzig.de/buergerservice-und-verwaltung/aemter-und-behoerdengaenge/behoerden-und-dienstleistungen/dienststelle/buergeramt-ratzelbogen-10007015/" title="neues Fenster: Weitere Details zum Standort Bürgerbüro Ratzelbogen (Grünau)" target="_blank">Weitere Details<span class="rc_hide_me"> zum Standort Bürgerbüro Ratzelbogen (Grünau)</span></a></p>
+								</li>
+								<li class="summary_container location" data-testid="summary-container-7">
+									<p data-testid="location-name-7">
+										Bürgerbüro Schönefeld
+											<br data-testid="location-address-7" />Ossietzkystraße 37
+											<br data-testid="location-postal-city-7"/>04347 Leipzig
+									</p>
+										<p data-testid="location-url-7"><a href="https://www.leipzig.de/buergerservice-und-verwaltung/aemter-und-behoerdengaenge/behoerden-und-dienstleistungen/dienststelle/buergeramt-schoenefeld-10007017/" title="neues Fenster: Weitere Details zum Standort Bürgerbüro Schönefeld" target="_blank">Weitere Details<span class="rc_hide_me"> zum Standort Bürgerbüro Schönefeld</span></a></p>
+								</li>
+								<li class="summary_container location" data-testid="summary-container-8">
+									<p data-testid="location-name-8">
+										Bürgerbüro Wiedebach-Passage (Connewitz)
+											<br data-testid="location-address-8" />Biedermannstraße 9-13
+											<br data-testid="location-postal-city-8"/>04277 Leipzig
+									</p>
+										<p data-testid="location-url-8"><a href="https://www.leipzig.de/buergerservice-und-verwaltung/aemter-und-behoerdengaenge/behoerden-und-dienstleistungen/dienststelle/buergeramt-wiedebach-passage-10007013/" title="neues Fenster: Weitere Details zum Standort Bürgerbüro Wiedebach-Passage (Connewitz)" target="_blank">Weitere Details<span class="rc_hide_me"> zum Standort Bürgerbüro Wiedebach-Passage (Connewitz)</span></a></p>
+								</li>
+								<li class="summary_container location" data-testid="summary-container-9">
+									<p data-testid="location-name-9">
+										Bürgerbüro Wiederitzsch 
+											<br data-testid="location-address-9" />Delitzscher Landstraße 55
+											<br data-testid="location-postal-city-9"/>04158 Leipzig
+									</p>
+										<p data-testid="location-url-9"><a href="https://www.leipzig.de/buergerservice-und-verwaltung/aemter-und-behoerdengaenge/behoerden-und-dienstleistungen/dienststelle/buergeramt-wiederitzsch-10007022/" title="neues Fenster: Weitere Details zum Standort Bürgerbüro Wiederitzsch " target="_blank">Weitere Details<span class="rc_hide_me"> zum Standort Bürgerbüro Wiederitzsch </span></a></p>
+								</li>
+								<li class="summary_container location" data-testid="summary-container-10">
+									<p data-testid="location-name-10">
+										mobiler Bürgerservice - Bibliothek Plagwitz Georg Maurer
+											<br data-testid="location-address-10" />Zschochersche Straße 14
+											<br data-testid="location-postal-city-10"/>04229 Leipzig
+									</p>
+										<p data-testid="location-url-10"><a href="https://www.leipzig.de/buergerservice-und-verwaltung/aemter-und-behoerdengaenge/mobiler-buergerservice" title="neues Fenster: Weitere Details zum Standort mobiler Bürgerservice - Bibliothek Plagwitz Georg Maurer" target="_blank">Weitere Details<span class="rc_hide_me"> zum Standort mobiler Bürgerservice - Bibliothek Plagwitz Georg Maurer</span></a></p>
+								</li>
+								<li class="summary_container location" data-testid="summary-container-11">
+									<p data-testid="location-name-11">
+										mobiler Bürgerservice - Bibliothek Reudnitz
+											<br data-testid="location-address-11" />Dresdner Straße 78 - 80
+											<br data-testid="location-postal-city-11"/>04317 Leipzig
+									</p>
+										<p data-testid="location-url-11"><a href="https://www.leipzig.de/buergerservice-und-verwaltung/aemter-und-behoerdengaenge/mobiler-buergerservice" title="neues Fenster: Weitere Details zum Standort mobiler Bürgerservice - Bibliothek Reudnitz" target="_blank">Weitere Details<span class="rc_hide_me"> zum Standort mobiler Bürgerservice - Bibliothek Reudnitz</span></a></p>
+								</li>
+					</ul>
+			
+		</dd>
+
+		
+	
+				<dt class="summary_title" data-testid="summary-duration-title">Termindauer</dt>
+				<dd data-testid="summary-appointment-duration" id="summary-appointment-duration">
+				<div class="summary_container duration">
+					
+					10 min.
+					
+				</div>
+			</dd>
+	</dl>
+</section>
+<script>
+	$(document).ready(function() {
+		moment.locale("de");
+		document.querySelectorAll('.appointment_datetime_parsed').forEach(function(slotFromElement) {
+			let slotTime = slotFromElement.getAttribute('data-appointment-datetime');
+			let formattedSlotTime = moment(slotTime, "YYYY-MM-DDTHH:mm:ssZ").format('LLLL');
+			let tenantSlotTime = moment(slotTime, "YYYY-MM-DDTHH:mm:ssZ").tz(getIanaFromWindows("W. Europe Standard Time")).format('LLLL');
+			if(formattedSlotTime!=tenantSlotTime){
+				formattedSlotTime+=`<br>(${tenantSlotTime})`;
+				timezone_mismatch = true;
+			}
+			slotFromElement.innerHTML = formattedSlotTime;
+		});
+		if(timezone_mismatch){
+			$("#info_timezone_mismatch").show();
+		}
+	});
+</script>
+	<div class="actions right" id="dates_back">
+			<a class="button back_button" href="?uid=b76cab25-49bd-44e3-950d-aab715881ea7&wsid=878b40ce-47ce-4538-88a4-dbf8317c3b9d&lang=de&set_lang_ui=de&rev=EbVjY&step_goto=1#top">Zurück</a>
+	</div>
+	<div class="actions right" id="times_back">
+			<button class="back_button" data-testid="button_back_bottom-time" onclick="showDateCards(); return false;">Zurück</button>
+	</div>
+</div>
+
+		
+
+<style></style>
+<script>
+
+
+
+
+
+
+
+
+
+
+
+
+
+if($("#error_no_appointment_found").length != 0){
+$.post('https://terminvereinbarung.leipzig.de/custom/add_meta_entity/log_appointment2.aspx',{
+log_tenant:"Stadt Leipzig Bürgerservice,662e5f82-2a54-4312-a01f-f19f350ccb3f",
+log_location:"mobiler Bürgerservice - Bibliothek Reudnitz,2b29f10b-f5c0-4765-b588-c722fea02260",
+log_services:"An- oder Ummeldung Wohnsitz ,29cd0a26-fe7a-4d65-88cd-1e05fd749c71;",
+log_datetime: new Date().toISOString(),
+log_session: "878b40ce-47ce-4538-88a4-dbf8317c3b9d"
+})
+}
+
+
+</script>
+
+<script src=https://static.leipzig.de/typo3conf/ext/mkleipzig/Resources/Public/js/webtrekk/webtrekk_v4.min.js></script>
+
+<script type="text/javascript">
+    var pageconfig = {
+        contentId: getContentIdByURL(),
+        linkTrack: "link",
+        linkTrackAttribute: "id"
+    };
+
+    var wt = new webtrekkV3(pageconfig);
+    wt.sendinfo();
+    
+    function getContentIdByURL() {
+        try {
+            var url = document.location.href;
+            var anchor_value = '';
+            var split_anchors = '';
+            if (url && url !== null) {
+                split_anchors = url.split("#");
+            if (split_anchors && split_anchors !== null)
+            if (split_anchors.length > 1)
+                anchor_value = '#' + url.split("#")[1].toLowerCase();
+                url = url.split("#")[0].toLowerCase();
+                return url.split("?")[0].toLowerCase() + anchor_value;
+            }
+
+        return "no_content";
+    } catch (err) {
+    console.log('WTK - an error was encountered while cleaning up the URL, tracking document.location.href instead.\n' + err);
+    return document.location.href;
+    }
+    }
+</script>
+
+<noscript>
+<img src="http://data.leipzig.de/498716889887543/wt?p=457,0" height="1" width="1" alt="">
+</noscript>
+
+<script></script>
+
+	</form>
+	
+	<script type="text/javascript">
+  if(sessionStorage["debug"] == "true"){
+    var storageVars = '<h3>Session Storage Debug:</h3><ul>';
+    for (var i = 0; i < sessionStorage.length; i++){
+      storageVars += "<li><b>" + sessionStorage.key(i) + ":</b> " + sessionStorage.getItem(sessionStorage.key(i)) +"</li>"
+    }
+    storageVars += "</ul>";
+    $('main').append(storageVars);
+  }
+</script>
+</main>
+
+<footer>
+	<nav aria-label="Links zur rechtlichen Informationen">
+		<ul id="footer_buttons">
+			
+				<li id="button-website"><a data-testid="button-websitee" href="https://www.leipzig.de" title="neues Fenster: Link zur Website" target="_blank">Stadt Leipzig Bürgerservice</a></li>
+			
+			
+				<li id="button-imprint"><a data-testid="button-imprint" href="https://www.leipzig.de/impressum/online-terminvereinbarung " title="neues Fenster: Link zum Impressum" target="_blank">Impressum</a></li>
+			
+			
+				<li id="button-privacy"><a data-testid="button-privacy" href="https://www.leipzig.de/datenschutzerklaerung/datenschutz-buergerservice  " title="neues Fenster: Link zur Datenschutzerklärung" target="_blank">Datenschutz</a></li>
+			
+			
+
+					<li id="button-accessibility"><a data-testid="button-accessibility" href="https://www.leipzig.de/barrierefreiheit" target="_blank" id="btn_dialog_accessibility" aria-haspopup="dialog" title="Erklärung zur Barrierefreiheit öffnet im Popup">Erklärung zur Barrierefreiheit</a></li>
+			
+		</ul>
+	</nav>
+	<p data-template_version="BITV">
+			BITV/WCAG-Template | &copy; Smart CJM 'Licensed for Stadt Leipzig, leipzig-ba'| Sprache: de
+		</p>
+</footer>
+
+<div class="modal_overlay" id="dialog_accessibility_overlay" aria-hidden="true">
+	<div></div>
+	<section id="dialog_accessibility" class="modal_dialog" role="alertdialog" aria-modal="false" aria-labelledby="dialog_accessibility_header" aria-describedby="dialog_accessibility_content" tabindex="-1">
+		<h2 id="dialog_accessibility_header">Erklärung zur Barrierefreiheit</h2>
+		<div id="dialog_accessibility_content" class="content">
+			<div id="dialog_accessibility_text"></div>
+			<div class="actions center">
+				<button class="modal_dialog_close_button">Schließen</button>
+			</div>
+		</div>
+	</section>
+	<div></div>
+</div>
+
+<script>
+	function dialog_accessibility() {
+		aria_dialog.set_location_hash("dialog_accessibility");
+		var url = $("#btn_dialog_accessibility").attr("href");
+		// 
+		$("#dialog_accessibility_text").load(url + " .rc_page_content");
+		// 
+		var dialog_overlay = $("#dialog_accessibility_overlay");
+		dialog_overlay.addClass("visible");
+		dialog_overlay.attr("aria-hidden", "false");
+		var dialog = $("#dialog_accessibility");
+		dialog.addClass("visible");
+		dialog.attr("aria-modal", "true");
+
+		$(".modal_dialog_close_button", "#dialog_accessibility").click(dialog_accessibility_close).focus();
+		/*$.get("/m/leipzig-ba/extern/info/infopoint/dialog_accessibility", null, function(data) {
+
+		}, "html");*/
+		var overlay_divs = $("div", dialog_overlay);
+		overlay_divs.first().attr("tabindex", "0").on("focus.dialog_accessibility", function() { aria_dialog.focusLastDescendant(document.getElementById("dialog_accessibility")); });
+		overlay_divs.last().attr("tabindex", "0").on("focus.dialog_accessibility", function() { aria_dialog.focusFirstDescendant(document.getElementById("dialog_accessibility")); });
+		return false;
+	}
+	function dialog_accessibility_close() {
+		aria_dialog.set_location_hash("");
+		var dialog_overlay = $("#dialog_accessibility_overlay");
+		dialog_overlay.removeClass("visible");
+		dialog_overlay.attr("aria-hidden", "true");
+		var dialog = $("#dialog_accessibility");
+		dialog.removeClass("visible");
+		dialog.attr("aria-modal", "false");
+
+		var overlay_divs = $("div", dialog_overlay);
+		overlay_divs.first().removeAttr("tabindex").off("focus.dialog_accessibility");
+		overlay_divs.last().removeAttr("tabindex").off("focus.dialog_accessibility");
+
+		$("#btn_dialog_accessibility").focus();
+	}
+
+	var aria_dialog = {};
+	$(function() {
+
+		aria_dialog.set_location_hash = function(hash_value) {
+			if(history.pushState) {
+				history.pushState(null, null, "#" + hash_value);
+			}
+			else {
+				location.hash = "#"+ hash_value;
+			}
+		};
+
+		aria_dialog.is_focusable = function (element) {
+			if (element.tabIndex > 0 || (element.tabIndex === 0 && element.getAttribute('tabIndex') !== null)) {
+				return true;
+			}
+
+			if (element.disabled) {
+				return false;
+			}
+
+			switch (element.nodeName) {
+				case 'A':
+					return !!element.href && element.rel != 'ignore';
+				case 'INPUT':
+					return element.type != 'hidden' && element.type != 'file';
+				case 'BUTTON':
+				case 'SELECT':
+				case 'TEXTAREA':
+					return true;
+				default:
+					return false;
+			}
+		};
+
+		aria_dialog.focusFirstDescendant = function (element) {
+			for (var i = 0; i < element.childNodes.length; i++) {
+				var child = element.childNodes[i];
+				if (aria_dialog.attemptFocus(child) ||
+					aria_dialog.focusFirstDescendant(child)) {
+					return true;
+				}
+			}
+			return false;
+		}; // end focusFirstDescendant
+
+		aria_dialog.focusLastDescendant = function (element) {
+			for (var i = element.childNodes.length - 1; i >= 0; i--) {
+				var child = element.childNodes[i];
+				if (aria_dialog.attemptFocus(child) ||
+					aria_dialog.focusLastDescendant(child)) {
+					return true;
+				}
+			}
+			return false;
+		}; // end focusLastDescendant
+
+		aria_dialog.attemptFocus = function (element) {
+			if (!aria_dialog.is_focusable(element)) {
+				return false;
+			}
+
+			try {
+				element.focus();
+			}
+			catch (e) {
+			}
+			return (document.activeElement === element);
+		}; // end attemptFocus
+
+
+		if (window.location.hash == "#dialog_accessibility")
+		{
+			dialog_accessibility();
+		}
+
+		$(document).focus();
+		//aria_dialog.focusFirstDescendant(document);
+	});
+</script>
+
+
+
+
+		</div>
+		
+		<!-- BITV-Template v1.4 -->
+	</body>
+
+</html>
