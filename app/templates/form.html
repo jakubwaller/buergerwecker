@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>
+    {% if lang == 'en' %}Never miss a Leipzig appointment again
+    {% else %}Nie wieder freie Bürgerbüro-Termine verpassen{% endif %}
+  </h1>
+
+  <p class="disclaimer">
+    {% if lang == 'en' %}
+      This website is not officially affiliated with the City of Leipzig or
+      its Bürgerbüros. We are an independent service that only informs
+      about available appointments.
+    {% else %}
+      Diese Website ist nicht offiziell mit der Stadt Leipzig oder den
+      Bürgerbüros der Stadt Leipzig verbunden. Wir sind ein unabhängiger
+      Dienst, der ausschließlich über verfügbare Termine informiert.
+    {% endif %}
+  </p>
+
+  <form action="/subscribe" method="post">
+    <input type="hidden" name="lang" value="{{ lang }}">
+    <input type="hidden" name="city" value="{{ city }}">
+
+    <label>{% if lang == 'en' %}Email{% else %}E-Mail{% endif %}
+      <input type="email" name="email" required autocomplete="email">
+    </label>
+
+    <label>{% if lang == 'en' %}Appointment type{% else %}Anliegen{% endif %}
+      <select name="appointment_type" required>
+        {% for name, uuid in appointment_types.items() %}
+          <option value="{{ uuid }}">{{ name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>
+      <input type="checkbox" name="all_locations" value="1" checked>
+      {% if lang == 'en' %}All locations{% else %}Alle Standorte{% endif %}
+    </label>
+
+    <fieldset>
+      <legend>{% if lang == 'en' %}Specific locations (uncheck "all" first){% else %}Bestimmte Standorte (oben Häkchen entfernen){% endif %}</legend>
+      {% for name, uuid in locations.items() %}
+        <label><input type="checkbox" name="locations" value="{{ uuid }}"> {{ name }}</label>
+      {% endfor %}
+    </fieldset>
+
+    <label>{% if lang == 'en' %}Time window{% else %}Zeitfenster{% endif %}
+      <input type="time" name="time_start" value="00:00">
+      –
+      <input type="time" name="time_end" value="23:59">
+    </label>
+
+    <fieldset>
+      <legend>{% if lang == 'en' %}Days of week{% else %}Wochentage{% endif %}</legend>
+      {% for n, label_de, label_en in [(1,'Mo','Mon'),(2,'Di','Tue'),(3,'Mi','Wed'),(4,'Do','Thu'),(5,'Fr','Fri'),(6,'Sa','Sat'),(7,'So','Sun')] %}
+        <label><input type="checkbox" name="weekdays" value="{{ n }}" {% if n <= 5 %}checked{% endif %}>
+          {% if lang == 'en' %}{{ label_en }}{% else %}{{ label_de }}{% endif %}</label>
+      {% endfor %}
+    </fieldset>
+
+    <!-- honeypot -->
+    <label class="hidden" aria-hidden="true" tabindex="-1">
+      Leave this field empty.
+      <input type="text" name="website" autocomplete="off" tabindex="-1">
+    </label>
+
+    <button type="submit">
+      {% if lang == 'en' %}Subscribe{% else %}Anmelden{% endif %}
+    </button>
+  </form>
+{% endblock %}

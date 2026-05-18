@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="{{ lang or 'de' }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}Termine-Notifier{% endblock %}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 42rem; margin: 2rem auto; padding: 0 1rem; }
+    .hidden { position: absolute; left: -9999px; }
+    label { display: block; margin: 0.5rem 0 0.25rem; }
+    input, select, textarea, button { font-size: 1rem; padding: 0.4rem; }
+    footer { margin-top: 4rem; font-size: 0.875rem; color: #666; }
+    .disclaimer { background:#f6f6f6; padding:1rem; border-left:3px solid #888; margin-bottom:1.5rem; }
+  </style>
+</head>
+<body>
+  {% block content %}{% endblock %}
+  <footer>
+    Made with ❤️ in Leipzig ·
+    <a href="/impressum">Impressum</a> ·
+    <a href="/datenschutz">Datenschutz</a> ·
+    <a href="{{ kofi_url or 'https://ko-fi.com/jakubwaller' }}">☕ Kaffee spendieren</a>
+  </footer>
+</body>
+</html>
