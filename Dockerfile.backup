@@ -1,0 +1,5 @@
+FROM alpine:3.20
+RUN apk add --no-cache sqlite bash gzip findutils
+COPY scripts/backup-loop.sh /usr/local/bin/backup-loop.sh
+RUN chmod +x /usr/local/bin/backup-loop.sh
+CMD ["/usr/local/bin/backup-loop.sh"]
