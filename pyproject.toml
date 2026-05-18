@@ -6,7 +6,7 @@ requires-python = ">=3.12"
 license = { text = "AGPL-3.0-only" }
 authors = [{ name = "Jakub Waller" }]
 dependencies = [
-  "flask>=3.0",
+  "flask>=3.1",
   "gunicorn>=22.0",
   "requests>=2.32",
   "beautifulsoup4>=4.12",
@@ -25,7 +25,7 @@ testpaths = ["tests"]
 addopts = "-v"
 
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
