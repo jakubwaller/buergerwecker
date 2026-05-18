@@ -1,0 +1,8 @@
+{
+  "digest.subject": "Neue Termine verfügbar",
+  "digest.greeting": "Hallo,",
+  "digest.intro": "Es wurden neue passende Termine gefunden:",
+  "digest.burst_warning": "Viele Termine öffnen sich gleichzeitig — schneller Klick gewinnt.",
+  "digest.unsubscribe": "Abmelden: {unsubscribe_url}",
+  "digest.kofi": "Hat dir diese Benachrichtigung geholfen? Du kannst mir einen Kaffee spendieren: {kofi_url} (aber nur, wenn du magst — der Dienst bleibt kostenlos.)"
+}
