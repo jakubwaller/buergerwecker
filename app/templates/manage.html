@@ -4,37 +4,41 @@
     {% if lang == 'en' %}Manage your subscription{% else %}Abonnement verwalten{% endif %}
   </h1>
 
+  {% set current_type = current.appointment_types[0] if current.appointment_types else "" %}
+  {% set all_locations = (current.locations == "all") %}
+  {% set selected_loc_set = current.locations if not all_locations else [] %}
+
   <form action="/manage/{{ token }}" method="post">
     <label>{% if lang == 'en' %}Appointment type{% else %}Anliegen{% endif %}
       <select name="appointment_type" required>
         {% for name, uuid in appointment_types.items() %}
-          <option value="{{ uuid }}">{{ name }}</option>
+          <option value="{{ uuid }}" {% if uuid == current_type %}selected{% endif %}>{{ name }}</option>
         {% endfor %}
       </select>
     </label>
 
     <label>
-      <input type="checkbox" name="all_locations" value="1" checked>
+      <input type="checkbox" name="all_locations" value="1" {% if all_locations %}checked{% endif %}>
       {% if lang == 'en' %}All locations{% else %}Alle Standorte{% endif %}
     </label>
 
     <fieldset>
       <legend>{% if lang == 'en' %}Specific locations (uncheck "all" first){% else %}Bestimmte Standorte (oben Häkchen entfernen){% endif %}</legend>
       {% for name, uuid in locations.items() %}
-        <label><input type="checkbox" name="locations" value="{{ uuid }}"> {{ name }}</label>
+        <label><input type="checkbox" name="locations" value="{{ uuid }}" {% if uuid in selected_loc_set %}checked{% endif %}> {{ name }}</label>
       {% endfor %}
     </fieldset>
 
     <label>{% if lang == 'en' %}Time window{% else %}Zeitfenster{% endif %}
-      <input type="time" name="time_start" value="00:00">
+      <input type="time" name="time_start" value="{{ current.time_window_start.strftime('%H:%M') }}">
       –
-      <input type="time" name="time_end" value="23:59">
+      <input type="time" name="time_end" value="{{ current.time_window_end.strftime('%H:%M') }}">
     </label>
 
     <fieldset>
       <legend>{% if lang == 'en' %}Days of week{% else %}Wochentage{% endif %}</legend>
       {% for n, label_de, label_en in [(1,'Mo','Mon'),(2,'Di','Tue'),(3,'Mi','Wed'),(4,'Do','Thu'),(5,'Fr','Fri'),(6,'Sa','Sat'),(7,'So','Sun')] %}
-        <label><input type="checkbox" name="weekdays" value="{{ n }}" {% if n <= 5 %}checked{% endif %}>
+        <label><input type="checkbox" name="weekdays" value="{{ n }}" {% if n in current.weekdays %}checked{% endif %}>
           {% if lang == 'en' %}{{ label_en }}{% else %}{{ label_de }}{% endif %}</label>
       {% endfor %}
     </fieldset>
