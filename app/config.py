@@ -47,7 +47,7 @@ def load_config() -> Config:
         mailjet_from_email=_req("MAILJET_FROM_EMAIL"),
         mailjet_from_name=_req("MAILJET_FROM_NAME"),
         mailjet_daily_quota=_req_int("MAILJET_DAILY_QUOTA"),
-        resend_api_key=_req("RESEND_API_KEY"),
+        resend_api_key=os.environ.get("RESEND_API_KEY", ""),
         token_secret_primary=_req("TOKEN_SECRET_PRIMARY"),
         token_secret_previous=os.environ.get("TOKEN_SECRET_PREVIOUS", ""),
         admin_token=_req("ADMIN_TOKEN"),

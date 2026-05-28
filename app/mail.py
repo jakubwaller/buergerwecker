@@ -72,11 +72,11 @@ def send(conn: sqlite3.Connection, to: str, subject: str, body: str,
     try:
         resp = _call_mailjet(to, subject, body)
         provider = "mailjet"
-        if resp.status_code >= 500 or resp.status_code == 429:
+        if (resp.status_code >= 500 or resp.status_code == 429) and os.environ.get("RESEND_API_KEY"):
             resp = _call_resend(to, subject, body)
             provider = "resend"
         if resp.status_code >= 400:
-            raise MailFailed(f"both providers failed; last status {resp.status_code}")
+            raise MailFailed(f"provider failed; last status {resp.status_code}")
     except Exception:
         conn.execute("DELETE FROM sent_idempotency WHERE idem_key=?", (idem_key,))
         raise
