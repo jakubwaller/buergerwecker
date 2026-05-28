@@ -1,9 +1,18 @@
 {% extends "base.html" %}
 {% block content %}
-  <h1>Impressum</h1>
-  <p>Angaben gemäß § 5 TMG:</p>
-  <p>Jakub Waller<br>
-  Hamburg, Deutschland<br>
-  Kontakt: jakub@jakubwaller.eu</p>
-  <p>Diese Website ist nicht offiziell mit der Stadt Leipzig oder den Bürgerbüros der Stadt Leipzig verbunden.</p>
+  {% if lang == 'en' %}
+    <h1>Imprint</h1>
+    <p>Information per § 5 TMG (German Telemedia Act):</p>
+    <p>Jakub Waller<br>
+    Hamburg, Germany<br>
+    Contact: jakub@jakubwaller.eu</p>
+    <p>This website is not officially affiliated with the City of Leipzig or its Bürgerbüros.</p>
+  {% else %}
+    <h1>Impressum</h1>
+    <p>Angaben gemäß § 5 TMG:</p>
+    <p>Jakub Waller<br>
+    Hamburg, Deutschland<br>
+    Kontakt: jakub@jakubwaller.eu</p>
+    <p>Diese Website ist nicht offiziell mit der Stadt Leipzig oder den Bürgerbüros der Stadt Leipzig verbunden.</p>
+  {% endif %}
 {% endblock %}
