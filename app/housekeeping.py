@@ -1,6 +1,8 @@
 from __future__ import annotations
+import json
 import sqlite3
 from datetime import datetime, timedelta
+from pathlib import Path
 from app.config import load_config
 from app import mail as _mail
 from app.mail import _idem_key
@@ -22,6 +24,7 @@ def run_once(conn: sqlite3.Connection) -> None:
     _prune_slots_cache(conn)
     _check_parser_canary(conn, cfg)
     _check_backup_health(conn, cfg)
+    _sync_catalogs(conn, cfg)
     _send_summary_email(conn, cfg)
     conn.execute(
         "INSERT INTO meta (key,value) VALUES ('last_housekeeping_at', ?) "
@@ -187,6 +190,48 @@ def _check_backup_health(conn, cfg):
                   idem_key=_idem_key(0, [], f"backup-stale-{datetime.utcnow().date()}"))
     except Exception:
         pass
+
+def _sync_catalogs(conn, cfg):
+    """Refresh per-city catalog files from live APIs. Alerts developer on drift.
+
+    Gated by CATALOG_SYNC_ENABLED so test environments don't make network calls.
+    Failures here must never crash the daily run.
+    """
+    if not cfg.catalog_sync_enabled:
+        return
+    import requests
+    from app import catalog_sync
+    root = Path(__file__).resolve().parent.parent / "catalog"
+    if not root.is_dir():
+        return
+
+    def _alert(*, city, service_drift, location_drift):
+        lines = [f"Catalog drift detected for {city}.", ""]
+        if service_drift:
+            lines.append("Services:")
+            lines.append(json.dumps(service_drift, ensure_ascii=False, indent=2))
+        if location_drift:
+            lines.append("Locations:")
+            lines.append(json.dumps(location_drift, ensure_ascii=False, indent=2))
+        lines.append("")
+        lines.append("Catalog files have been overwritten on disk with live values.")
+        body = "\n".join(lines)
+        try:
+            mail_send(conn, cfg.developer_email,
+                      f"[termine-notifier] catalog drift: {city}",
+                      body,
+                      idem_key=_idem_key(0, [],
+                                         f"catalog-drift-{city}-{datetime.utcnow().date()}"))
+        except Exception:
+            pass
+
+    http = requests.Session()
+    for city_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+        try:
+            catalog_sync.sync_city(city_dir.name, http, alert_fn=_alert)
+        except Exception:
+            pass
+
 
 def _send_summary_email(conn, cfg):
     from app.admin import stats

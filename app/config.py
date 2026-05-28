@@ -25,6 +25,7 @@ class Config:
     developer_email: str
     kofi_url: str
     db_path: str
+    catalog_sync_enabled: bool
 
 def _req(key: str) -> str:
     val = os.environ.get(key)
@@ -62,4 +63,5 @@ def load_config() -> Config:
         developer_email=_req("DEVELOPER_EMAIL"),
         kofi_url=_req("KOFI_URL"),
         db_path=os.environ.get("DB_PATH", "/data/app.db"),
+        catalog_sync_enabled=os.environ.get("CATALOG_SYNC_ENABLED", "0") == "1",
     )
