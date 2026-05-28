@@ -1,13 +1,7 @@
 services:
-  caddy:
-    image: caddy:2
-    ports: ["80:80", "443:443"]
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    restart: unless-stopped
-
+  # No reverse-proxy service: the shared `elternschule-caddy` on the same Pi
+  # fronts every vhost. This `web` container joins the external `web_proxy`
+  # network with alias `termine-web`, which Caddy reverse-proxies by name.
   web:
     build: { context: ., dockerfile: Dockerfile.web }
     env_file: .env
@@ -16,6 +10,11 @@ services:
     restart: unless-stopped
     expose:
       - "8000"
+    networks:
+      default: {}
+      web_proxy:
+        aliases:
+          - termine-web
 
   poller:
     build: { context: ., dockerfile: Dockerfile.poller }
@@ -36,6 +35,6 @@ services:
       - /mnt/backup:/backup
     restart: unless-stopped
 
-volumes:
-  caddy_data:
-  caddy_config:
+networks:
+  web_proxy:
+    external: true
