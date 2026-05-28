@@ -203,7 +203,8 @@ def create_app() -> Flask:
         return render_template("manage.html",
                                lang=row["language"], city=row["city"],
                                appointment_types=catalog.appointment_types,
-                               locations=catalog.locations, token=token)
+                               locations=catalog.locations, token=token,
+                               current=Filter.from_json(row["filters_json"]))
 
     @app.route("/renew/<token>")
     def renew_route(token):
