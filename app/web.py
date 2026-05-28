@@ -254,11 +254,11 @@ def create_app() -> Flask:
 
     @app.route("/datenschutz")
     def datenschutz_route():
-        return render_template("datenschutz.html")
+        return render_template("datenschutz.html", lang=request.args.get("lang", "de"))
 
     @app.route("/impressum")
     def impressum_route():
-        return render_template("impressum.html")
+        return render_template("impressum.html", lang=request.args.get("lang", "de"))
 
     return app
 

@@ -5,21 +5,213 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>{% block title %}Termine-Notifier{% endblock %}</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 42rem; margin: 2rem auto; padding: 0 1rem; }
+    :root {
+      --bg: #f5f5f7;
+      --card: #ffffff;
+      --text: #1d1d1f;
+      --text-muted: #6b6f76;
+      --border: #e5e5ea;
+      --border-strong: #d2d2d7;
+      --accent: #2563eb;
+      --accent-hover: #1d4ed8;
+      --accent-text: #ffffff;
+      --shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04);
+      --radius: 14px;
+      --radius-input: 8px;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #000;
+        --card: #1c1c1e;
+        --text: #f5f5f7;
+        --text-muted: #98989d;
+        --border: #2c2c2e;
+        --border-strong: #3a3a3c;
+        --accent: #5b9dff;
+        --accent-hover: #82b4ff;
+        --accent-text: #0a0a0a;
+        --shadow: 0 1px 3px rgba(0,0,0,0.4);
+      }
+    }
+    * { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    .container {
+      max-width: 42rem;
+      margin: 0 auto;
+      padding: 2rem 1rem 4rem;
+    }
+    .lang-switcher {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 1.25rem;
+      font-size: 0.875rem;
+    }
+    .lang-pill {
+      display: inline-block;
+      padding: 0.4rem 0.9rem;
+      color: var(--text-muted);
+      text-decoration: none;
+      border: 1px solid var(--border-strong);
+      background: var(--card);
+      transition: background 0.15s, color 0.15s;
+    }
+    .lang-pill:first-child { border-radius: 999px 0 0 999px; }
+    .lang-pill:last-child { border-radius: 0 999px 999px 0; border-left: none; }
+    .lang-pill.active {
+      background: var(--text);
+      color: var(--bg);
+      border-color: var(--text);
+    }
+    .lang-pill:hover:not(.active) { color: var(--text); }
+    .card {
+      background: var(--card);
+      border-radius: var(--radius);
+      padding: 2rem 2rem 2.25rem;
+      box-shadow: var(--shadow);
+    }
+    h1 {
+      font-size: 1.875rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin: 0 0 1.25rem;
+      line-height: 1.2;
+    }
+    h2 {
+      font-size: 1.125rem;
+      font-weight: 600;
+      margin: 1.5rem 0 0.5rem;
+      letter-spacing: -0.01em;
+    }
+    p { margin: 0 0 1rem; }
+    a { color: var(--accent); }
+    .disclaimer {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: var(--radius-input);
+      padding: 0.875rem 1rem;
+      color: var(--text-muted);
+      font-size: 0.9375rem;
+      margin-bottom: 1.75rem;
+    }
+    form > label {
+      display: block;
+      margin: 1.15rem 0 0.4rem;
+      font-weight: 500;
+      font-size: 0.9375rem;
+    }
+    input[type="email"],
+    input[type="time"],
+    input[type="text"],
+    select,
+    textarea {
+      width: 100%;
+      font: inherit;
+      padding: 0.6rem 0.8rem;
+      background: var(--card);
+      color: var(--text);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-input);
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    input[type="time"] {
+      width: auto;
+      min-width: 7rem;
+    }
+    input:focus,
+    select:focus,
+    textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+    }
+    input[type="checkbox"] {
+      margin-right: 0.45rem;
+      accent-color: var(--accent);
+      width: 1rem;
+      height: 1rem;
+      vertical-align: -2px;
+    }
+    fieldset {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-input);
+      padding: 0.75rem 1rem 1rem;
+      margin: 1rem 0 0;
+    }
+    fieldset legend {
+      font-weight: 500;
+      font-size: 0.9375rem;
+      padding: 0 0.4rem;
+      color: var(--text-muted);
+    }
+    fieldset label {
+      display: inline-flex;
+      align-items: center;
+      margin: 0.35rem 1rem 0.35rem 0;
+      font-size: 0.9375rem;
+      font-weight: 400;
+    }
+    button[type="submit"] {
+      display: inline-block;
+      margin-top: 1.75rem;
+      padding: 0.75rem 1.75rem;
+      background: var(--accent);
+      color: var(--accent-text);
+      border: none;
+      border-radius: var(--radius-input);
+      font: inherit;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.05s;
+    }
+    button[type="submit"]:hover { background: var(--accent-hover); }
+    button[type="submit"]:active { transform: translateY(1px); }
+    footer {
+      margin-top: 2.5rem;
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      text-align: center;
+    }
+    footer a {
+      color: var(--text-muted);
+      text-decoration: none;
+      margin: 0 0.25rem;
+    }
+    footer a:hover { color: var(--accent); }
     .hidden { position: absolute; left: -9999px; }
-    label { display: block; margin: 0.5rem 0 0.25rem; }
-    input, select, textarea, button { font-size: 1rem; padding: 0.4rem; }
-    footer { margin-top: 4rem; font-size: 0.875rem; color: #666; }
-    .disclaimer { background:#f6f6f6; padding:1rem; border-left:3px solid #888; margin-bottom:1.5rem; }
+    @media (max-width: 480px) {
+      .container { padding: 1rem 0 3rem; }
+      .card { border-radius: 0; box-shadow: none; padding: 1.5rem 1rem 2rem; }
+      .lang-switcher { padding: 0 1rem; margin-bottom: 0.75rem; }
+      h1 { font-size: 1.5rem; }
+    }
   </style>
 </head>
 <body>
-  {% block content %}{% endblock %}
-  <footer>
-    Made with ❤️ in Leipzig ·
-    <a href="/impressum">Impressum</a> ·
-    <a href="/datenschutz">Datenschutz</a> ·
-    <a href="{{ kofi_url or 'https://ko-fi.com/jakubwaller' }}">☕ Kaffee spendieren</a>
-  </footer>
+  <div class="container">
+    <nav class="lang-switcher" aria-label="{% if lang == 'en' %}Language{% else %}Sprache{% endif %}">
+      <a href="?lang=de" class="lang-pill {% if lang != 'en' %}active{% endif %}" hreflang="de">DE</a>
+      <a href="?lang=en" class="lang-pill {% if lang == 'en' %}active{% endif %}" hreflang="en">EN</a>
+    </nav>
+    <main class="card">
+      {% block content %}{% endblock %}
+    </main>
+    <footer>
+      Made with ♥ in Leipzig ·
+      <a href="/impressum{% if lang == 'en' %}?lang=en{% endif %}">{% if lang == 'en' %}Imprint{% else %}Impressum{% endif %}</a> ·
+      <a href="/datenschutz{% if lang == 'en' %}?lang=en{% endif %}">{% if lang == 'en' %}Privacy{% else %}Datenschutz{% endif %}</a> ·
+      <a href="{{ kofi_url or 'https://ko-fi.com/jakubwaller' }}">{% if lang == 'en' %}☕ Buy me a coffee{% else %}☕ Kaffee spendieren{% endif %}</a>
+    </footer>
+  </div>
 </body>
 </html>

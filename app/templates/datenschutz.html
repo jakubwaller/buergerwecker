@@ -1,15 +1,30 @@
 {% extends "base.html" %}
 {% block content %}
-  <h1>Datenschutz</h1>
-  <p>Verantwortlicher: Jakub Waller, Hamburg, Deutschland.</p>
-  <h2>Welche Daten werden gespeichert?</h2>
-  <p>E-Mail, Stadt, Sprache (de/en), gewählte Filter, Zeitstempel. Keine IP, kein Name, keine Cookies, kein Tracking.</p>
-  <h2>Rechtsgrundlage</h2>
-  <p>Art. 6(1)(a) DSGVO — Einwilligung per Double-Opt-In.</p>
-  <h2>Speicherdauer</h2>
-  <p>Abonnements laufen 90 Tage nach der Erstanmeldung automatisch ab, sofern sie nicht über den Erneuerungslink verlängert werden. Gelöschte Datensätze werden 30 Tage nach der Löschung endgültig entfernt.</p>
-  <h2>Auftragsverarbeiter</h2>
-  <p>Mailjet (EU-Server) und Resend (EU-Server) zum Versand der E-Mails. AVV-Verträge liegen vor.</p>
-  <h2>Deine Rechte</h2>
-  <p>Auskunft (Art. 15), Berichtigung (Art. 16), Löschung (Art. 17), Einschränkung (Art. 18), Datenübertragbarkeit (Art. 20), Widerruf der Einwilligung (Art. 7(3)). Kontakt: jakub@jakubwaller.eu.</p>
+  {% if lang == 'en' %}
+    <h1>Privacy</h1>
+    <p>Data controller: Jakub Waller, Hamburg, Germany.</p>
+    <h2>What data is stored?</h2>
+    <p>Email, city, language (de/en), chosen filters, timestamps. No IP address, no name, no cookies, no tracking.</p>
+    <h2>Legal basis</h2>
+    <p>Art. 6(1)(a) GDPR — consent via double opt-in.</p>
+    <h2>Retention period</h2>
+    <p>Subscriptions expire automatically 90 days after sign-up unless extended via the renewal link. Deleted records are permanently removed 30 days after deletion.</p>
+    <h2>Processors</h2>
+    <p>Mailjet (EU servers) for email delivery. Data processing agreement in place.</p>
+    <h2>Your rights</h2>
+    <p>Access (Art. 15), rectification (Art. 16), erasure (Art. 17), restriction (Art. 18), portability (Art. 20), withdrawal of consent (Art. 7(3)). Contact: jakub@jakubwaller.eu.</p>
+  {% else %}
+    <h1>Datenschutz</h1>
+    <p>Verantwortlicher: Jakub Waller, Hamburg, Deutschland.</p>
+    <h2>Welche Daten werden gespeichert?</h2>
+    <p>E-Mail, Stadt, Sprache (de/en), gewählte Filter, Zeitstempel. Keine IP, kein Name, keine Cookies, kein Tracking.</p>
+    <h2>Rechtsgrundlage</h2>
+    <p>Art. 6(1)(a) DSGVO — Einwilligung per Double-Opt-In.</p>
+    <h2>Speicherdauer</h2>
+    <p>Abonnements laufen 90 Tage nach der Erstanmeldung automatisch ab, sofern sie nicht über den Erneuerungslink verlängert werden. Gelöschte Datensätze werden 30 Tage nach der Löschung endgültig entfernt.</p>
+    <h2>Auftragsverarbeiter</h2>
+    <p>Mailjet (EU-Server) zum Versand der E-Mails. AVV-Vertrag liegt vor.</p>
+    <h2>Deine Rechte</h2>
+    <p>Auskunft (Art. 15), Berichtigung (Art. 16), Löschung (Art. 17), Einschränkung (Art. 18), Datenübertragbarkeit (Art. 20), Widerruf der Einwilligung (Art. 7(3)). Kontakt: jakub@jakubwaller.eu.</p>
+  {% endif %}
 {% endblock %}
