@@ -23,6 +23,9 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"
+markers = [
+  "live: hits real Leipzig endpoints; opt-in via LIVE_TESTS=1",
+]
 
 [build-system]
 requires = ["setuptools>=68"]
