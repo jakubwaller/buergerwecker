@@ -38,8 +38,8 @@
       {% if lang == 'en' %}All locations{% else %}Alle Standorte{% endif %}
     </label>
 
-    <fieldset>
-      <legend>{% if lang == 'en' %}Specific locations (uncheck "all" first){% else %}Bestimmte Standorte (oben Häkchen entfernen){% endif %}</legend>
+    <fieldset class="loc-list">
+      <legend>{% if lang == 'en' %}Specific locations{% else %}Bestimmte Standorte{% endif %}</legend>
       {% for name, uuid in locations.items() %}
         <label><input type="checkbox" name="locations" value="{{ uuid }}"> {{ name }}</label>
       {% endfor %}

@@ -161,6 +161,11 @@
       font-size: 0.9375rem;
       font-weight: 400;
     }
+    /* Locations list: stack one per row so wrapping long names stay aligned. */
+    fieldset.loc-list label {
+      display: flex;
+      margin: 0.45rem 0;
+    }
     button[type="submit"] {
       display: inline-block;
       margin-top: 1.75rem;
@@ -206,6 +211,22 @@
     <main class="card">
       {% block content %}{% endblock %}
     </main>
+    <script>
+      // Mutually-exclusive: "All locations" vs. specific locations.
+      (function () {
+        var all = document.querySelector('input[name="all_locations"]');
+        var specific = document.querySelectorAll('input[name="locations"]');
+        if (!all || !specific.length) return;
+        specific.forEach(function (cb) {
+          cb.addEventListener('change', function () {
+            if (cb.checked) all.checked = false;
+          });
+        });
+        all.addEventListener('change', function () {
+          if (all.checked) specific.forEach(function (cb) { cb.checked = false; });
+        });
+      })();
+    </script>
     <footer>
       Made with ♥ in Leipzig ·
       <a href="/impressum{% if lang == 'en' %}?lang=en{% endif %}">{% if lang == 'en' %}Imprint{% else %}Impressum{% endif %}</a> ·
