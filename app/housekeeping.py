@@ -238,7 +238,7 @@ def _send_summary_email(conn, cfg):
     s = stats(conn)
     body = "\n".join(f"{k}: {v}" for k, v in s.items())
     try:
-        mail_send(conn, cfg.developer_email, "Nightly summary", body,
+        mail_send(conn, cfg.developer_email, "[termine-notifier] ops summary", body,
                   idem_key=_idem_key(0, [], f"summary-{datetime.utcnow().date()}"))
     except Exception:
         pass
