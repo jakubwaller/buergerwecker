@@ -2,6 +2,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import time as time_cls
+from urllib.parse import urlencode
 from flask import Flask, request, render_template, redirect
 from app.config import load_config
 from app.db import connect, init_schema, transaction
@@ -65,6 +66,18 @@ def create_app() -> Flask:
     # Load config ONCE at startup. Missing env vars surface here, not on
     # the first real request.
     app.config["TERMINE_CONFIG"] = load_config()
+
+    @app.context_processor
+    def _template_helpers():
+        # Build the language-switch URL by preserving the current query string
+        # and overriding only `lang`. A bare `?lang=xx` would drop every other
+        # param — most importantly the admin `?token=`, which then 401s, and
+        # the form's `city` / `confirmed` / `subscribe_error`.
+        def switch_lang_url(target_lang: str) -> str:
+            args = request.args.to_dict(flat=True)
+            args["lang"] = target_lang
+            return f"{request.path}?{urlencode(args)}"
+        return {"switch_lang_url": switch_lang_url}
 
     @app.route("/healthz")
     def healthz():
