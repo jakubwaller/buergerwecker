@@ -296,7 +296,10 @@ def create_app() -> Flask:
             return ("Unauthorized", 401)
         from app.admin import stats
         conn = connect(cfg.db_path)
-        return render_template("admin.html", stats=stats(conn))
+        # Admin is an internal, English-only stats page — hide the (no-op)
+        # DE/EN switcher that base.html otherwise renders.
+        return render_template("admin.html", stats=stats(conn),
+                               show_lang_switcher=False)
 
     @app.route("/datenschutz")
     def datenschutz_route():
