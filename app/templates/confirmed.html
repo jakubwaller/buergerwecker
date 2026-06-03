@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}{% if lang == 'en' %}Subscription confirmed{% else %}Anmeldung bestätigt{% endif %} · Termine-Notifier{% endblock %}
+{% block content %}
+  <div class="notice notice-success" role="status">
+    {% if lang == 'en' %}
+      <strong>Subscription confirmed!</strong>
+    {% else %}
+      <strong>Anmeldung bestätigt!</strong>
+    {% endif %}
+  </div>
+
+  <h1>
+    {% if lang == 'en' %}You're all set{% else %}Alles erledigt{% endif %}
+  </h1>
+
+  <p>
+    {% if lang == 'en' %}
+      We'll email you as soon as a matching appointment becomes available.
+      You can change your filters or unsubscribe any time using the management
+      link we just sent you.
+    {% else %}
+      Wir benachrichtigen dich per E-Mail, sobald ein passender Termin frei
+      wird. Über den soeben verschickten Verwaltungs-Link kannst du deine
+      Filter jederzeit ändern oder dich abmelden.
+    {% endif %}
+  </p>
+{% endblock %}
