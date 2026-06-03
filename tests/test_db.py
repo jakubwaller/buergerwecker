@@ -68,6 +68,35 @@ def test_init_schema_is_idempotent(tmp_path):
     cur = conn.execute("SELECT value FROM meta WHERE key='schema_version'")
     assert cur.fetchone()[0] == str(SCHEMA_VERSION)
 
+def test_city_state_has_counter_columns(tmp_path):
+    conn = connect(str(tmp_path / "t.db"))
+    init_schema(conn)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(city_state)")}
+    for c in ("polls_today", "polls_total", "requests_today",
+              "requests_total", "counts_date"):
+        assert c in cols, f"missing city_state column: {c}"
+
+def test_migration_adds_counters_to_preexisting_city_state(tmp_path):
+    """An older DB whose city_state predates the counter columns must be
+    upgraded in place without losing rows."""
+    db = str(tmp_path / "old.db")
+    raw = sqlite3.connect(db)
+    raw.executescript(
+        "CREATE TABLE city_state ("
+        "  city TEXT PRIMARY KEY, zero_match_since TIMESTAMP,"
+        "  last_canary_alert_at TIMESTAMP,"
+        "  requests_today INTEGER NOT NULL DEFAULT 0,"
+        "  last_polled_at TIMESTAMP);"
+    )
+    raw.execute("INSERT INTO city_state (city) VALUES ('leipzig')")
+    raw.commit(); raw.close()
+    conn = connect(db)
+    init_schema(conn)  # must ALTER in the missing columns
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(city_state)")}
+    for c in ("polls_today", "polls_total", "requests_total", "counts_date"):
+        assert c in cols, f"migration missed column: {c}"
+    assert conn.execute("SELECT city FROM city_state").fetchone()["city"] == "leipzig"
+
 def test_wal_mode_enabled(tmp_path):
     db_path = tmp_path / "test.db"
     conn = connect(str(db_path))
