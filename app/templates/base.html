@@ -104,6 +104,26 @@
       font-size: 0.9375rem;
       margin-bottom: 1.75rem;
     }
+    .notice {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-input);
+      padding: 0.9rem 1.1rem;
+      font-size: 0.9375rem;
+      margin: 0 0 1.75rem;
+    }
+    .notice-success {
+      background: color-mix(in srgb, #16a34a 12%, var(--card));
+      border-color: color-mix(in srgb, #16a34a 35%, var(--border));
+      border-left: 3px solid #16a34a;
+      color: var(--text);
+    }
+    .notice-error {
+      background: color-mix(in srgb, #dc2626 12%, var(--card));
+      border-color: color-mix(in srgb, #dc2626 35%, var(--border));
+      border-left: 3px solid #dc2626;
+      color: var(--text);
+    }
+    .notice strong { font-weight: 600; }
     form > label {
       display: block;
       margin: 1.15rem 0 0.4rem;

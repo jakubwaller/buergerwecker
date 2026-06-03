@@ -1,5 +1,35 @@
 {% extends "base.html" %}
 {% block content %}
+  {% if confirmed == 'pending' %}
+    <div class="notice notice-success" role="status">
+      {% if lang == 'en' %}
+        <strong>Almost done!</strong> We've sent a confirmation email to your
+        inbox. Please open it and click the confirmation link to activate your
+        subscription — you won't receive any appointment alerts until you do.
+        (Check your spam folder if it hasn't arrived.)
+      {% else %}
+        <strong>Fast geschafft!</strong> Wir haben dir eine Bestätigungs-E-Mail
+        geschickt. Bitte öffne dein Postfach und klicke auf den
+        Bestätigungslink, um dein Abonnement zu aktivieren — vorher erhältst du
+        keine Termin-Benachrichtigungen. (Schau ggf. im Spam-Ordner nach.)
+      {% endif %}
+    </div>
+  {% endif %}
+
+  {% if error == 'mail' %}
+    <div class="notice notice-error" role="alert">
+      {% if lang == 'en' %}
+        <strong>Hmm, that didn't go through.</strong> We couldn't send the
+        confirmation email just now. Please check your address and try again in
+        a few minutes.
+      {% else %}
+        <strong>Das hat leider nicht geklappt.</strong> Wir konnten gerade
+        keine Bestätigungs-E-Mail senden. Bitte überprüfe deine Adresse und
+        versuche es in ein paar Minuten erneut.
+      {% endif %}
+    </div>
+  {% endif %}
+
   <h1>
     {% if lang == 'en' %}Never miss a Leipzig appointment again
     {% else %}Nie wieder freie Bürgerbüro-Termine verpassen{% endif %}

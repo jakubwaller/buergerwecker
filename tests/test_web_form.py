@@ -47,3 +47,36 @@ def test_form_offers_de_and_en(client):
     r_en = client.get("/?lang=en")
     assert r_de.status_code == 200 and r_en.status_code == 200
     assert b"Anmelden" in r_de.data or b"abonnieren" in r_de.data.lower()
+
+def test_pending_banner_shown_after_subscribe(client):
+    """/subscribe redirects to /?confirmed=pending. That page MUST tell the
+    user to check their inbox and confirm — otherwise the redirect looks like
+    the form just reloaded with no feedback. Regression test."""
+    r_de = client.get("/?confirmed=pending&lang=de")
+    assert r_de.status_code == 200
+    assert "fast geschafft" in r_de.data.decode().lower()
+    r_en = client.get("/?confirmed=pending&lang=en")
+    assert "almost done" in r_en.data.decode().lower()
+
+def test_no_pending_banner_on_bare_form(client):
+    """The pending banner must only appear after subscribing, not on the
+    bare form."""
+    body = client.get("/").data.decode().lower()
+    assert "fast geschafft" not in body
+    body_en = client.get("/?lang=en").data.decode().lower()
+    assert "almost done" not in body_en
+
+def test_subscribe_error_banner_shown(client):
+    """When a confirmation email could not be sent, /?subscribe_error=mail
+    shows a localized, retryable error banner."""
+    r_de = client.get("/?subscribe_error=mail&lang=de")
+    assert r_de.status_code == 200
+    assert "erneut" in r_de.data.decode().lower()
+    r_en = client.get("/?subscribe_error=mail&lang=en")
+    assert "try again" in r_en.data.decode().lower()
+
+def test_no_error_banner_on_bare_form(client):
+    body = client.get("/").data.decode().lower()
+    assert "leider nicht geklappt" not in body
+    body_en = client.get("/?lang=en").data.decode().lower()
+    assert "didn't go through" not in body_en

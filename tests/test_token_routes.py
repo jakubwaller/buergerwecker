@@ -46,6 +46,27 @@ def test_confirm_marks_subscription_confirmed(client):
         r2 = c.get(f"/confirm/{tok}")
     assert r2.status_code in (200, 302)
 
+def test_confirm_survives_manage_link_email_failure(client):
+    """A failure sending the (secondary) management-link email must NOT turn a
+    successful confirmation into a 500. The subscription is already confirmed;
+    the manage-link email is a convenience. Regression test for the production
+    'Internal Server Error' on /confirm."""
+    from unittest.mock import patch
+    c, sid = client
+    tok = _sign(sid, "confirm")
+    with patch("app.web._send_manage_link_email",
+               side_effect=RuntimeError("mail provider exploded")):
+        r = c.get(f"/confirm/{tok}")
+    assert r.status_code == 200, r.data[:300]
+    # The subscription must actually be confirmed despite the email failure.
+    conn = connect(os.environ["DB_PATH"])
+    row = conn.execute("SELECT confirmed_at FROM subscriptions WHERE id=?",
+                       (sid,)).fetchone()
+    assert row["confirmed_at"] is not None
+    # And the page must show a human-readable confirmation (sub is German).
+    assert b"best\xc3\xa4tigt" in r.data.lower()  # "bestätigt"
+
+
 def test_unsubscribe_soft_deletes(client):
     from unittest.mock import patch
     c, sid = client

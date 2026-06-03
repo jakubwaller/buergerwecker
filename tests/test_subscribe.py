@@ -43,6 +43,29 @@ def test_subscribe_success_with_mocked_mail(client):
     assert r.status_code in (200, 302)
     send.assert_called_once()
 
+def test_subscribe_mail_failure_does_not_500(client):
+    """If the confirmation email fails to send, /subscribe must NOT 500 and
+    must NOT pretend success. It surfaces a retryable error and drops the
+    orphaned (unconfirmable) pending row. Regression test for the same
+    unguarded-mail-send class of bug as /confirm."""
+    import os
+    from unittest.mock import patch
+    from app.db import connect
+    # Distinct IP + email so the session-global IP limiter and the DB row
+    # query don't collide with other subscribe tests.
+    email = "mailfail@example.com"
+    with patch("app.web._send_confirmation_email",
+               side_effect=RuntimeError("mail provider exploded")):
+        r = client.post("/subscribe", data=_form(email=email),
+                        headers={"X-Forwarded-For": "9.9.9.9"})
+    assert r.status_code == 302, r.data[:300]
+    assert "subscribe_error=mail" in r.headers.get("Location", "")
+    # The pending row must not linger as an unconfirmable orphan.
+    conn = connect(os.environ["DB_PATH"])
+    row = conn.execute("SELECT deleted_at FROM subscriptions WHERE email=?",
+                       (email,)).fetchone()
+    assert row is not None and row["deleted_at"] is not None
+
 def test_honeypot_silently_drops_and_does_not_email(client):
     from unittest.mock import patch
     f = _form()
