@@ -2,17 +2,17 @@ from __future__ import annotations
 import os
 import time as time_mod
 from datetime import datetime, timedelta
-import requests
 from app.config import load_config
 from app.db import connect, init_schema
 from app.cycle import run_cycle
+from app.http_session import CountingSession
 from app.housekeeping import run_once as housekeeping_run
 
 def main() -> None:
     cfg = load_config()
     conn = connect(cfg.db_path)
     init_schema(conn)
-    http = requests.Session()
+    http = CountingSession()
     consecutive_failures = 0
     while True:
         # Sleep until next minute boundary

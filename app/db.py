@@ -3,7 +3,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS subscriptions (
@@ -51,7 +51,11 @@ CREATE TABLE IF NOT EXISTS city_state (
   zero_match_since      TIMESTAMP,
   last_canary_alert_at  TIMESTAMP,
   requests_today        INTEGER NOT NULL DEFAULT 0,
-  last_polled_at        TIMESTAMP
+  last_polled_at        TIMESTAMP,
+  polls_today           INTEGER NOT NULL DEFAULT 0,
+  polls_total           INTEGER NOT NULL DEFAULT 0,
+  requests_total        INTEGER NOT NULL DEFAULT 0,
+  counts_date           TEXT
 );
 
 CREATE TABLE IF NOT EXISTS slots_cache (
@@ -92,8 +96,33 @@ def transaction(conn: sqlite3.Connection):
     else:
         conn.execute("COMMIT")
 
+def _add_missing_columns(conn: sqlite3.Connection, table: str,
+                         columns: dict[str, str]) -> None:
+    """Idempotently add columns that an existing table may predate.
+
+    `CREATE TABLE IF NOT EXISTS` never alters an already-present table, so
+    schema additions to a live DB need explicit `ALTER TABLE ADD COLUMN`. The
+    duplicate-column `try/except` makes this safe even if two processes (poller
+    and web) run init_schema concurrently.
+    """
+    existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+    for name, decl in columns.items():
+        if name in existing:
+            continue
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+        except sqlite3.OperationalError:
+            pass  # added concurrently by another process
+
 def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
+    # Upgrade pre-existing city_state rows that predate the poll/request counters.
+    _add_missing_columns(conn, "city_state", {
+        "polls_today":    "INTEGER NOT NULL DEFAULT 0",
+        "polls_total":    "INTEGER NOT NULL DEFAULT 0",
+        "requests_total": "INTEGER NOT NULL DEFAULT 0",
+        "counts_date":    "TEXT",
+    })
     conn.execute(
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?) "
         "ON CONFLICT (key) DO UPDATE SET value=excluded.value, "

@@ -65,6 +65,50 @@ def test_cycle_skips_already_seen_slot(db):
                   cycle_id="c1")
     send_d.assert_not_called()
 
+def test_cycle_records_poll_and_request_counts(db):
+    """run_cycle must attribute one poll and the HTTP-request delta per poll to
+    the polled city's counters."""
+    sid = insert_pending(db, email="a@x.com", city="leipzig",
+                        language="de", filter_=_f(["svc-A"]), ttl_days=90)
+    confirm(db, sid)
+    fake_slots = [Slot("2026-06-10", "10:30", "loc-1", "svc-A", "tok")]
+    def fake_poll(plan, http):
+        http.request_count += 3   # simulate 3 upstream HTTP calls
+        return fake_slots
+    with patch("app.cycle.get_scraper") as gs, patch("app.cycle.send_digest"):
+        scraper = MagicMock()
+        scraper.poll.side_effect = fake_poll
+        gs.return_value = scraper
+        run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
+    row = db.execute(
+        "SELECT polls_today, polls_total, requests_today, requests_total "
+        "FROM city_state WHERE city='leipzig'").fetchone()
+    assert row["polls_today"] == 1 and row["polls_total"] == 1
+    assert row["requests_today"] == 3 and row["requests_total"] == 3
+
+def test_cycle_resets_today_counters_on_date_rollover(db):
+    """A stale `counts_date` resets the *_today counters on the next cycle, but
+    the all-time totals keep accumulating."""
+    db.execute(
+        "INSERT INTO city_state (city, polls_today, polls_total, "
+        "requests_today, requests_total, counts_date) "
+        "VALUES ('leipzig', 99, 99, 99, 99, '2000-01-01')")
+    sid = insert_pending(db, email="a@x.com", city="leipzig",
+                        language="de", filter_=_f(["svc-A"]), ttl_days=90)
+    confirm(db, sid)
+    def fake_poll(plan, http):
+        http.request_count += 2
+        return [Slot("2026-06-10", "10:30", "loc-1", "svc-A", "tok")]
+    with patch("app.cycle.get_scraper") as gs, patch("app.cycle.send_digest"):
+        scraper = MagicMock(); scraper.poll.side_effect = fake_poll
+        gs.return_value = scraper
+        run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
+    row = db.execute("SELECT * FROM city_state WHERE city='leipzig'").fetchone()
+    assert row["polls_today"] == 1      # reset from 99, then +1
+    assert row["requests_today"] == 2   # reset from 99, then +2
+    assert row["polls_total"] == 100    # 99 + 1, not reset
+    assert row["requests_total"] == 101  # 99 + 2, not reset
+
 def test_cycle_respects_rate_limit(db):
     sid = insert_pending(db, email="a@x.com", city="leipzig",
                         language="de", filter_=_f(["svc-A"]), ttl_days=90)
