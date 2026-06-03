@@ -54,21 +54,22 @@ def _en_switch_href(html):
     assert m, "EN language-switch link not found"
     return m.group(1)
 
-def test_lang_switch_preserves_admin_token(client):
-    """Clicking EN/DE on /admin must keep the ?token= param, or the switch
-    navigates to an unauthenticated URL and 401s. Regression test."""
-    tok = "a" * 32  # matches ADMIN_TOKEN in the fixture
-    r = client.get(f"/admin?token={tok}")
-    assert r.status_code == 200, r.data[:200]
-    en_href = _en_switch_href(r.data.decode())
-    assert "lang=en" in en_href
-    assert f"token={tok}" in en_href
-
 def test_lang_switch_preserves_form_query_params(client):
     """Switching language on the post-subscribe page must keep ?confirmed so
     the banner (and city) survive the switch."""
     en_href = _en_switch_href(client.get("/?confirmed=pending&lang=de").data.decode())
     assert "confirmed=pending" in en_href and "lang=en" in en_href
+
+def test_admin_has_no_language_switcher(client):
+    """The admin page is an internal, English-only stats page. The inherited
+    DE/EN toggle does nothing there, so it must be hidden."""
+    r = client.get("/admin?token=" + "a" * 32)
+    assert r.status_code == 200
+    assert 'hreflang="en"' not in r.data.decode()  # switcher link absent
+
+def test_form_keeps_language_switcher(client):
+    """The public form must still offer the language switcher."""
+    assert 'hreflang="en"' in client.get("/").data.decode()
 
 def test_pending_banner_shown_after_subscribe(client):
     """/subscribe redirects to /?confirmed=pending. That page MUST tell the
