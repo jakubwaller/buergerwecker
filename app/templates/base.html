@@ -224,10 +224,14 @@
 </head>
 <body>
   <div class="container">
+    {# Hidden on non-localized pages (e.g. the English-only admin view) via
+       show_lang_switcher=False; defaults to shown everywhere else. #}
+    {% if show_lang_switcher | default(true) %}
     <nav class="lang-switcher" aria-label="{% if lang == 'en' %}Language{% else %}Sprache{% endif %}">
       <a href="{{ switch_lang_url('de') }}" class="lang-pill {% if lang != 'en' %}active{% endif %}" hreflang="de">DE</a>
       <a href="{{ switch_lang_url('en') }}" class="lang-pill {% if lang == 'en' %}active{% endif %}" hreflang="en">EN</a>
     </nav>
+    {% endif %}
     <main class="card">
       {% block content %}{% endblock %}
     </main>
