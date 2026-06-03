@@ -1,5 +1,6 @@
 from __future__ import annotations
 import sqlite3
+from datetime import datetime
 
 
 def stats(conn: sqlite3.Connection) -> dict:
@@ -41,6 +42,27 @@ def stats(conn: sqlite3.Connection) -> dict:
         "WHERE zero_match_since IS NOT NULL"
     ).fetchall()
     canary = {r["city"]: r["zero_match_since"] for r in canary_rows}
+    # Upstream poll/request counters + last-polled, per city. Defensive: a DB
+    # that hasn't been migrated to the counter columns yet reports zeros.
+    today = datetime.utcnow().date().isoformat()
+    upstream_by_city: dict[str, dict] = {}
+    last_polled_at_by_city: dict[str, str] = {}
+    try:
+        for r in conn.execute(
+            "SELECT city, polls_today, polls_total, requests_today, "
+            "requests_total, counts_date, last_polled_at FROM city_state"
+        ).fetchall():
+            fresh = r["counts_date"] == today
+            upstream_by_city[r["city"]] = {
+                "polls_today": r["polls_today"] if fresh else 0,
+                "polls_total": r["polls_total"],
+                "requests_today": r["requests_today"] if fresh else 0,
+                "requests_total": r["requests_total"],
+            }
+            if r["last_polled_at"]:
+                last_polled_at_by_city[r["city"]] = r["last_polled_at"]
+    except sqlite3.OperationalError:
+        pass  # pre-migration DB; counters not available yet
     return {
         "active_subscriptions":
             scalar("SELECT COUNT(*) FROM subscriptions WHERE deleted_at IS NULL "
@@ -61,6 +83,12 @@ def stats(conn: sqlite3.Connection) -> dict:
             scalar("SELECT COUNT(*) FROM sent_idempotency "
                    "WHERE sent_at > datetime('now','-7 days') "
                    "AND provider != 'pending'"),
+        "upstream_by_city": upstream_by_city,
+        "last_polled_at_by_city": last_polled_at_by_city,
+        "slots_cached": scalar("SELECT COUNT(*) FROM slots_cache"),
+        "emails_sent_total":
+            scalar("SELECT COUNT(*) FROM sent_idempotency WHERE provider != 'pending'"),
+        "last_failure_alert_at": meta_val("last_failure_alert_at"),
         "last_housekeeping_at": meta_val("last_housekeeping_at"),
         "last_backup_at":       meta_val("last_backup_at"),
     }

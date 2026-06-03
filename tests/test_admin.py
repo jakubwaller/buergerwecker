@@ -1,6 +1,8 @@
 import pytest
+from datetime import datetime
 from app.web import create_app
 from app.db import connect, init_schema
+from app.admin import stats
 import os
 
 @pytest.fixture
@@ -49,3 +51,41 @@ def test_go_route_redirects_on_cache_hit(client):
 def test_go_route_returns_410_on_miss(client):
     r = client.get("/go/nonexistent-token", follow_redirects=False)
     assert r.status_code == 410
+
+def test_admin_renders_new_metrics(client):
+    r = client.get("/admin?token=admin-tok")
+    assert r.status_code == 200
+    for key in (b"upstream_by_city", b"slots_cached",
+                b"emails_sent_total", b"last_failure_alert_at"):
+        assert key in r.data, f"missing admin metric: {key!r}"
+
+def test_stats_includes_upstream_and_extra_metrics(tmp_path):
+    conn = connect(str(tmp_path / "s.db")); init_schema(conn)
+    today = datetime.utcnow().date().isoformat()
+    conn.execute(
+        "INSERT INTO city_state (city, polls_today, polls_total, requests_today, "
+        "requests_total, counts_date, last_polled_at) "
+        "VALUES ('leipzig', 5, 50, 12, 120, ?, ?)",
+        (today, "2026-06-03T10:00:00"))
+    conn.execute("INSERT INTO slots_cache (slot_token, city, upstream_url) "
+                 "VALUES ('t', 'leipzig', 'u')")
+    conn.execute("INSERT INTO sent_idempotency (idem_key, provider) VALUES ('k', 'mailjet')")
+    conn.execute("INSERT INTO sent_idempotency (idem_key, provider) VALUES ('p', 'pending')")
+    conn.execute("INSERT INTO meta (key, value) VALUES ('last_failure_alert_at', '2026-06-01T00:00:00')")
+    s = stats(conn)
+    up = s["upstream_by_city"]["leipzig"]
+    assert up == {"polls_today": 5, "polls_total": 50,
+                  "requests_today": 12, "requests_total": 120}
+    assert s["last_polled_at_by_city"]["leipzig"] == "2026-06-03T10:00:00"
+    assert s["slots_cached"] == 1
+    assert s["emails_sent_total"] == 1   # 'pending' excluded
+    assert s["last_failure_alert_at"] == "2026-06-01T00:00:00"
+
+def test_stats_today_counts_gated_by_stale_date(tmp_path):
+    conn = connect(str(tmp_path / "s.db")); init_schema(conn)
+    conn.execute(
+        "INSERT INTO city_state (city, polls_today, polls_total, requests_today, "
+        "requests_total, counts_date) VALUES ('leipzig', 99, 50, 99, 120, '2000-01-01')")
+    up = stats(conn)["upstream_by_city"]["leipzig"]
+    assert up["polls_today"] == 0 and up["requests_today"] == 0   # stale day -> 0
+    assert up["polls_total"] == 50 and up["requests_total"] == 120  # totals intact
