@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 import os
 from datetime import time as time_cls
 from flask import Flask, request, render_template, redirect
@@ -11,6 +12,8 @@ from app.ratelimit import GLOBAL_IP_LIMITER, email_rate_limit_ok
 from app.tokens import sign, verify, InvalidToken
 from app.planning import would_exceed_cap
 from app.mail import send as mail_send, _idem_key
+
+log = logging.getLogger(__name__)
 
 
 def _parse_hhmm(s: str) -> time_cls:
@@ -76,10 +79,17 @@ def create_app() -> Flask:
         if lang not in ("de", "en"):
             lang = "de"
         city = request.args.get("city", "leipzig")
+        # `confirmed=pending` / `subscribe_error=mail` are set by the /subscribe
+        # redirect so the form can show a "check your inbox" banner or a
+        # retryable error instead of silently re-rendering.
+        confirmed = request.args.get("confirmed")
+        error = request.args.get("subscribe_error")
         catalog = load_catalog(city)
         return render_template("form.html",
                                lang=lang,
                                city=city,
+                               confirmed=confirmed,
+                               error=error,
                                appointment_types=catalog.appointment_types,
                                locations=catalog.locations,
                                kofi_url=app.config["TERMINE_CONFIG"].kofi_url)
@@ -139,7 +149,16 @@ def create_app() -> Flask:
             sub_id = insert_pending(conn, email=email, city=city,
                                     language=lang, filter_=f,
                                     ttl_days=cfg.subscription_ttl_days)
-        _send_confirmation_email(conn, sub_id, email, lang, cfg)
+        # The confirmation email is the ONLY way the user can complete signup,
+        # so — unlike the manage-link email in /confirm — we must NOT claim
+        # success if it fails. Surface a retryable error instead of a 500 and
+        # drop the orphaned pending row so it can't linger unconfirmable.
+        try:
+            _send_confirmation_email(conn, sub_id, email, lang, cfg)
+        except Exception:
+            log.exception("confirmation email failed for sub %s", sub_id)
+            soft_delete(conn, sub_id)
+            return redirect("/?subscribe_error=mail")
         return redirect("/?confirmed=pending")
 
     @app.route("/confirm/<token>")
@@ -153,8 +172,22 @@ def create_app() -> Flask:
             return ("Invalid token", 400)
         conn = connect(cfg.db_path)
         confirm(conn, sub_id)
-        _send_manage_link_email(conn, sub_id, cfg)
-        return ("Subscription confirmed.", 200)
+        row = conn.execute("SELECT language FROM subscriptions WHERE id=?",
+                           (sub_id,)).fetchone()
+        lang = row["language"] if row else "de"
+        # The management-link email is a convenience, NOT part of confirmation.
+        # The subscription is already confirmed above (autocommit), so a
+        # mail-provider failure must never turn this into a 500 — log it and
+        # still show the user their success page.
+        try:
+            _send_manage_link_email(conn, sub_id, cfg)
+        except Exception:
+            log.exception(
+                "manage-link email failed for sub %s; confirmation still succeeded",
+                sub_id,
+            )
+        return render_template("confirmed.html", lang=lang,
+                               kofi_url=cfg.kofi_url), 200
 
     @app.route("/unsubscribe/<token>")
     def unsubscribe_route(token):
