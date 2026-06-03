@@ -225,8 +225,8 @@
 <body>
   <div class="container">
     <nav class="lang-switcher" aria-label="{% if lang == 'en' %}Language{% else %}Sprache{% endif %}">
-      <a href="?lang=de" class="lang-pill {% if lang != 'en' %}active{% endif %}" hreflang="de">DE</a>
-      <a href="?lang=en" class="lang-pill {% if lang == 'en' %}active{% endif %}" hreflang="en">EN</a>
+      <a href="{{ switch_lang_url('de') }}" class="lang-pill {% if lang != 'en' %}active{% endif %}" hreflang="de">DE</a>
+      <a href="{{ switch_lang_url('en') }}" class="lang-pill {% if lang == 'en' %}active{% endif %}" hreflang="en">EN</a>
     </nav>
     <main class="card">
       {% block content %}{% endblock %}
