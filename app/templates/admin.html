@@ -1,9 +1,148 @@
 {% extends "base.html" %}
+{% block title %}Admin · Leipzig-Termine{% endblock %}
+
+{% block head %}
+<style>
+  .adm-title-sub { color: var(--text-muted); font-weight: 500; }
+  .adm-caption { color: var(--text-muted); font-size: 0.9rem; margin: -0.75rem 0 1.5rem; }
+  .adm-section { margin-top: 1.9rem; }
+  .adm-section:first-of-type { margin-top: 0.5rem; }
+  .adm-section > h2 { margin-bottom: 0.6rem; }
+
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+    gap: 0.7rem;
+  }
+  .stat {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-input);
+    padding: 0.85rem 0.95rem;
+  }
+  .stat-num {
+    font-size: 1.7rem; font-weight: 700; line-height: 1.05;
+    letter-spacing: -0.02em; font-variant-numeric: tabular-nums;
+  }
+  .stat-label { font-size: 0.78rem; color: var(--text-muted); margin-top: 0.2rem; }
+
+  .adm-table { width: 100%; border-collapse: collapse; font-size: 0.9375rem; }
+  .adm-table td { padding: 0.55rem 0; border-top: 1px solid var(--border); }
+  .adm-table tr:first-child td { border-top: none; }
+  .adm-table td.k { color: var(--text-muted); }
+  .adm-table td.v { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .city {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-input);
+    padding: 0.1rem 1rem 0.7rem;
+    margin-top: 0.75rem;
+  }
+  .city-head {
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 0.4rem; padding: 0.7rem 0 0.55rem;
+  }
+  .city-name { font-weight: 600; font-size: 1.05rem; letter-spacing: -0.01em; }
+  .status { font-size: 0.875rem; color: var(--text-muted); display: inline-flex; align-items: center; }
+
+  .dot {
+    width: 0.55rem; height: 0.55rem; border-radius: 999px;
+    margin-right: 0.45rem; display: inline-block; flex: none;
+  }
+  .dot-ok { background: #16a34a; }
+  .dot-warn { background: #d97706; }
+  .dot-bad { background: #dc2626; }
+
+  time.ts.stale { color: #dc2626; font-weight: 600; }
+  .adm-muted { color: var(--text-muted); }
+</style>
+{% endblock %}
+
 {% block content %}
-  <h1>Admin</h1>
-  <ul>
-    {% for k, v in stats.items() %}
-      <li><strong>{{ k }}:</strong> {{ v }}</li>
-    {% endfor %}
-  </ul>
+  {% set s = stats %}
+  <h1>Admin <span class="adm-title-sub">· Leipzig-Termine</span></h1>
+  <p class="adm-caption">Internal ops dashboard · times in your local zone (hover for UTC).</p>
+
+  <section class="adm-section">
+    <div class="stat-grid">
+      <div class="stat"><div class="stat-num">{{ s.active_subscriptions }}</div><div class="stat-label">Active subscriptions</div></div>
+      <div class="stat"><div class="stat-num">{{ s.pending_confirmation }}</div><div class="stat-label">Pending confirmation</div></div>
+      <div class="stat"><div class="stat-num">{{ s.signups_last_24h }}</div><div class="stat-label">Signups · 24h</div></div>
+      <div class="stat"><div class="stat-num">{{ s.signups_last_7d }}</div><div class="stat-label">Signups · 7d</div></div>
+      <div class="stat"><div class="stat-num">{{ s.digests_sent_last_7d }}</div><div class="stat-label">Digests sent · 7d</div></div>
+      <div class="stat"><div class="stat-num">{{ s.emails_sent_total }}</div><div class="stat-label">Emails sent · total</div></div>
+      <div class="stat"><div class="stat-num">{{ s.slots_cached }}</div><div class="stat-label">Slots cached</div></div>
+    </div>
+  </section>
+
+  <section class="adm-section">
+    <h2>Cities</h2>
+    {% set city_keys = (s.upstream_by_city.keys()|list)
+                     + (s.active_subscriptions_by_city.keys()|list)
+                     + (s.last_polled_at_by_city.keys()|list) %}
+    {% set cities = city_keys|unique|list %}
+    {% if cities %}
+      {% for city in cities %}
+        {% set up = s.upstream_by_city.get(city, {}) %}
+        {% set zms = s.parser_zero_match_since_by_city.get(city) %}
+        {% set lp = s.last_polled_at_by_city.get(city) %}
+        <div class="city">
+          <div class="city-head">
+            <span class="city-name">{{ city|capitalize }}</span>
+            {% if zms %}
+              <span class="status"><span class="dot dot-warn"></span>No matches since <time class="ts" data-ts="{{ zms }}">{{ zms }}</time></span>
+            {% else %}
+              <span class="status"><span class="dot dot-ok"></span>Matching slots</span>
+            {% endif %}
+          </div>
+          <table class="adm-table">
+            <tr><td class="k">Last polled</td><td class="v">{% if lp %}<time class="ts" data-ts="{{ lp }}" data-warn-sec="180">{{ lp }}</time>{% else %}<span class="adm-muted">never</span>{% endif %}</td></tr>
+            <tr><td class="k">Active subs</td><td class="v">{{ s.active_subscriptions_by_city.get(city, 0) }}</td></tr>
+            <tr><td class="k">Plans</td><td class="v">{{ s.current_plan_count_by_city.get(city, 0) }}</td></tr>
+            <tr><td class="k">Polls</td><td class="v">{{ up.get('polls_today', 0) }} today · {{ up.get('polls_total', 0) }} total</td></tr>
+            <tr><td class="k">Requests</td><td class="v">{{ up.get('requests_today', 0) }} today · {{ up.get('requests_total', 0) }} total</td></tr>
+          </table>
+        </div>
+      {% endfor %}
+    {% else %}
+      <p class="adm-muted">No polling activity yet.</p>
+    {% endif %}
+  </section>
+
+  <section class="adm-section">
+    <h2>System</h2>
+    <table class="adm-table">
+      <tr><td class="k">Last housekeeping</td><td class="v">{% if s.last_housekeeping_at %}<time class="ts" data-ts="{{ s.last_housekeeping_at }}" data-warn-sec="93600">{{ s.last_housekeeping_at }}</time>{% else %}<span class="adm-muted">never</span>{% endif %}</td></tr>
+      <tr><td class="k">Last backup</td><td class="v">{% if s.last_backup_at %}<time class="ts" data-ts="{{ s.last_backup_at }}" data-warn-sec="93600">{{ s.last_backup_at }}</time>{% else %}<span class="adm-muted">never</span>{% endif %}</td></tr>
+      <tr><td class="k">Failure alert</td><td class="v">{% if s.last_failure_alert_at %}<span class="dot dot-bad"></span><time class="ts" data-ts="{{ s.last_failure_alert_at }}">{{ s.last_failure_alert_at }}</time>{% else %}<span class="dot dot-ok"></span>None{% endif %}</td></tr>
+    </table>
+  </section>
+
+  <script>
+    (function () {
+      function rel(iso) {
+        if (!iso) return null;
+        var str = iso;
+        // Naive timestamps from the backend are UTC; mark them so as such.
+        if (!/[zZ]$|[+-]\d\d:?\d\d$/.test(str)) str += 'Z';
+        var d = new Date(str);
+        if (isNaN(d.getTime())) return null;
+        var sec = Math.round((Date.now() - d.getTime()) / 1000);
+        var txt = sec < 0 ? 'just now'
+          : sec < 60 ? 'just now'
+          : sec < 3600 ? Math.floor(sec / 60) + 'm ago'
+          : sec < 86400 ? Math.floor(sec / 3600) + 'h ago'
+          : Math.floor(sec / 86400) + 'd ago';
+        return { txt: txt, local: d.toLocaleString(), sec: sec };
+      }
+      document.querySelectorAll('time.ts[data-ts]').forEach(function (el) {
+        var r = rel(el.getAttribute('data-ts'));
+        if (!r) return;
+        el.title = el.getAttribute('data-ts') + ' UTC → ' + r.local;
+        el.textContent = r.txt;
+        var warn = parseInt(el.getAttribute('data-warn-sec') || '0', 10);
+        if (warn && r.sec > warn) el.classList.add('stale');
+      });
+    })();
+  </script>
 {% endblock %}

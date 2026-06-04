@@ -31,7 +31,7 @@ def test_admin_requires_token(client):
 def test_admin_with_token(client):
     r = client.get("/admin?token=admin-tok")
     assert r.status_code == 200
-    assert b"active_subscriptions" in r.data
+    assert b"Active subscriptions" in r.data
 
 def test_admin_wrong_token(client):
     r = client.get("/admin?token=nope")
@@ -85,9 +85,24 @@ def test_go_link_from_email_resolves_for_datetime_token(client):
 def test_admin_renders_new_metrics(client):
     r = client.get("/admin?token=admin-tok")
     assert r.status_code == 200
-    for key in (b"upstream_by_city", b"slots_cached",
-                b"emails_sent_total", b"last_failure_alert_at"):
-        assert key in r.data, f"missing admin metric: {key!r}"
+    # Always-present labels (Overview + System sections render regardless of data).
+    for label in (b"Slots cached", b"Emails sent", b"Failure alert", b"Last backup"):
+        assert label in r.data, f"missing admin metric: {label!r}"
+
+def test_admin_renders_city_panel_with_data(client):
+    from app.db import connect
+    conn = connect(os.environ["DB_PATH"])
+    today = datetime.utcnow().date().isoformat()
+    conn.execute(
+        "INSERT INTO city_state (city, polls_today, polls_total, requests_today, "
+        "requests_total, counts_date, last_polled_at) "
+        "VALUES ('leipzig', 5, 50, 12, 120, ?, ?)",
+        (today, "2026-06-04T10:00:00"))
+    r = client.get("/admin?token=admin-tok")
+    assert r.status_code == 200
+    assert b"Leipzig" in r.data          # capitalized city name
+    assert b"Polls" in r.data            # per-city panel rendered
+    assert b"Matching slots" in r.data   # canary clear (no zero_match_since row)
 
 def test_stats_includes_upstream_and_extra_metrics(tmp_path):
     conn = connect(str(tmp_path / "s.db")); init_schema(conn)
