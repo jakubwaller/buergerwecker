@@ -1,5 +1,6 @@
 from __future__ import annotations
 import sqlite3
+import urllib.parse
 from datetime import datetime, timedelta
 import requests
 from app.filters import matches
@@ -132,10 +133,16 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
         scfg = load_catalog(sub.city).scraper_config
         for slot in candidates:
             upstream = _build_upstream_url(scfg, slot)
+            # The booking_token is a URL-encoded datetime (e.g. ...T17%3a20%3a00%2b02%3a00).
+            # The email links to /go/<booking_token>, and Flask URL-DECODES the path
+            # param on click — so the slots_cache key must be the DECODED form, or the
+            # /go lookup misses and every link 410s. (upstream_url keeps the encoded
+            # token: it sits in a query string the city site decodes itself.)
+            slot_token = urllib.parse.unquote(slot.booking_token)
             conn.execute(
                 "INSERT INTO slots_cache (slot_token, city, upstream_url) "
                 "VALUES (?, ?, ?) ON CONFLICT (slot_token) DO NOTHING",
-                (slot.booking_token, sub.city, upstream),
+                (slot_token, sub.city, upstream),
             )
         send_digest(conn=conn, subscription=sub, matched_slots=candidates,
                     cycle_id=cycle_id, cfg=cfg)
