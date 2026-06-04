@@ -48,10 +48,15 @@ class Slot:
     date: str          # YYYY-MM-DD
     time_str: str      # HH:MM
     location_uuid: str
-    service_uuid: str
+    service_uuid: str  # appointment type this slot was searched for (from the plan)
     booking_token: str # opaque, session-bound — excluded from hash
+    resource_uuid: str = ""  # the counter/staff resource the upstream button carries
 
     def hash(self) -> str:
+        # Identity is (day, time, office, service). The resource is deliberately
+        # excluded: two counters offering the same service slot at the same office
+        # and minute are one notification for the subscriber. booking_token is
+        # session-bound and also excluded.
         payload = f"{self.date}|{self.time_str}|{self.location_uuid}|{self.service_uuid}"
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 

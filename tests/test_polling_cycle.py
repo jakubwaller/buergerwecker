@@ -51,6 +51,46 @@ def test_cycle_sends_one_digest_per_subscriber_on_match(db):
         assert args.kwargs["subscription"].id == sid
         assert args.kwargs["matched_slots"] == fake_slots
 
+def test_cycle_dedups_same_slot_offered_by_multiple_resources(db):
+    """Two counters (resources) offering the same service slot at the same office
+    and minute are ONE notification — they share a hash (resource excluded), so the
+    digest must contain a single line, not a duplicate."""
+    sid = insert_pending(db, email="a@x.com", city="leipzig",
+                        language="de", filter_=_f(["svc-A"]), ttl_days=90)
+    confirm(db, sid)
+    dup_slots = [
+        Slot("2026-06-10", "10:30", "loc-1", "svc-A", "tok", "resource-1"),
+        Slot("2026-06-10", "10:30", "loc-1", "svc-A", "tok", "resource-2"),
+    ]
+    with patch("app.cycle.get_scraper") as gs, \
+         patch("app.cycle.send_digest") as send_d:
+        scraper = MagicMock()
+        scraper.poll.return_value = dup_slots
+        gs.return_value = scraper
+        run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
+        send_d.assert_called_once()
+        assert len(send_d.call_args.kwargs["matched_slots"]) == 1
+
+def test_cycle_aggregates_slots_for_multi_type_subscriber(db):
+    """A subscriber with two appointment types fans into two plans; a digest
+    aggregates the matching slots from both."""
+    sid = insert_pending(db, email="a@x.com", city="leipzig",
+                        language="de", filter_=_f(["svc-A", "svc-B"]), ttl_days=90)
+    confirm(db, sid)
+    def poll_by_type(plan, http):
+        if plan.appointment_type == "svc-A":
+            return [Slot("2026-06-10", "10:30", "loc-1", "svc-A", "tA", "r1")]
+        return [Slot("2026-06-11", "09:00", "loc-2", "svc-B", "tB", "r2")]
+    with patch("app.cycle.get_scraper") as gs, \
+         patch("app.cycle.send_digest") as send_d:
+        scraper = MagicMock()
+        scraper.poll.side_effect = poll_by_type
+        gs.return_value = scraper
+        run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
+        send_d.assert_called_once()
+        services = {s.service_uuid for s in send_d.call_args.kwargs["matched_slots"]}
+        assert services == {"svc-A", "svc-B"}
+
 def test_cycle_skips_already_seen_slot(db):
     sid = insert_pending(db, email="a@x.com", city="leipzig",
                         language="de", filter_=_f(["svc-A"]), ttl_days=90)

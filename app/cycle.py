@@ -98,8 +98,12 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
     for sub in subs:
         if sub.last_notified_at and sub.last_notified_at > rate_cutoff:
             continue
-        # Gather candidate slots from any plan that covers this subscription's filter
+        # Gather candidate slots from any plan that covers this subscription's filter.
+        # Dedupe by hash within the cycle: the same logical slot (day/time/office/
+        # service) can surface from two resources (counters) or two overlapping
+        # plans — Slot.hash() excludes the resource, so collapse them to one line.
         candidates: list[Slot] = []
+        seen_in_cycle: set[str] = set()
         for plan in plans:
             if plan.city != sub.city:
                 continue
@@ -108,8 +112,12 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
             for slot in slots_by_plan.get(plan.key(), []):
                 if not matches(sub.sub_filter, slot):
                     continue
-                if has_seen_slot(conn, sub.id, slot.hash()):
+                slot_hash = slot.hash()
+                if slot_hash in seen_in_cycle:
                     continue
+                if has_seen_slot(conn, sub.id, slot_hash):
+                    continue
+                seen_in_cycle.add(slot_hash)
                 candidates.append(slot)
         if not candidates:
             continue

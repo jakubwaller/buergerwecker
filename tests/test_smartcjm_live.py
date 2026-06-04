@@ -67,6 +67,12 @@ def test_live_poll_completes_without_raising(http, scfg, appointment_types):
     plan = PollPlan(city="leipzig", appointment_type=target_uid, locations="all")
     slots = smartcjm.poll(plan, http=http)
     assert isinstance(slots, list)
+    # Canary for the resource-as-service regression: any returned slot must carry
+    # the service we searched for, not the button's resource uuid. This single
+    # assertion would have caught the original production outage on any live run
+    # that returned at least one slot.
+    if slots:
+        assert all(s.service_uuid == target_uid for s in slots)
 
 
 def test_live_get_service_list_endpoint_returns_known_services(http, scfg, appointment_types):
