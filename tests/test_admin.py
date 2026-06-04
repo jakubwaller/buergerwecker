@@ -52,6 +52,36 @@ def test_go_route_returns_410_on_miss(client):
     r = client.get("/go/nonexistent-token", follow_redirects=False)
     assert r.status_code == 410
 
+def test_go_link_from_email_resolves_for_datetime_token(client):
+    """End-to-end: the booking link the digest email contains must resolve via /go,
+    not 410. Smart-CJM slot tokens are URL-encoded datetimes (T%3a..%2b..); Flask
+    decodes the /go path param on click, so slots_cache must be keyed so the decoded
+    token matches what run_cycle stored."""
+    from unittest.mock import patch, MagicMock
+    from datetime import time
+    from app.db import connect
+    from app.models import Slot, Filter
+    from app.repo import insert_pending, confirm
+    from app.cycle import run_cycle
+    conn = connect(os.environ["DB_PATH"])
+    f = Filter(appointment_types=["29cd0a26-fe7a-4d65-88cd-1e05fd749c71"], locations="all",
+               weekdays=[1, 2, 3, 4, 5, 6, 7], time_window_start=time(0, 0),
+               time_window_end=time(23, 59))
+    sid = insert_pending(conn, email="a@x.com", city="leipzig", language="de",
+                         filter_=f, ttl_days=90)
+    confirm(conn, sid)
+    # booking_token as it appears in the upstream button / email link: URL-encoded datetime
+    booking_token = "2026-06-18T17%3a20%3a00%2b02%3a00"
+    slot = Slot("2026-06-18", "17:20", "loc-1",
+                "29cd0a26-fe7a-4d65-88cd-1e05fd749c71", booking_token, "res-1")
+    with patch("app.cycle.get_scraper") as gs, patch("app.cycle.send_digest"):
+        sc = MagicMock(); sc.poll.return_value = [slot]; gs.return_value = sc
+        run_cycle(conn, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
+    # The email link is /go/<booking_token>; the browser/Flask decodes the path on click.
+    r = client.get(f"/go/{booking_token}", follow_redirects=False)
+    assert r.status_code == 302
+    assert "appointment_reserve" in r.headers["Location"]
+
 def test_admin_renders_new_metrics(client):
     r = client.get("/admin?token=admin-tok")
     assert r.status_code == 200
