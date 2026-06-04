@@ -27,11 +27,28 @@ def test_fetch_services_parses_response_into_name_uid_dict():
             ],
         },
     )
-    out = catalog_sync.fetch_services(http, LEIPZIG_BASE, LEIPZIG_UID)
-    assert out == {
+    de, en = catalog_sync.fetch_services(http, LEIPZIG_BASE, LEIPZIG_UID)
+    assert de == {
         "Personalausweis beantragen": "u1",
         "Reisepass beantragen": "u2",
     }
+    # No data.display_name_en in the response → English falls back to German.
+    assert en == de
+
+
+def test_fetch_services_extracts_english_from_data_display_name_en():
+    """English service labels live in result.data.display_name_en (the lang
+    query param is ignored by get_service_list); missing → fall back to German."""
+    http = MagicMock()
+    http.get.return_value = MagicMock(status_code=200, json=lambda: {
+        "success": True, "results": [
+            {"uid": "u1", "display_name": "Personalausweis beantragen",
+             "data": {"display_name_en": "Applying for an identity card"}},
+            {"uid": "u2", "display_name": "Reisepass beantragen", "data": {}},
+        ]})
+    de, en = catalog_sync.fetch_services(http, LEIPZIG_BASE, LEIPZIG_UID)
+    assert de == {"Personalausweis beantragen": "u1", "Reisepass beantragen": "u2"}
+    assert en == {"Applying for an identity card": "u1", "Reisepass beantragen": "u2"}
 
 
 def test_fetch_services_strips_trailing_whitespace_from_names():
@@ -43,8 +60,8 @@ def test_fetch_services_strips_trailing_whitespace_from_names():
             {"uid": "u1", "display_name": "An- oder Ummeldung Wohnsitz "},
         ]},
     )
-    out = catalog_sync.fetch_services(http, LEIPZIG_BASE, LEIPZIG_UID)
-    assert "An- oder Ummeldung Wohnsitz" in out  # no trailing space
+    de, _en = catalog_sync.fetch_services(http, LEIPZIG_BASE, LEIPZIG_UID)
+    assert "An- oder Ummeldung Wohnsitz" in de  # no trailing space
 
 
 def test_fetch_services_raises_on_success_false():
@@ -129,6 +146,57 @@ def test_fetch_locations_returns_union_across_services():
         "Bürgerbüro Eins": "loc-1",
         "Bürgerbüro Zwei": "loc-2",
     }
+
+
+def test_fetch_locations_passes_lang_to_the_wizard():
+    """English location labels come from the wizard rendered with lang=en, so
+    fetch_locations must thread the requested language into its GET/POST URLs."""
+    http = _build_probe_http(
+        services_page=_services_page_html(),
+        locations_pages_by_target_uid={"svc": {"loc-1": "Resident Services Office X"}},
+    )
+    catalog_sync.fetch_locations(http, LEIPZIG_BASE, LEIPZIG_UID,
+                                 service_uids=["svc"], steps=STEPS, lang="en")
+    urls = ([c.args[0] for c in http.get.call_args_list]
+            + [c.args[0] for c in http.post.call_args_list])
+    assert any("lang=en" in u for u in urls), "wizard requests must carry lang=en"
+    assert not any("lang=de" in u for u in urls)
+
+
+def test_parse_location_checkboxes_collapses_internal_whitespace():
+    """The English wizard emits labels like 'Resident Services Office  Leutzsch'
+    with a double space; collapse runs of whitespace to a single space."""
+    html = ('<form>'
+            '<input type="checkbox" name="locations" value="loc-1" id="l1"/>'
+            '<label for="l1">\n\t\tResident Services Office  Leutzsch\n\t\tStreet 1</label>'
+            '</form>')
+    out = catalog_sync._parse_location_checkboxes(html)
+    assert out == {"loc-1": "Resident Services Office Leutzsch"}
+
+
+def test_sync_city_writes_english_service_file_on_drift(tmp_catalog_root):
+    """When the service catalog drifts, the English label file is rewritten
+    alongside the German one so the two never diverge."""
+    http = _build_probe_http(
+        services_page=_services_page_html(),
+        locations_pages_by_target_uid={
+            "u1": {"loc-1": "Bürgerbüro Eins"},
+            "u2": {"loc-1": "Bürgerbüro Eins"},
+        },
+    )
+    http.get.side_effect = _stack_get([
+        MagicMock(status_code=200, json=lambda: {"success": True, "results": [
+            {"uid": "u1", "display_name": "Personalausweis beantragen",
+             "data": {"display_name_en": "Applying for an identity card"}},
+            {"uid": "u2", "display_name": "Reisepass beantragen",
+             "data": {"display_name_en": "Applying for a passport"}},
+        ]}),
+    ], probe_get_side_effect=http.get.side_effect)
+    catalog_sync.sync_city("leipzig", http, alert_fn=lambda *a, **k: None,
+                           catalog_root=tmp_catalog_root)
+    en = json.loads((tmp_catalog_root / "leipzig" / "appointment_type.en.json").read_text())
+    assert en == {"Applying for a passport": "u2",
+                  "Applying for an identity card": "u1"}
 
 
 def test_fetch_locations_handles_8443_redirect():

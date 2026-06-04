@@ -89,6 +89,45 @@ def test_no_pending_banner_on_bare_form(client):
     body_en = client.get("/?lang=en").data.decode().lower()
     assert "almost done" not in body_en
 
+def test_form_en_shows_english_service_and_location_labels(client):
+    """The English form must render Leipzig's English service/location labels,
+    not the German ones (regression: EN page showed a German dropdown)."""
+    body = client.get("/?lang=en").data.decode()
+    assert "Applying for an identity card" in body          # EN service label
+    assert "Resident Services Office Otto-Schill-Straße" in body  # EN location label
+    assert "Personalausweis beantragen" not in body         # German label gone
+    assert "Bürgerbüro Otto-Schill-Straße (Zentrum)" not in body
+
+
+def test_form_de_still_shows_german_labels(client):
+    body = client.get("/?lang=de").data.decode()
+    assert "Personalausweis beantragen" in body
+    assert "Bürgerbüro Otto-Schill-Straße (Zentrum)" in body
+    assert "Applying for an identity card" not in body
+
+
+def test_manage_page_localizes_labels_to_subscriber_language(client):
+    """The /manage page must use the subscriber's stored language for the
+    dropdown and locations, just like the public form."""
+    import os
+    from datetime import time
+    from app.db import connect
+    from app.models import Filter
+    from app.repo import insert_pending, confirm
+    from app.tokens import sign
+    conn = connect(os.environ["DB_PATH"])
+    f = Filter(appointment_types=["b04658d5-8d85-469a-a635-93337e055b73"],
+               locations="all", weekdays=[1, 2, 3, 4, 5],
+               time_window_start=time(0, 0), time_window_end=time(23, 59))
+    sid = insert_pending(conn, email="en@x.com", city="leipzig", language="en",
+                         filter_=f, ttl_days=90)
+    confirm(conn, sid)
+    tok = sign(sid, "manage", primary="x" * 32, previous="")
+    body = client.get(f"/manage/{tok}").data.decode()
+    assert "Applying for an identity card" in body
+    assert "Personalausweis beantragen" not in body
+
+
 def test_subscribe_error_banner_shown(client):
     """When a confirmation email could not be sent, /?subscribe_error=mail
     shows a localized, retryable error banner."""
