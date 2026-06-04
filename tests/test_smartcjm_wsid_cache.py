@@ -17,8 +17,9 @@ SERVICES_PAGE_HTML = (
 ONE_SLOT_HTML = (
     '<ol data-testid="month_ol-1">'
     '<li data-testid="slot_button_li-1">'
+    # appointment_reserve(datetime, duration, location, RESOURCE) — 4th arg is a resource.
     '<button onclick="return appointment_reserve(\'2026-06-10T10%3a30%3a00%2b02%3a00\','
-    ' \'10\', \'loc-1\', \'svc-1\');"></button>'
+    ' \'10\', \'loc-1\', \'res-cache-1\');"></button>'
     '</li></ol>'
 )
 

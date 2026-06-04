@@ -22,13 +22,20 @@ APPOINTMENT_RESERVE_RE = re.compile(
     r"'([^']+)'\s*,\s*"   # encoded datetime
     r"'(\d+)'\s*,\s*"     # duration minutes
     r"'([^']+)'\s*,\s*"   # location uuid
-    r"'([^']+)'\s*\)"     # service uuid
+    r"'([^']+)'\s*\)"     # resource uuid (counter/staff — NOT the service; see parse_slots)
 )
 SLOT_LI_TESTID_RE = re.compile(r"^slot_button_li-\d+$")
 
 
-def parse_slots(html: str) -> list[Slot]:
-    """Parse Smart-CJM search-result HTML into Slot records."""
+def parse_slots(html: str, *, service_uuid: str) -> list[Slot]:
+    """Parse Smart-CJM search-result HTML into Slot records.
+
+    The upstream button is `appointment_reserve(datetime, duration, location,
+    resource)` — the 4th argument is a *resource* (counter/staff), NOT the
+    service. The search is server-side filtered to a single service, so the
+    service every returned slot belongs to is `service_uuid` (the one we
+    searched for, supplied by the caller from the plan).
+    """
     if "Session abgelaufen" in html:
         return []
     soup = BeautifulSoup(html, "html.parser")
@@ -41,7 +48,7 @@ def parse_slots(html: str) -> list[Slot]:
         m = APPOINTMENT_RESERVE_RE.search(onclick)
         if not m:
             continue
-        encoded_dt, _duration, location_uuid, service_uuid = m.groups()
+        encoded_dt, _duration, location_uuid, resource_uuid = m.groups()
         dt = urllib.parse.unquote(encoded_dt)
         if "T" not in dt:
             continue
@@ -53,6 +60,7 @@ def parse_slots(html: str) -> list[Slot]:
             location_uuid=location_uuid,
             service_uuid=service_uuid,
             booking_token=encoded_dt,
+            resource_uuid=resource_uuid,
         ))
     return slots
 
@@ -116,17 +124,18 @@ def _invalidate_wsid(scfg: dict) -> None:
 
 
 def _post_services(http: requests.Session, wsid: str, csrf: str, rev: str,
-                   plan: PollPlan, catalog, scfg: dict) -> None:
-    parts = []
-    for code in catalog.appointment_types.values():
-        amount = "1" if code == plan.appointment_type else ""
-        parts.append(f"services={code}")
-        parts.append(f"service_{code}_amount={amount}")
+                   plan: PollPlan, scfg: dict) -> None:
+    # Submit ONLY the selected service, amount 1 — mirroring the browser's
+    # `autoSelectServiceAndSubmit` (one `services=<uid>` + `service_<uid>_amount`).
+    # Blasting every catalog service at once makes the server fall back to the
+    # global "earliest" slot regardless of the chosen service (amount_min is 1
+    # for every Leipzig service).
+    sel = plan.appointment_type
     body = (
         f"__RequestVerificationToken={csrf}&"
         f"action_type=&steps={scfg['steps']}&"
         "step_current=services&step_current_index=0&step_goto=%2B1&services=&"
-        + "&".join(parts)
+        f"services={sel}&service_{sel}_amount=1"
     )
     r = http.post(
         f"{scfg['base_url']}/?uid={scfg['uid']}&wsid={wsid}&lang=de&rev={rev}",
@@ -176,11 +185,11 @@ def poll(plan: PollPlan, http: requests.Session) -> list[Slot]:
             f"(vendor={scfg.get('vendor')})"
         )
     wsid, csrf, rev = _get_session_state(http, scfg)
-    _post_services(http, wsid, csrf, rev, plan, catalog, scfg)
+    _post_services(http, wsid, csrf, rev, plan, scfg)
     html = _post_locations(http, wsid, csrf, rev, plan, catalog, scfg)
     if "Session abgelaufen" in html:
         _invalidate_wsid(scfg)
         wsid, csrf, rev = _get_session_state(http, scfg)
-        _post_services(http, wsid, csrf, rev, plan, catalog, scfg)
+        _post_services(http, wsid, csrf, rev, plan, scfg)
         html = _post_locations(http, wsid, csrf, rev, plan, catalog, scfg)
-    return parse_slots(html)
+    return parse_slots(html, service_uuid=plan.appointment_type)
