@@ -77,7 +77,10 @@ def test_live_poll_completes_without_raising(http, scfg, appointment_types):
 
 def test_live_get_service_list_endpoint_returns_known_services(http, scfg, appointment_types):
     """Canary: the JSON endpoint still exists and returns the catalog's UUIDs."""
-    live = catalog_sync.fetch_services(http, scfg["base_url"], scfg["uid"])
+    live, live_en = catalog_sync.fetch_services(http, scfg["base_url"], scfg["uid"])
+    # Canary: the English map must cover the exact same uuid set (it only differs
+    # in display labels) — catches a regression in the data.display_name_en path.
+    assert set(live_en.values()) == set(live.values())
     catalog_uids = set(appointment_types.values())
     live_uids = set(live.values())
     intersection = catalog_uids & live_uids

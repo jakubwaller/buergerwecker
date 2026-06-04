@@ -103,8 +103,8 @@ def create_app() -> Flask:
                                city=city,
                                confirmed=confirmed,
                                error=error,
-                               appointment_types=catalog.appointment_types,
-                               locations=catalog.locations,
+                               appointment_types=catalog.appointment_types_for(lang),
+                               locations=catalog.locations_for(lang),
                                kofi_url=app.config["TERMINE_CONFIG"].kofi_url)
 
     @app.route("/subscribe", methods=["POST"])
@@ -246,10 +246,11 @@ def create_app() -> Flask:
         if not row or row["deleted_at"] is not None:
             return ("Subscription not found", 404)
         catalog = load_catalog(row["city"])
+        lang = row["language"]
         return render_template("manage.html",
-                               lang=row["language"], city=row["city"],
-                               appointment_types=catalog.appointment_types,
-                               locations=catalog.locations, token=token,
+                               lang=lang, city=row["city"],
+                               appointment_types=catalog.appointment_types_for(lang),
+                               locations=catalog.locations_for(lang), token=token,
                                current=Filter.from_json(row["filters_json"]))
 
     @app.route("/renew/<token>")
