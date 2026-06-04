@@ -41,6 +41,32 @@ def test_failover_to_resend_on_mailjet_5xx(db, resend_configured):
     row = db.execute("SELECT provider FROM sent_idempotency WHERE idem_key='k2'").fetchone()
     assert row["provider"] == "resend"
 
+def test_failover_to_resend_on_mailjet_401_account_block(db, resend_configured):
+    """A Mailjet 401 (e.g. account temporarily blocked) must fail over to Resend,
+    not hard-fail. Auth/account errors are exactly when failover matters most."""
+    with patch("app.mail._call_mailjet", return_value=_resp(401)), \
+         patch("app.mail._call_resend", return_value=_ok()) as re_:
+        send(db, "alice@example.com", "subj", "body", idem_key="k401")
+    re_.assert_called_once()
+    row = db.execute("SELECT provider FROM sent_idempotency WHERE idem_key='k401'").fetchone()
+    assert row["provider"] == "resend"
+
+def test_failover_to_resend_on_mailjet_403(db, resend_configured):
+    with patch("app.mail._call_mailjet", return_value=_resp(403)), \
+         patch("app.mail._call_resend", return_value=_ok()) as re_:
+        send(db, "alice@example.com", "subj", "body", idem_key="k403")
+    re_.assert_called_once()
+    row = db.execute("SELECT provider FROM sent_idempotency WHERE idem_key='k403'").fetchone()
+    assert row["provider"] == "resend"
+
+def test_no_fallback_on_401_without_resend(db, monkeypatch):
+    monkeypatch.delenv("RESEND_API_KEY", raising=False)
+    with patch("app.mail._call_mailjet", return_value=_resp(401)), \
+         patch("app.mail._call_resend") as re_:
+        with pytest.raises(MailFailed):
+            send(db, "alice@example.com", "subj", "body", idem_key="k401nofb")
+    re_.assert_not_called()
+
 def test_idempotency_skips_second_send(db):
     with patch("app.mail._call_mailjet", return_value=_ok()) as mj:
         send(db, "alice@example.com", "subj", "body", idem_key="k3")
