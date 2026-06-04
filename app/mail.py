@@ -72,7 +72,10 @@ def send(conn: sqlite3.Connection, to: str, subject: str, body: str,
     try:
         resp = _call_mailjet(to, subject, body)
         provider = "mailjet"
-        if (resp.status_code >= 500 or resp.status_code == 429) and os.environ.get("RESEND_API_KEY"):
+        # Fail over to Resend on ANY Mailjet error (4xx incl. 401/403 account
+        # blocks, and 5xx/429), not just transient ones — a blocked Mailjet
+        # account returns 401, and that's exactly when the fallback must engage.
+        if resp.status_code >= 400 and os.environ.get("RESEND_API_KEY"):
             resp = _call_resend(to, subject, body)
             provider = "resend"
         if resp.status_code >= 400:
