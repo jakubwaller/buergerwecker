@@ -14,3 +14,6 @@ htmlcov/
 dist/
 build/
 node_modules/
+
+# Browser HAR captures — may contain personal data / session tokens; never commit
+*.har
