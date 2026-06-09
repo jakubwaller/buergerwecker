@@ -77,3 +77,38 @@ def test_for_lang_with_no_english_table_returns_german():
     )
     assert cat.appointment_types_for("en") == {"DE A": "u1"}
     assert cat.locations_for("en") == {"DE L": "l1"}
+
+
+# ---------- uuid → label lookups (for email rendering) ----------
+
+def _label_catalog():
+    return Catalog(
+        city="x",
+        appointment_types={"Personalausweis": "u1"},
+        locations={"Bürgerbüro Mitte": "l1", "Bürgerbüro Nord": "l2"},
+        scraper_config={},
+        appointment_types_en={"Identity card": "u1"},
+        locations_en={"Citizen office centre": "l1"},
+    )
+
+
+def test_appointment_type_label_localizes():
+    cat = _label_catalog()
+    assert cat.appointment_type_label("u1", "de") == "Personalausweis"
+    assert cat.appointment_type_label("u1", "en") == "Identity card"
+
+
+def test_location_label_localizes_with_german_fallback_per_uuid():
+    cat = _label_catalog()
+    assert cat.location_label("l1", "de") == "Bürgerbüro Mitte"
+    assert cat.location_label("l1", "en") == "Citizen office centre"
+    # l2 has no English label — fall back to its German name, not the uuid.
+    assert cat.location_label("l2", "en") == "Bürgerbüro Nord"
+
+
+def test_labels_fall_back_to_uuid_when_unknown():
+    """A uuid absent from the catalog must render as the raw uuid, never crash
+    or blank — slots can carry an out-of-catalog uuid (real prod failure mode)."""
+    cat = _label_catalog()
+    assert cat.appointment_type_label("ghost-uuid", "de") == "ghost-uuid"
+    assert cat.location_label("ghost-uuid", "en") == "ghost-uuid"

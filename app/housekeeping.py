@@ -234,9 +234,9 @@ def _sync_catalogs(conn, cfg):
 
 
 def _send_summary_email(conn, cfg):
-    from app.admin import stats
+    from app.admin import stats, render_summary_text
     s = stats(conn)
-    body = "\n".join(f"{k}: {v}" for k, v in s.items())
+    body = render_summary_text(s, now=datetime.utcnow())
     try:
         mail_send(conn, cfg.developer_email, "[termine-notifier] ops summary", body,
                   idem_key=_idem_key(0, [], f"summary-{datetime.utcnow().date()}"))

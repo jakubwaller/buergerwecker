@@ -2,6 +2,10 @@
   "digest.subject": "New appointments available",
   "digest.greeting": "Hello,",
   "digest.intro": "We found new matching appointments:",
+  "digest.selection_heading": "Your selection",
+  "digest.selection_service_label": "Service",
+  "digest.selection_locations_label": "Locations",
+  "digest.all_locations": "All locations",
   "digest.burst_warning": "Many appointments open at once — the fastest click wins.",
   "digest.unsubscribe": "Unsubscribe: {unsubscribe_url}",
   "digest.kofi": "Did this notification help? You can buy me a coffee: {kofi_url} (only if you want — the service stays free.)"

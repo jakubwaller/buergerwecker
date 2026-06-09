@@ -27,6 +27,14 @@ def _localized(de_map: dict[str, str], en_map: dict[str, str],
     return dict(sorted(merged.items()))
 
 
+def _label_for(name_to_uuid: dict[str, str], uuid: str) -> str:
+    """Reverse a name→uuid map to find the display name for `uuid`.
+
+    Falls back to the uuid itself when absent, so callers never get None.
+    """
+    return next((n for n, u in name_to_uuid.items() if u == uuid), uuid)
+
+
 @dataclass(frozen=True)
 class Catalog:
     city: str
@@ -55,6 +63,18 @@ class Catalog:
     def locations_for(self, lang: str) -> dict[str, str]:
         """name→uuid map for the locations list, localized for `lang`."""
         return _localized(self.locations, self.locations_en, lang)
+
+    def appointment_type_label(self, uuid: str, lang: str) -> str:
+        """Localized display name for a service uuid; the raw uuid if unknown.
+
+        Never raises and never returns empty: slots can carry an out-of-catalog
+        uuid, and a notification must still render (worst case showing the uuid).
+        """
+        return _label_for(self.appointment_types_for(lang), uuid)
+
+    def location_label(self, uuid: str, lang: str) -> str:
+        """Localized display name for a location uuid; the raw uuid if unknown."""
+        return _label_for(self.locations_for(lang), uuid)
 
 @lru_cache(maxsize=8)
 def load_catalog(city: str) -> Catalog:

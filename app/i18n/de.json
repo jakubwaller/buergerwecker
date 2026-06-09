@@ -2,6 +2,10 @@
   "digest.subject": "Neue Termine verfügbar",
   "digest.greeting": "Hallo,",
   "digest.intro": "Es wurden neue passende Termine gefunden:",
+  "digest.selection_heading": "Deine Auswahl",
+  "digest.selection_service_label": "Leistung",
+  "digest.selection_locations_label": "Standorte",
+  "digest.all_locations": "Alle Standorte",
   "digest.burst_warning": "Viele Termine öffnen sich gleichzeitig — schneller Klick gewinnt.",
   "digest.unsubscribe": "Abmelden: {unsubscribe_url}",
   "digest.kofi": "Hat dir diese Benachrichtigung geholfen? Du kannst mir einen Kaffee spendieren: {kofi_url} (aber nur, wenn du magst — der Dienst bleibt kostenlos.)"
