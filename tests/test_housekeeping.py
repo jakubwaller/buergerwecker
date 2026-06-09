@@ -31,6 +31,17 @@ def _f():
     return Filter(appointment_types=["A"], locations="all", weekdays=[1,2,3,4,5,6,7],
                   time_window_start=time(0,0), time_window_end=time(23,59))
 
+
+def test_ops_summary_email_uses_dashboard_layout(db):
+    from app.config import load_config
+    from app.housekeeping import _send_summary_email
+    with patch("app.mail.send") as send:
+        _send_summary_email(db, load_config())
+    assert send.call_count == 1
+    body = send.call_args.args[3]   # send(conn, to, subject, body, *, idem_key=...)
+    assert "OVERVIEW" in body and "CITIES" in body and "SYSTEM" in body
+    assert "active_subscriptions:" not in body   # not the old raw key:value dump
+
 def test_expired_subscriptions_soft_deleted(db):
     sid = insert_pending(db, email="a@x.com", city="leipzig", language="de",
                          filter_=_f(), ttl_days=90)

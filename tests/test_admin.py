@@ -2,7 +2,7 @@ import pytest
 from datetime import datetime
 from app.web import create_app
 from app.db import connect, init_schema
-from app.admin import stats
+from app.admin import stats, render_summary_text
 import os
 
 @pytest.fixture
@@ -125,6 +125,95 @@ def test_stats_includes_upstream_and_extra_metrics(tmp_path):
     assert s["slots_cached"] == 1
     assert s["emails_sent_total"] == 1   # 'pending' excluded
     assert s["last_failure_alert_at"] == "2026-06-01T00:00:00"
+
+# ---------- ops-summary email renderer (mirrors the dashboard) ----------
+
+NOW = datetime(2026, 6, 9, 14, 34, 0)
+
+
+def _summary_stats(**over):
+    base = {
+        "active_subscriptions": 42,
+        "active_subscriptions_by_city": {"leipzig": 42},
+        "current_plan_count_by_city": {"leipzig": 6},
+        "parser_zero_match_since_by_city": {},
+        "pending_confirmation": 3,
+        "signups_last_24h": 5,
+        "signups_last_7d": 19,
+        "digests_sent_last_7d": 88,
+        "upstream_by_city": {"leipzig": {"polls_today": 120, "polls_total": 9821,
+                                         "requests_today": 240, "requests_total": 20140}},
+        "last_polled_at_by_city": {"leipzig": "2026-06-09T14:32:00"},
+        "slots_cached": 17,
+        "emails_sent_total": 1203,
+        "last_failure_alert_at": None,
+        "last_housekeeping_at": "2026-06-09T11:30:00",
+        "last_backup_at": "2026-06-09T09:30:00",
+    }
+    base.update(over)
+    return base
+
+
+def _line(text, needle):
+    return next(l for l in text.splitlines() if needle in l)
+
+
+def test_summary_has_three_sections():
+    text = render_summary_text(_summary_stats(), now=NOW)
+    assert "OVERVIEW" in text
+    assert "CITIES" in text
+    assert "SYSTEM" in text
+
+
+def test_summary_overview_numbers():
+    text = render_summary_text(_summary_stats(), now=NOW)
+    assert "42" in _line(text, "Active subscriptions")
+    assert "1203" in _line(text, "Emails sent")
+    assert "17" in _line(text, "Slots cached")
+    signups = _line(text, "Signups")
+    assert "24h 5" in signups and "7d 19" in signups
+
+
+def test_summary_city_block():
+    text = render_summary_text(_summary_stats(), now=NOW)
+    assert "leipzig" in _line(text, "leipzig")
+    assert "matching slots" in _line(text, "leipzig")
+    polls = _line(text, "Polls")
+    assert "120 today" in polls and "9821 total" in polls
+    assert "240 today" in _line(text, "Requests")
+    subs = _line(text, "Plans")   # only the city block has a "Plans" count
+    assert "42" in subs and "Plans 6" in subs
+
+
+def test_summary_last_polled_shows_absolute_and_relative():
+    text = render_summary_text(_summary_stats(), now=NOW)
+    lp = _line(text, "Last polled")
+    assert "2026-06-09 14:32Z" in lp   # absolute UTC
+    assert "2m ago" in lp              # relative hint (now - 2 min)
+
+
+def test_summary_city_status_no_matches():
+    text = render_summary_text(
+        _summary_stats(parser_zero_match_since_by_city={"leipzig": "2026-06-08T06:00:00"}),
+        now=NOW)
+    assert "NO MATCHES since 2026-06-08T06:00:00" in _line(text, "leipzig")
+
+
+def test_summary_system_fallbacks():
+    text = render_summary_text(
+        _summary_stats(last_backup_at=None, last_failure_alert_at=None), now=NOW)
+    assert "never" in _line(text, "Last backup")
+    assert "none" in _line(text, "Failure alert")
+    hk = _line(text, "Last housekeeping")
+    assert "2026-06-09 11:30Z" in hk and "3h ago" in hk
+
+
+def test_summary_empty_cities():
+    text = render_summary_text(
+        _summary_stats(upstream_by_city={}, active_subscriptions_by_city={},
+                       last_polled_at_by_city={}), now=NOW)
+    assert "No polling activity yet." in text
+
 
 def test_stats_today_counts_gated_by_stale_date(tmp_path):
     conn = connect(str(tmp_path / "s.db")); init_schema(conn)

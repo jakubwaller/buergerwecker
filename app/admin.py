@@ -3,6 +3,89 @@ import sqlite3
 from datetime import datetime
 
 
+def _humanize_age(iso: str | None, now: datetime) -> str:
+    """Return a ' (3h ago)' suffix for an ISO timestamp; '' if missing/unparsable.
+
+    Naive timestamps are treated as UTC, mirroring the dashboard's JS.
+    """
+    if not iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso.rstrip("Z"))
+    except (TypeError, ValueError):
+        return ""
+    sec = max(0, int((now - dt).total_seconds()))
+    if sec < 60:
+        rel = "just now"
+    elif sec < 3600:
+        rel = f"{sec // 60}m ago"
+    elif sec < 86400:
+        rel = f"{sec // 3600}h ago"
+    else:
+        rel = f"{sec // 86400}d ago"
+    return f" ({rel})"
+
+
+def _ts(iso: str | None, now: datetime, *, missing: str) -> str:
+    """Absolute UTC timestamp + relative hint, e.g. '2026-06-09 14:32Z (3h ago)'.
+
+    Email is static, so (unlike the live dashboard) we show the exact UTC time
+    and append the relative age as a glance hint. Missing -> `missing`.
+    """
+    if not iso:
+        return missing
+    try:
+        abs_ = datetime.fromisoformat(iso.rstrip("Z")).strftime("%Y-%m-%d %H:%M") + "Z"
+    except (TypeError, ValueError):
+        abs_ = iso
+    return f"{abs_}{_humanize_age(iso, now)}"
+
+
+def render_summary_text(s: dict, *, now: datetime) -> str:
+    """Plain-text ops summary mirroring the /admin dashboard sections.
+
+    Pure: takes a `stats()` dict and the current time (injected for testable
+    relative-age rendering) and returns the email body.
+    """
+    out = ["OVERVIEW",
+           f"  Active subscriptions   {s['active_subscriptions']}",
+           f"  Pending confirmation   {s['pending_confirmation']}",
+           f"  Signups                24h {s['signups_last_24h']} · 7d {s['signups_last_7d']}",
+           f"  Digests sent (7d)      {s['digests_sent_last_7d']}",
+           f"  Emails sent (total)    {s['emails_sent_total']}",
+           f"  Slots cached           {s['slots_cached']}",
+           "",
+           "CITIES"]
+    # City-key union, same sources as the dashboard template.
+    city_keys = (list(s.get("upstream_by_city", {}))
+                 + list(s.get("active_subscriptions_by_city", {}))
+                 + list(s.get("last_polled_at_by_city", {})))
+    cities = sorted(dict.fromkeys(city_keys))
+    if not cities:
+        out.append("  No polling activity yet.")
+    else:
+        for city in cities:
+            up = s.get("upstream_by_city", {}).get(city, {})
+            zms = s.get("parser_zero_match_since_by_city", {}).get(city)
+            lp = s.get("last_polled_at_by_city", {}).get(city)
+            status = f"NO MATCHES since {zms}" if zms else "matching slots"
+            subs = s.get("active_subscriptions_by_city", {}).get(city, 0)
+            plans = s.get("current_plan_count_by_city", {}).get(city, 0)
+            out.append(f"  {city} — {status}")
+            out.append(f"    Last polled   {_ts(lp, now, missing='never')}")
+            out.append(f"    Active subs   {subs} · Plans {plans}")
+            out.append(f"    Polls         {up.get('polls_today', 0)} today "
+                       f"· {up.get('polls_total', 0)} total")
+            out.append(f"    Requests      {up.get('requests_today', 0)} today "
+                       f"· {up.get('requests_total', 0)} total")
+    out += ["",
+            "SYSTEM",
+            f"  Last housekeeping  {_ts(s.get('last_housekeeping_at'), now, missing='never')}",
+            f"  Last backup        {_ts(s.get('last_backup_at'), now, missing='never')}",
+            f"  Failure alert      {_ts(s.get('last_failure_alert_at'), now, missing='none')}"]
+    return "\n".join(out)
+
+
 def stats(conn: sqlite3.Connection) -> dict:
     def scalar(q, *args):
         row = conn.execute(q, args).fetchone()
