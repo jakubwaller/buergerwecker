@@ -161,4 +161,9 @@ def _build_upstream_url(scfg: dict, slot) -> str:
     if vendor == "smartcjm":
         return (f"{scfg['base_url']}/?uid={scfg['uid']}"
                 f"&appointment_reserve={slot.booking_token}")
+    if vendor == "dtms":
+        # DTMS booking runs inside the DrivePort SPA; there is no per-slot deep
+        # link, so we open the portal entry for this Mandant. The citizen picks
+        # the service/slot themselves — consistent with "no automated booking".
+        return f"{scfg['portal_url'].rstrip('/')}/?MA={scfg['mandant']}"
     raise RuntimeError(f"no upstream-URL builder for vendor: {vendor}")

@@ -1,0 +1,9 @@
+{
+  "Terminvorschlaege": [
+    {"StandortID": 13, "Von": "2026-06-05T09:30:00", "Prio": 1},
+    {"StandortID": 7, "Von": "2026-06-05T09:35:00", "Prio": 1},
+    {"StandortID": 27, "Von": "2026-06-05T09:55:00", "Prio": 1},
+    {"StandortID": 16, "Von": "2026-06-15T11:05:00", "Prio": 1}
+  ],
+  "Hinweise": null
+}

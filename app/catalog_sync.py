@@ -60,6 +60,13 @@ def sync_city(city: str,
     root = Path(catalog_root) if catalog_root else REPO_ROOT / "catalog"
     city_dir = root / city
     scfg = json.loads((city_dir / "scraper_config.json").read_text())
+    # catalog_sync discovers services/locations by driving the Smart-CJM wizard.
+    # Other vendors (e.g. DTMS / DrivePort) ship a static, hand-maintained
+    # catalog — skip them rather than running Smart-CJM HTTP against a config
+    # that has no `uid`/`steps`.
+    if scfg.get("vendor") != "smartcjm":
+        return {"skipped": f"vendor {scfg.get('vendor')}",
+                "service_drift": {}, "location_drift": {}}
     svc_path = city_dir / "appointment_type.json"
     loc_path = city_dir / "locations.json"
     svc_en_path = city_dir / "appointment_type.en.json"
