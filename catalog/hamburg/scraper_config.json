@@ -1,0 +1,8 @@
+{
+  "vendor": "dtms",
+  "base_url": "https://driveport.de/termineapi",
+  "portal_url": "https://driveport.de/termine/",
+  "mandant": 1,
+  "app_key": "a7dcb6b8276d4e555877099fe5db362bc56",
+  "days_ahead": 365
+}

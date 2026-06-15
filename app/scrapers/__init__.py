@@ -16,6 +16,7 @@ from typing import Protocol
 import requests
 from app.models import PollPlan, Slot
 from app.scrapers import smartcjm
+from app.scrapers import dtms
 
 class ScraperProtocol(Protocol):
     """Structural type used for documentation / mypy. Not enforced at runtime."""
@@ -26,9 +27,7 @@ class UnsupportedCity(Exception):
 
 _REGISTRY: dict[str, ModuleType] = {
     "leipzig": smartcjm,
-    # When adding Hamburg, etc.:
-    #   from app.scrapers import odcontrols
-    #   "hamburg": odcontrols,
+    "hamburg": dtms,  # DTMS / DrivePort (Kasse.Hamburg on Dataport OSI)
 }
 
 def get_scraper(city: str) -> ModuleType:

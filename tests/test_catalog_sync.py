@@ -13,6 +13,26 @@ LEIPZIG_UID = "b76cab25-49bd-44e3-950d-aab715881ea7"
 STEPS = "serviceslocationssearch_resultsbookingfinish"
 
 
+# ---------- vendor gating ----------
+
+def test_sync_city_skips_non_smartcjm_vendor(tmp_path):
+    """catalog_sync drives the Smart-CJM wizard; other vendors (e.g. DTMS) ship a
+    static catalog and must be skipped — no HTTP, no KeyError on the missing uid."""
+    city_dir = tmp_path / "hamburg"
+    city_dir.mkdir()
+    (city_dir / "scraper_config.json").write_text(json.dumps(
+        {"vendor": "dtms", "base_url": "https://driveport.de/termineapi",
+         "mandant": 1, "app_key": "k"}))
+    http = MagicMock()
+    alert = MagicMock()
+    result = catalog_sync.sync_city("hamburg", http, alert_fn=alert,
+                                    catalog_root=tmp_path)
+    assert result.get("skipped")
+    http.get.assert_not_called()
+    http.post.assert_not_called()
+    alert.assert_not_called()
+
+
 # ---------- fetch_services ----------
 
 def test_fetch_services_parses_response_into_name_uid_dict():

@@ -5,6 +5,10 @@ def test_get_scraper_leipzig():
     scraper = get_scraper("leipzig")
     assert hasattr(scraper, "poll")
 
+def test_get_scraper_hamburg():
+    scraper = get_scraper("hamburg")
+    assert hasattr(scraper, "poll")
+
 def test_get_scraper_unknown():
     with pytest.raises(UnsupportedCity):
         get_scraper("atlantis")
