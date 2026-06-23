@@ -13,37 +13,48 @@ def _idem_key(subscription_id: int, slot_hashes: list[str], cycle_id: str) -> st
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 def _call_mailjet(to: str, subject: str, body: str) -> Any:
+    message = {
+        "From": {"Email": os.environ["MAILJET_FROM_EMAIL"],
+                 "Name":  os.environ["MAILJET_FROM_NAME"]},
+        "To":   [{"Email": to}],
+        "Subject":  subject,
+        "TextPart": body,
+        "Headers":  {
+            "List-Unsubscribe": _list_unsub_header(to),
+            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+        },
+    }
+    # From is the validated sending subdomain; Reply-To (optional) routes
+    # replies to a real mailbox so the From address can be a subdomain that
+    # doesn't itself receive mail.
+    reply_to = os.environ.get("REPLY_TO_EMAIL")
+    if reply_to:
+        message["ReplyTo"] = {"Email": reply_to}
     return requests.post(
         "https://api.mailjet.com/v3.1/send",
         auth=(os.environ["MAILJET_API_KEY"], os.environ["MAILJET_API_SECRET"]),
-        json={"Messages": [{
-            "From": {"Email": os.environ["MAILJET_FROM_EMAIL"],
-                     "Name":  os.environ["MAILJET_FROM_NAME"]},
-            "To":   [{"Email": to}],
-            "Subject":  subject,
-            "TextPart": body,
-            "Headers":  {
-                "List-Unsubscribe": _list_unsub_header(to),
-                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-            },
-        }]},
+        json={"Messages": [message]},
         timeout=30,
     )
 
 def _call_resend(to: str, subject: str, body: str) -> Any:
+    payload = {
+        "from": f"{os.environ['MAILJET_FROM_NAME']} <{os.environ['MAILJET_FROM_EMAIL']}>",
+        "to": [to],
+        "subject": subject,
+        "text": body,
+        "headers": {
+            "List-Unsubscribe": _list_unsub_header(to),
+            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+        },
+    }
+    reply_to = os.environ.get("REPLY_TO_EMAIL")
+    if reply_to:
+        payload["reply_to"] = reply_to
     return requests.post(
         "https://api.resend.com/emails",
         headers={"Authorization": f"Bearer {os.environ['RESEND_API_KEY']}"},
-        json={
-            "from": f"{os.environ['MAILJET_FROM_NAME']} <{os.environ['MAILJET_FROM_EMAIL']}>",
-            "to": [to],
-            "subject": subject,
-            "text": body,
-            "headers": {
-                "List-Unsubscribe": _list_unsub_header(to),
-                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-            },
-        },
+        json=payload,
         timeout=30,
     )
 
