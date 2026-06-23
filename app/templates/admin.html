@@ -76,6 +76,16 @@
   </section>
 
   <section class="adm-section">
+    <h2>Notifications <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· appointment slots delivered to subscribers</span></h2>
+    <table class="adm-table">
+      <tr><td class="k">Subscribers notified</td><td class="v">24h {{ s.notifications_24h }} · 7d {{ s.notifications_7d }} · ever {{ s.subscribers_ever_notified }}</td></tr>
+      <tr><td class="k">Awaiting first match</td><td class="v">{{ s.active_awaiting_first_match }} of {{ s.active_subscriptions }} active</td></tr>
+      <tr><td class="k">Most recent</td><td class="v">{% if s.last_notification %}<time class="ts" data-ts="{{ s.last_notification.at }}">{{ s.last_notification.at }}</time> · sub #{{ s.last_notification.sub_id }}{% else %}<span class="adm-muted">none yet</span>{% endif %}</td></tr>
+      <tr><td class="k">Delivery · 7d</td><td class="v">{% set prov = s.emails_by_provider_7d %}{% if prov %}{% for p, n in prov|dictsort %}{{ p }} {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}{% else %}<span class="adm-muted">none</span>{% endif %}</td></tr>
+    </table>
+  </section>
+
+  <section class="adm-section">
     <h2>Cities</h2>
     {% set city_keys = (s.upstream_by_city.keys()|list)
                      + (s.active_subscriptions_by_city.keys()|list)

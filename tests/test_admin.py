@@ -89,6 +89,15 @@ def test_admin_renders_new_metrics(client):
     for label in (b"Slots cached", b"Emails sent", b"Failure alert", b"Last backup"):
         assert label in r.data, f"missing admin metric: {label!r}"
 
+def test_admin_renders_notifications_section(client):
+    r = client.get("/admin?token=admin-tok")
+    assert r.status_code == 200
+    # Always-present labels (Notifications section renders regardless of data).
+    for label in (b"Notifications", b"Subscribers notified",
+                  b"Awaiting first match", b"Delivery"):
+        assert label in r.data, f"missing admin metric: {label!r}"
+
+
 def test_admin_renders_city_panel_with_data(client):
     from app.db import connect
     conn = connect(os.environ["DB_PATH"])
@@ -126,6 +135,30 @@ def test_stats_includes_upstream_and_extra_metrics(tmp_path):
     assert s["emails_sent_total"] == 1   # 'pending' excluded
     assert s["last_failure_alert_at"] == "2026-06-01T00:00:00"
 
+def test_stats_notification_metrics(tmp_path):
+    from datetime import time
+    from app.models import Filter
+    from app.repo import insert_pending, confirm
+    conn = connect(str(tmp_path / "n.db")); init_schema(conn)
+    f = Filter(appointment_types=["A"], locations="all", weekdays=[1, 2, 3, 4, 5, 6, 7],
+               time_window_start=time(0, 0), time_window_end=time(23, 59))
+    s1 = insert_pending(conn, email="a@x", city="leipzig", language="de", filter_=f, ttl_days=90)
+    confirm(conn, s1)
+    s2 = insert_pending(conn, email="b@x", city="leipzig", language="de", filter_=f, ttl_days=90)
+    confirm(conn, s2)
+    # s1 was served a slot 2h ago; s2 has never matched.
+    conn.execute("UPDATE subscriptions SET last_notified_at=datetime('now','-2 hours') WHERE id=?", (s1,))
+    for k, p in (("m1", "mailjet"), ("r1", "resend"), ("p1", "pending")):
+        conn.execute("INSERT INTO sent_idempotency (idem_key, provider) VALUES (?, ?)", (k, p))
+    s = stats(conn)
+    assert s["notifications_24h"] == 1
+    assert s["notifications_7d"] == 1
+    assert s["subscribers_ever_notified"] == 1
+    assert s["active_awaiting_first_match"] == 1            # s2 still waiting
+    assert s["last_notification"]["sub_id"] == s1
+    assert s["emails_by_provider_7d"] == {"mailjet": 1, "resend": 1}  # 'pending' excluded
+
+
 # ---------- ops-summary email renderer (mirrors the dashboard) ----------
 
 NOW = datetime(2026, 6, 9, 14, 34, 0)
@@ -146,6 +179,12 @@ def _summary_stats(**over):
         "last_polled_at_by_city": {"leipzig": "2026-06-09T14:32:00"},
         "slots_cached": 17,
         "emails_sent_total": 1203,
+        "notifications_24h": 2,
+        "notifications_7d": 7,
+        "subscribers_ever_notified": 9,
+        "active_awaiting_first_match": 4,
+        "last_notification": {"sub_id": 5, "at": "2026-06-09T14:33:00"},
+        "emails_by_provider_7d": {"mailjet": 80, "resend": 8},
         "last_failure_alert_at": None,
         "last_housekeeping_at": "2026-06-09T11:30:00",
         "last_backup_at": "2026-06-09T09:30:00",
@@ -172,6 +211,29 @@ def test_summary_overview_numbers():
     assert "17" in _line(text, "Slots cached")
     signups = _line(text, "Signups")
     assert "24h 5" in signups and "7d 19" in signups
+
+
+def test_summary_notifications_block():
+    text = render_summary_text(_summary_stats(), now=NOW)
+    assert "NOTIFICATIONS" in text
+    noti = _line(text, "Subscribers notified")
+    assert "24h 2" in noti and "7d 7" in noti and "ever 9" in noti
+    assert "4 of 42 active" in _line(text, "Awaiting first match")
+    recent = _line(text, "Most recent")
+    assert "2026-06-09 14:33Z" in recent and "sub #5" in recent
+
+
+def test_summary_delivery_provider_line():
+    text = render_summary_text(_summary_stats(), now=NOW)
+    dl = _line(text, "Delivery (7d)")
+    assert "mailjet 80" in dl and "resend 8" in dl
+
+
+def test_summary_notifications_fallbacks():
+    text = render_summary_text(
+        _summary_stats(last_notification=None, emails_by_provider_7d={}), now=NOW)
+    assert "none yet" in _line(text, "Most recent")
+    assert "none" in _line(text, "Delivery (7d)")
 
 
 def test_summary_city_block():
