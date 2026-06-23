@@ -47,13 +47,27 @@ def render_summary_text(s: dict, *, now: datetime) -> str:
     Pure: takes a `stats()` dict and the current time (injected for testable
     relative-age rendering) and returns the email body.
     """
+    prov = s.get("emails_by_provider_7d") or {}
+    prov_str = " · ".join(f"{k} {prov[k]}" for k in sorted(prov)) or "none"
+    ln = s.get("last_notification")
+    recent = (f"{_ts(ln.get('at'), now, missing='none')} — sub #{ln.get('sub_id')}"
+              if ln else "none yet")
     out = ["OVERVIEW",
            f"  Active subscriptions   {s['active_subscriptions']}",
            f"  Pending confirmation   {s['pending_confirmation']}",
            f"  Signups                24h {s['signups_last_24h']} · 7d {s['signups_last_7d']}",
            f"  Digests sent (7d)      {s['digests_sent_last_7d']}",
            f"  Emails sent (total)    {s['emails_sent_total']}",
+           f"  Delivery (7d)          {prov_str}",
            f"  Slots cached           {s['slots_cached']}",
+           "",
+           "NOTIFICATIONS (appointment slots delivered to subscribers)",
+           f"  Subscribers notified   24h {s.get('notifications_24h', 0)}"
+           f" · 7d {s.get('notifications_7d', 0)}"
+           f" · ever {s.get('subscribers_ever_notified', 0)}",
+           f"  Awaiting first match   {s.get('active_awaiting_first_match', 0)}"
+           f" of {s['active_subscriptions']} active",
+           f"  Most recent            {recent}",
            "",
            "CITIES"]
     # City-key union, same sources as the dashboard template.
@@ -146,6 +160,25 @@ def stats(conn: sqlite3.Connection) -> dict:
                 last_polled_at_by_city[r["city"]] = r["last_polled_at"]
     except sqlite3.OperationalError:
         pass  # pre-migration DB; counters not available yet
+    # Slot-match notifications actually delivered to subscribers. `last_notified_at`
+    # is set only when a real appointment slot matched and a digest went out, so it
+    # is the truest "a subscriber was served" signal — distinct from emails_sent_total,
+    # which also counts confirmations, heartbeats and these summary emails.
+    notif = conn.execute(
+        "SELECT id, last_notified_at FROM subscriptions "
+        "WHERE last_notified_at IS NOT NULL ORDER BY last_notified_at DESC LIMIT 1"
+    ).fetchone()
+    last_notification = ({"sub_id": notif["id"], "at": notif["last_notified_at"]}
+                         if notif else None)
+    # Delivery provider mix (7d). A rising `resend` share means the Mailjet primary
+    # is rejecting sends and the failover is carrying the mail — an early warning.
+    provider_7d: dict[str, int] = {}
+    for r in conn.execute(
+        "SELECT provider, COUNT(*) AS n FROM sent_idempotency "
+        "WHERE sent_at > datetime('now','-7 days') AND provider != 'pending' "
+        "GROUP BY provider"
+    ).fetchall():
+        provider_7d[r["provider"]] = r["n"]
     return {
         "active_subscriptions":
             scalar("SELECT COUNT(*) FROM subscriptions WHERE deleted_at IS NULL "
@@ -171,6 +204,20 @@ def stats(conn: sqlite3.Connection) -> dict:
         "slots_cached": scalar("SELECT COUNT(*) FROM slots_cache"),
         "emails_sent_total":
             scalar("SELECT COUNT(*) FROM sent_idempotency WHERE provider != 'pending'"),
+        "notifications_24h":
+            scalar("SELECT COUNT(*) FROM subscriptions "
+                   "WHERE last_notified_at > datetime('now','-1 day')"),
+        "notifications_7d":
+            scalar("SELECT COUNT(*) FROM subscriptions "
+                   "WHERE last_notified_at > datetime('now','-7 days')"),
+        "subscribers_ever_notified":
+            scalar("SELECT COUNT(*) FROM subscriptions WHERE last_notified_at IS NOT NULL"),
+        "active_awaiting_first_match":
+            scalar("SELECT COUNT(*) FROM subscriptions WHERE deleted_at IS NULL "
+                   "AND confirmed_at IS NOT NULL AND expires_at > CURRENT_TIMESTAMP "
+                   "AND last_notified_at IS NULL"),
+        "last_notification": last_notification,
+        "emails_by_provider_7d": provider_7d,
         "last_failure_alert_at": meta_val("last_failure_alert_at"),
         "last_housekeeping_at": meta_val("last_housekeeping_at"),
         "last_backup_at":       meta_val("last_backup_at"),
