@@ -2,7 +2,7 @@
 
 Free email notifications for free Bürgerbüro appointments in German cities.
 
-**v1 covers Leipzig. Hamburg is next.**
+**v1 covers Leipzig.** Support for more cities may follow.
 
 ## What this does
 
