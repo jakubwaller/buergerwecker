@@ -2,7 +2,7 @@ import sqlite3
 from unittest.mock import patch, MagicMock
 import pytest
 from app.db import connect, init_schema
-from app.mail import send, MailFailed, _idem_key
+from app.mail import send, MailFailed, _idem_key, _call_mailjet, _call_resend
 
 @pytest.fixture
 def db(tmp_path):
@@ -97,6 +97,44 @@ def test_no_fallback_on_mailjet_429_without_resend(db, monkeypatch):
         with pytest.raises(MailFailed):
             send(db, "alice@example.com", "subj", "body", idem_key="k_no_fb_429")
     re_.assert_not_called()
+
+@pytest.fixture
+def mailjet_env(monkeypatch):
+    monkeypatch.setenv("MAILJET_API_KEY", "k")
+    monkeypatch.setenv("MAILJET_API_SECRET", "s")
+    monkeypatch.setenv("MAILJET_FROM_EMAIL", "hallo@termine.jakubwaller.eu")
+    monkeypatch.setenv("MAILJET_FROM_NAME", "Leipzig-Termine")
+
+def _capture():
+    """Patch-ready post that records the json= payload and returns 200."""
+    seen = {}
+    def fake_post(url, **kwargs):
+        seen["json"] = kwargs.get("json")
+        return _ok()
+    return seen, fake_post
+
+def test_mailjet_sets_reply_to_when_configured(monkeypatch, mailjet_env):
+    monkeypatch.setenv("REPLY_TO_EMAIL", "termine@jakubwaller.eu")
+    seen, fake = _capture()
+    with patch("app.mail.requests.post", side_effect=fake):
+        _call_mailjet("alice@example.com", "subj", "body")
+    msg = seen["json"]["Messages"][0]
+    assert msg["ReplyTo"] == {"Email": "termine@jakubwaller.eu"}
+
+def test_mailjet_omits_reply_to_when_unset(monkeypatch, mailjet_env):
+    monkeypatch.delenv("REPLY_TO_EMAIL", raising=False)
+    seen, fake = _capture()
+    with patch("app.mail.requests.post", side_effect=fake):
+        _call_mailjet("alice@example.com", "subj", "body")
+    assert "ReplyTo" not in seen["json"]["Messages"][0]
+
+def test_resend_sets_reply_to_when_configured(monkeypatch, mailjet_env):
+    monkeypatch.setenv("RESEND_API_KEY", "re_test_key")
+    monkeypatch.setenv("REPLY_TO_EMAIL", "termine@jakubwaller.eu")
+    seen, fake = _capture()
+    with patch("app.mail.requests.post", side_effect=fake):
+        _call_resend("alice@example.com", "subj", "body")
+    assert seen["json"]["reply_to"] == "termine@jakubwaller.eu"
 
 def test_pending_row_blocks_second_call_after_crash(db):
     """If the process died mid-send leaving provider='pending', the next call must skip."""
