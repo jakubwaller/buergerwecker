@@ -81,6 +81,42 @@ _RESULT_MESSAGES: dict[str, dict] = {
                "This subscription no longer exists. You may have already "
                "unsubscribed."),
     },
+    "invalid_email": {
+        "kind": "error",
+        "de": ("E-Mail ungültig", "Bitte überprüfe deine E-Mail-Adresse",
+               "Die eingegebene E-Mail-Adresse scheint nicht gültig zu sein. "
+               "Bitte gehe zurück und versuche es erneut."),
+        "en": ("Invalid email", "Please check your email address",
+               "The email address you entered doesn't look valid. Please go "
+               "back and try again."),
+    },
+    "rate_limited": {
+        "kind": "error",
+        "de": ("Zu viele Anfragen", "Bitte versuche es später erneut",
+               "Es wurden in kurzer Zeit zu viele Anmeldungen vorgenommen. "
+               "Bitte warte einen Moment und versuche es dann noch einmal."),
+        "en": ("Too many requests", "Please try again later",
+               "Too many sign-ups were made in a short time. Please wait a "
+               "moment and try again."),
+    },
+    "waitlist_full": {
+        "kind": "error",
+        "de": ("Warteliste voll", "Die Warteliste ist gerade voll",
+               "Aktuell können keine neuen Anmeldungen aufgenommen werden. "
+               "Bitte versuche es in ein paar Tagen noch einmal."),
+        "en": ("Wait-list full", "The wait-list is currently full",
+               "We can't take new sign-ups right now. Please try again in a "
+               "few days."),
+    },
+    "missing_type": {
+        "kind": "error",
+        "de": ("Anliegen fehlt", "Bitte wähle ein Anliegen",
+               "Es wurde kein Anliegen ausgewählt. Bitte gehe zurück und wähle "
+               "die gewünschte Terminart."),
+        "en": ("Appointment type missing", "Please choose an appointment type",
+               "No appointment type was selected. Please go back and choose "
+               "the type you need."),
+    },
 }
 
 
@@ -200,26 +236,29 @@ def create_app() -> Flask:
         if request.form.get("website", ""):
             return ("", 200)
         cfg = app.config["TERMINE_CONFIG"]
+        # Read the form language up front so every error below can render a
+        # localized result page (the success paths redirect, so they don't
+        # need it).
+        lang = request.form.get("lang", "de")
         ip = request.headers.get("X-Forwarded-For", request.remote_addr or "")
         email = request.form.get("email", "").strip().lower()
         if not email or "@" not in email:
-            return ("Invalid email", 400)
+            return _result_page("invalid_email", lang, status=400)
         # 2. per-IP rate limit (in-memory, soft)
         if not GLOBAL_IP_LIMITER.hit(f"ip:{ip}",
                                      cfg.subscribe_ratelimit_per_ip_per_hour,
                                      3600):
-            return ("Rate limit exceeded", 429)
+            return _result_page("rate_limited", lang, status=429)
         # 3. per-email rate limit (DB-backed, hard - shared across workers)
         conn_for_check = connect(cfg.db_path)
         if not email_rate_limit_ok(conn_for_check, email,
                                    cfg.subscribe_ratelimit_per_email_per_day):
-            return ("Rate limit exceeded", 429)
+            return _result_page("rate_limited", lang, status=429)
         # 4. parse filter from form
-        lang = request.form.get("lang", "de")
         city = request.form.get("city", "leipzig")
         atype = request.form.get("appointment_type", "").strip()
         if not atype:
-            return ("Missing appointment_type", 400)
+            return _result_page("missing_type", lang, status=400)
         all_locs = request.form.get("all_locations") == "1"
         loc_list = request.form.getlist("locations")
         locations = "all" if all_locs or not loc_list else loc_list
@@ -241,11 +280,7 @@ def create_app() -> Flask:
             existing = [(s.city, s.sub_filter) for s in active_subscriptions(conn)]
             if would_exceed_cap(existing, city, f,
                                 max_plans_per_city=cfg.max_plans_per_city):
-                msg = (("Aktuell ist die Warteliste voll. "
-                        "Bitte in ein paar Tagen erneut versuchen.")
-                       if lang == "de"
-                       else "The wait-list is currently full. Please try again in a few days.")
-                return (msg, 503)
+                return _result_page("waitlist_full", lang, status=503)
             sub_id = insert_pending(conn, email=email, city=city,
                                     language=lang, filter_=f,
                                     ttl_days=cfg.subscription_ttl_days)
@@ -321,7 +356,10 @@ def create_app() -> Flask:
         if request.method == "POST":
             atype = request.form.get("appointment_type", "").strip()
             if not atype:
-                return ("Missing appointment_type", 400)
+                row = conn.execute("SELECT language FROM subscriptions WHERE id=?",
+                                   (sub_id,)).fetchone()
+                return _result_page("missing_type",
+                                    row["language"] if row else "de", status=400)
             all_locs = request.form.get("all_locations") == "1"
             loc_list = request.form.getlist("locations")
             locations = "all" if all_locs or not loc_list else loc_list
