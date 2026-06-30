@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}{{ heading }} · Termine-Notifier{% endblock %}
+{% block content %}
+  <div class="notice notice-{{ kind or 'success' }}" role="status">
+    <strong>{{ badge }}</strong>
+  </div>
+
+  <h1>{{ heading }}</h1>
+
+  {% if message %}<p>{{ message }}</p>{% endif %}
+
+  <p class="result-actions">
+    {% if action_url %}
+      <a href="{{ action_url }}" class="btn-link">{{ action_label }}</a>
+    {% endif %}
+    <a href="/{% if lang == 'en' %}?lang=en{% endif %}">
+      {% if lang == 'en' %}Back to the start page{% else %}Zur Startseite{% endif %}
+    </a>
+  </p>
+{% endblock %}
