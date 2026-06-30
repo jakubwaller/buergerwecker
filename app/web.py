@@ -17,6 +17,73 @@ from app.mail import send as mail_send, _idem_key
 log = logging.getLogger(__name__)
 
 
+# Localized copy for the standalone result/status pages (unsubscribe, manage
+# update, renew, expired links, errors). Each entry: kind (notice style) plus
+# a (badge, heading, message) triple per language. Routes render these through
+# templates/result.html so they share the styled card layout instead of
+# returning a bare string the browser shows top-left.
+_RESULT_MESSAGES: dict[str, dict] = {
+    "unsubscribed": {
+        "kind": "success",
+        "de": ("Abgemeldet", "Schade, dass du gehst",
+               "Du bist erfolgreich abgemeldet und erhältst keine weiteren "
+               "Termin-Benachrichtigungen mehr. Falls du es dir anders "
+               "überlegst, kannst du dich jederzeit wieder anmelden."),
+        "en": ("Unsubscribed", "Sorry to see you go",
+               "You've been unsubscribed and won't receive any more "
+               "appointment notifications. If you change your mind, you can "
+               "sign up again any time."),
+    },
+    "updated": {
+        "kind": "success",
+        "de": ("Gespeichert", "Einstellungen aktualisiert",
+               "Deine Filter wurden gespeichert. Wir benachrichtigen dich ab "
+               "sofort nach den neuen Kriterien."),
+        "en": ("Saved", "Settings updated",
+               "Your filters have been saved. We'll notify you based on your "
+               "new criteria from now on."),
+    },
+    "renewed": {
+        "kind": "success",
+        "de": ("Verlängert", "Abo verlängert",
+               "Dein Abonnement wurde verlängert. Du erhältst weiterhin "
+               "Benachrichtigungen über freie Termine."),
+        "en": ("Renewed", "Subscription renewed",
+               "Your subscription has been renewed. You'll keep receiving "
+               "notifications about available appointments."),
+    },
+    "link_expired": {
+        "kind": "error",
+        "de": ("Link abgelaufen", "Dieser Termin-Link ist abgelaufen",
+               "Freie Termine sind oft innerhalb von Sekunden vergeben. Schau "
+               "am besten direkt auf der offiziellen Seite der Stadt nach, ob "
+               "noch etwas frei ist."),
+        "en": ("Link expired", "This appointment link has expired",
+               "Free appointments are often taken within seconds. Please "
+               "check directly on the city's official booking site to see "
+               "what's still available."),
+    },
+    "invalid_token": {
+        "kind": "error",
+        "de": ("Ungültiger Link", "Dieser Link ist ungültig",
+               "Der Link ist fehlerhaft oder nicht mehr gültig. Bitte "
+               "verwende den aktuellen Link aus deiner E-Mail."),
+        "en": ("Invalid link", "This link is invalid",
+               "The link is malformed or no longer valid. Please use the most "
+               "recent link from your email."),
+    },
+    "not_found": {
+        "kind": "error",
+        "de": ("Nicht gefunden", "Abonnement nicht gefunden",
+               "Dieses Abonnement existiert nicht mehr. Möglicherweise hast du "
+               "dich bereits abgemeldet."),
+        "en": ("Not found", "Subscription not found",
+               "This subscription no longer exists. You may have already "
+               "unsubscribed."),
+    },
+}
+
+
 def _parse_hhmm(s: str) -> time_cls:
     h, m = s.split(":")
     return time_cls(int(h), int(m))
@@ -78,6 +145,26 @@ def create_app() -> Flask:
             args["lang"] = target_lang
             return f"{request.path}?{urlencode(args)}"
         return {"switch_lang_url": switch_lang_url}
+
+    def _result_page(key: str, lang: str, *, status: int = 200,
+                     action_url: str | None = None,
+                     action_label: str | None = None):
+        """Render a styled standalone result page (templates/result.html)."""
+        if lang not in ("de", "en"):
+            lang = "de"
+        spec = _RESULT_MESSAGES[key]
+        badge, heading, message = spec[lang]
+        return render_template(
+            "result.html",
+            lang=lang,
+            kind=spec["kind"],
+            badge=badge,
+            heading=heading,
+            message=message,
+            action_url=action_url,
+            action_label=action_label,
+            kofi_url=app.config["TERMINE_CONFIG"].kofi_url,
+        ), status
 
     @app.route("/healthz")
     def healthz():
@@ -182,7 +269,8 @@ def create_app() -> Flask:
                             primary=cfg.token_secret_primary,
                             previous=cfg.token_secret_previous)
         except InvalidToken:
-            return ("Invalid token", 400)
+            return _result_page("invalid_token",
+                                request.args.get("lang", "de"), status=400)
         conn = connect(cfg.db_path)
         confirm(conn, sub_id)
         row = conn.execute("SELECT language FROM subscriptions WHERE id=?",
@@ -210,10 +298,14 @@ def create_app() -> Flask:
                             primary=cfg.token_secret_primary,
                             previous=cfg.token_secret_previous)
         except InvalidToken:
-            return ("Invalid token", 400)
+            return _result_page("invalid_token",
+                                request.args.get("lang", "de"), status=400)
         conn = connect(cfg.db_path)
+        row = conn.execute("SELECT language FROM subscriptions WHERE id=?",
+                           (sub_id,)).fetchone()
+        lang = request.args.get("lang") or (row["language"] if row else "de")
         soft_delete(conn, sub_id)
-        return ("Unsubscribed.", 200)
+        return _result_page("unsubscribed", lang)
 
     @app.route("/manage/<token>", methods=["GET", "POST"])
     def manage_route(token):
@@ -223,7 +315,8 @@ def create_app() -> Flask:
                             primary=cfg.token_secret_primary,
                             previous=cfg.token_secret_previous)
         except InvalidToken:
-            return ("Invalid token", 400)
+            return _result_page("invalid_token",
+                                request.args.get("lang", "de"), status=400)
         conn = connect(cfg.db_path)
         if request.method == "POST":
             atype = request.form.get("appointment_type", "").strip()
@@ -241,10 +334,18 @@ def create_app() -> Flask:
                        time_window_end=_parse_hhmm(te))
             conn.execute("UPDATE subscriptions SET filters_json=? WHERE id=?",
                          (f.to_json(), sub_id))
-            return ("Updated.", 200)
+            row = conn.execute("SELECT language FROM subscriptions WHERE id=?",
+                               (sub_id,)).fetchone()
+            lang = row["language"] if row else "de"
+            back_label = ("Zurück zu den Einstellungen" if lang == "de"
+                          else "Back to your settings")
+            return _result_page("updated", lang,
+                                 action_url=f"/manage/{token}",
+                                 action_label=back_label)
         row = conn.execute("SELECT * FROM subscriptions WHERE id=?", (sub_id,)).fetchone()
         if not row or row["deleted_at"] is not None:
-            return ("Subscription not found", 404)
+            return _result_page("not_found", request.args.get("lang", "de"),
+                                status=404)
         catalog = load_catalog(row["city"])
         lang = row["language"]
         return render_template("manage.html",
@@ -261,14 +362,18 @@ def create_app() -> Flask:
                          primary=cfg.token_secret_primary,
                          previous=cfg.token_secret_previous)
         except InvalidToken:
-            return ("Invalid token", 400)
+            return _result_page("invalid_token",
+                                request.args.get("lang", "de"), status=400)
         conn = connect(cfg.db_path)
         conn.execute(
             "UPDATE subscriptions SET expires_at=datetime('now', ?) "
             "WHERE id=? AND deleted_at IS NULL",
             (f"+{cfg.subscription_ttl_days} days", sid),
         )
-        return ("Subscription renewed.", 200)
+        row = conn.execute("SELECT language FROM subscriptions WHERE id=?",
+                           (sid,)).fetchone()
+        lang = request.args.get("lang") or (row["language"] if row else "de")
+        return _result_page("renewed", lang)
 
     @app.route("/go/<slot_token>")
     def go_route(slot_token):
@@ -279,7 +384,8 @@ def create_app() -> Flask:
             (slot_token,),
         ).fetchone()
         if not row:
-            return ("This appointment link has expired.", 410)
+            return _result_page("link_expired",
+                                request.args.get("lang", "de"), status=410)
         return redirect(row["upstream_url"], code=302)
 
     @app.route("/admin")
