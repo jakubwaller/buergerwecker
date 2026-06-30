@@ -201,6 +201,25 @@
     }
     button[type="submit"]:hover { background: var(--accent-hover); }
     button[type="submit"]:active { transform: translateY(1px); }
+    .result-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.85rem 1.25rem;
+      align-items: center;
+      margin: 1.75rem 0 0;
+    }
+    .btn-link {
+      display: inline-block;
+      padding: 0.7rem 1.5rem;
+      background: var(--accent);
+      color: var(--accent-text);
+      border-radius: var(--radius-input);
+      text-decoration: none;
+      font-weight: 500;
+      transition: background 0.15s, transform 0.05s;
+    }
+    .btn-link:hover { background: var(--accent-hover); }
+    .btn-link:active { transform: translateY(1px); }
     footer {
       margin-top: 2.5rem;
       font-size: 0.875rem;
