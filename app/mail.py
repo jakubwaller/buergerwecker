@@ -172,9 +172,13 @@ def _providers(cfg) -> list[tuple]:
     provider's window usage already includes transactional emails sent via
     `send()`, since those are recorded under the same provider name.
     """
+    # Mailjet is bounded by BOTH its hourly cap (the new-sender warm-up
+    # throttle) and its daily cap (free tier = 200/day); _headroom takes the
+    # tighter of the two. Resend's free tier is a flat daily cap.
     available = {
         "mailjet": ("mailjet", _call_mailjet_batch, 50,
-                    [(cfg.mailjet_hourly_quota, 3600)]),
+                    [(cfg.mailjet_hourly_quota, 3600),
+                     (cfg.mailjet_daily_quota, 86400)]),
         "resend": ("resend", _call_resend_batch, 100,
                    [(cfg.resend_daily_quota, 86400)]),
     }
