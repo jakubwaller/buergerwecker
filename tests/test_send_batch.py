@@ -21,9 +21,10 @@ def resend_on(monkeypatch):
         monkeypatch.setenv(k, v)
 
 
-def _cfg(**over):
+def _cfg(order=("mailjet", "resend"), **over):
     base = dict(resend_daily_quota=100, mailjet_hourly_quota=10,
-                quota_alert_threshold_pct=80, developer_email="dev@x")
+                quota_alert_threshold_pct=80, developer_email="dev@x",
+                email_provider_order=order)
     base.update(over)
     return SimpleNamespace(**base)
 
@@ -39,20 +40,58 @@ def _sent(conn, provider):
         (provider,)).fetchone()["n"]
 
 
+_RESEND_FIRST = ("resend", "mailjet")
+
+
 def test_delivers_all_within_quota_via_resend(db, resend_on):
     with patch("app.mail._call_resend_batch", return_value=True) as rb, \
          patch("app.mail._call_mailjet_batch") as mb:
-        res = send_batch(db, _items(3), _cfg())
+        res = send_batch(db, _items(3), _cfg(order=_RESEND_FIRST))
     assert len(res.delivered) == 3 and res.deferred == 0
     rb.assert_called_once()          # one batch call, not three
     mb.assert_not_called()
     assert _sent(db, "resend") == 3
 
 
+def test_default_order_sends_via_mailjet_first(db, resend_on):
+    # Production default is Mailjet-first: within its hourly quota, digests go
+    # through Mailjet and Resend is not touched.
+    with patch("app.mail._call_mailjet_batch", return_value=True) as mb, \
+         patch("app.mail._call_resend_batch") as rb:
+        res = send_batch(db, _items(4), _cfg())   # default order = mailjet,resend
+    assert len(res.delivered) == 4 and res.deferred == 0
+    mb.assert_called_once()
+    rb.assert_not_called()
+    assert _sent(db, "mailjet") == 4
+
+
+def test_order_is_configurable(db, resend_on):
+    # Flipping the order routes the same batch to the other provider.
+    with patch("app.mail._call_mailjet_batch") as mb, \
+         patch("app.mail._call_resend_batch", return_value=True) as rb:
+        send_batch(db, _items(2), _cfg(order=("resend", "mailjet")))
+    rb.assert_called_once()
+    mb.assert_not_called()
+
+
+def test_mailjet_overflow_spills_to_resend(db, resend_on):
+    # Mailjet-first with only 2/hour of headroom: 2 go via Mailjet, the rest
+    # spill to Resend — this is the warm-up-period behaviour.
+    with patch("app.mail._call_mailjet_batch", return_value=True) as mb, \
+         patch("app.mail._call_resend_batch", return_value=True) as rb:
+        res = send_batch(db, _items(5), _cfg(mailjet_hourly_quota=2,
+                                             resend_daily_quota=100))
+    assert len(res.delivered) == 5 and res.deferred == 0
+    assert _sent(db, "mailjet") == 2 and _sent(db, "resend") == 3
+    mb.assert_called_once()
+    rb.assert_called_once()
+
+
 def test_chunks_into_batches_of_100(db, resend_on):
     with patch("app.mail._call_resend_batch", return_value=True) as rb, \
          patch("app.mail._call_mailjet_batch"):
-        res = send_batch(db, _items(150), _cfg(resend_daily_quota=1000))
+        res = send_batch(db, _items(150),
+                         _cfg(order=_RESEND_FIRST, resend_daily_quota=1000))
     assert len(res.delivered) == 150 and res.deferred == 0
     assert rb.call_count == 2        # 100 + 50
     assert len(rb.call_args_list[0].args[0]) == 100
@@ -63,7 +102,8 @@ def test_defers_overflow_past_quota(db, resend_on):
     # Resend capped at 2, Mailjet disabled → 2 sent, 3 deferred.
     with patch("app.mail._call_resend_batch", return_value=True), \
          patch("app.mail._call_mailjet_batch") as mb:
-        res = send_batch(db, _items(5), _cfg(resend_daily_quota=2,
+        res = send_batch(db, _items(5), _cfg(order=_RESEND_FIRST,
+                                             resend_daily_quota=2,
                                              mailjet_hourly_quota=0))
     assert len(res.delivered) == 2 and res.deferred == 3
     mb.assert_not_called()
@@ -75,7 +115,7 @@ def test_defers_overflow_past_quota(db, resend_on):
 def test_falls_over_to_mailjet_when_resend_errors(db, resend_on):
     with patch("app.mail._call_resend_batch", return_value=False) as rb, \
          patch("app.mail._call_mailjet_batch", return_value=True) as mb:
-        res = send_batch(db, _items(4), _cfg())
+        res = send_batch(db, _items(4), _cfg(order=_RESEND_FIRST))
     assert len(res.delivered) == 4 and res.deferred == 0
     rb.assert_called_once()
     mb.assert_called_once()
@@ -89,17 +129,20 @@ def test_existing_usage_counts_against_quota(db, resend_on):
         [(f"old{i}",) for i in range(9)])
     with patch("app.mail._call_resend_batch", return_value=True), \
          patch("app.mail._call_mailjet_batch", return_value=True):
-        res = send_batch(db, _items(5), _cfg(resend_daily_quota=10,
+        res = send_batch(db, _items(5), _cfg(order=_RESEND_FIRST,
+                                             resend_daily_quota=10,
                                              mailjet_hourly_quota=0))
     assert len(res.delivered) == 1 and res.deferred == 4   # only 1 resend slot left
 
 
 def test_already_sent_idem_key_is_skipped(db, resend_on):
     db.execute("INSERT INTO sent_idempotency (idem_key, provider) VALUES ('k0','resend')")
-    with patch("app.mail._call_resend_batch", return_value=True) as rb:
+    with patch("app.mail._call_resend_batch", return_value=True) as rb, \
+         patch("app.mail._call_mailjet_batch", return_value=True) as mb:
         res = send_batch(db, _items(1), _cfg())   # idem_key 'k0' already sent
     assert res.delivered == set() and res.deferred == 0
     rb.assert_not_called()
+    mb.assert_not_called()
 
 
 def test_quota_alert_fires_on_deferral_and_is_rate_limited(db):

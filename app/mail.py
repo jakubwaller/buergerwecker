@@ -165,17 +165,28 @@ def _window_used(conn: sqlite3.Connection, provider: str, window_seconds: int) -
 def _providers(cfg) -> list[tuple]:
     """Ordered (name, send_fn, batch_size, [(limit, window_seconds), ...]).
 
-    Resend first: it accepts up to 100 in one call, so it absorbs a burst best.
-    Mailjet second, throttled to its hourly allowance. Its usage already
-    includes transactional confirmation emails sent via `send()`, since those
-    are recorded under provider='mailjet'.
+    Order follows cfg.email_provider_order (default Mailjet-first, so Mailjet's
+    account sees the notification traffic — the prerequisite for getting its
+    new-sender throttle lifted; Resend absorbs whatever exceeds Mailjet's
+    hourly allowance). Resend is skipped when no API key is configured. Each
+    provider's window usage already includes transactional emails sent via
+    `send()`, since those are recorded under the same provider name.
     """
+    available = {
+        "mailjet": ("mailjet", _call_mailjet_batch, 50,
+                    [(cfg.mailjet_hourly_quota, 3600)]),
+        "resend": ("resend", _call_resend_batch, 100,
+                   [(cfg.resend_daily_quota, 86400)]),
+    }
+    order = getattr(cfg, "email_provider_order", ("mailjet", "resend"))
     specs: list[tuple] = []
-    if os.environ.get("RESEND_API_KEY"):
-        specs.append(("resend", _call_resend_batch, 100,
-                      [(cfg.resend_daily_quota, 86400)]))
-    specs.append(("mailjet", _call_mailjet_batch, 50,
-                  [(cfg.mailjet_hourly_quota, 3600)]))
+    for name in order:
+        spec = available.get(name)
+        if spec is None:
+            continue
+        if name == "resend" and not os.environ.get("RESEND_API_KEY"):
+            continue
+        specs.append(spec)
     return specs
 
 def _headroom(conn: sqlite3.Connection, limits: list[tuple], provider: str) -> int:
