@@ -26,6 +26,27 @@ def soft_delete(conn: sqlite3.Connection, sub_id: int) -> None:
         (sub_id,),
     )
 
+def set_confirmation_sent(conn: sqlite3.Connection, sub_id: int) -> None:
+    conn.execute(
+        "UPDATE subscriptions SET confirmation_sent_at=CURRENT_TIMESTAMP WHERE id=?",
+        (sub_id,),
+    )
+
+def pending_confirmations(conn: sqlite3.Connection, *,
+                          max_age_days: int = 7) -> list[tuple[int, str, str]]:
+    """Sign-ups still awaiting a confirmation email: unconfirmed, not deleted,
+    no confirmation delivered yet, created within `max_age_days` (older ones are
+    abandoned rather than retried forever). Oldest first for fair delivery."""
+    rows = conn.execute(
+        "SELECT id, email, language FROM subscriptions "
+        "WHERE confirmed_at IS NULL AND deleted_at IS NULL "
+        "AND confirmation_sent_at IS NULL "
+        "AND created_at > datetime('now', ?) "
+        "ORDER BY created_at",
+        (f"-{max_age_days} days",),
+    ).fetchall()
+    return [(r["id"], r["email"], r["language"]) for r in rows]
+
 def _row_to_subscription(row: sqlite3.Row) -> Subscription:
     from datetime import datetime
     def _p(s): return datetime.fromisoformat(s) if s else None
