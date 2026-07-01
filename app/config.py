@@ -13,6 +13,7 @@ class Config:
     resend_daily_quota: int
     mailjet_hourly_quota: int
     quota_alert_threshold_pct: int
+    email_provider_order: tuple
     token_secret_primary: str
     token_secret_previous: str
     admin_token: str
@@ -57,6 +58,13 @@ def load_config() -> Config:
         resend_daily_quota=int(os.environ.get("RESEND_DAILY_QUOTA", "100")),
         mailjet_hourly_quota=int(os.environ.get("MAILJET_HOURLY_QUOTA", "10")),
         quota_alert_threshold_pct=int(os.environ.get("QUOTA_ALERT_THRESHOLD_PCT", "80")),
+        # Order in which providers are tried for notification digests. Default
+        # Mailjet-first so its account sees the traffic (needed to get the
+        # new-sender throttle lifted); Resend absorbs the overflow.
+        email_provider_order=tuple(
+            p.strip() for p in
+            os.environ.get("EMAIL_PROVIDER_ORDER", "mailjet,resend").split(",")
+            if p.strip()),
         token_secret_primary=_req("TOKEN_SECRET_PRIMARY"),
         token_secret_previous=os.environ.get("TOKEN_SECRET_PREVIOUS", ""),
         admin_token=_req("ADMIN_TOKEN"),
