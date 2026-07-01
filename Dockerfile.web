@@ -7,4 +7,4 @@ COPY catalog/ catalog/
 ENV PYTHONUNBUFFERED=1
 # Application-factory form: gunicorn calls create_app() at startup, so
 # load_config() runs only when the container actually boots — not on import.
-CMD ["gunicorn", "-w", "2", "-b", "0.0.0.0:8000", "app.web:create_app()"]
+CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:8000", "app.web:create_app()"]

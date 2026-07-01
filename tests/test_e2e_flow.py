@@ -55,6 +55,7 @@ def test_full_flow(env):
         for tgt in mail_patch_targets:
             stack.enter_context(patch(tgt, side_effect=fake_send))
         stack.enter_context(patch("app.digest.send_batch", side_effect=fake_send_batch))
+        stack.enter_context(patch("app.confirmations.send_batch", side_effect=fake_send_batch))
         return stack
 
     with _patch_mail():

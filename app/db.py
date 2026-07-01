@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   reminder_sent_at  TIMESTAMP,
   heartbeat_30d_at  TIMESTAMP,
   heartbeat_60d_at  TIMESTAMP,
-  deleted_at        TIMESTAMP
+  deleted_at        TIMESTAMP,
+  confirmation_sent_at TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_active_subs
   ON subscriptions(deleted_at, confirmed_at, expires_at, city);
@@ -77,6 +78,11 @@ def connect(db_path: str) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    # Wait up to 5s for a competing writer instead of raising "database is
+    # locked" immediately. The web workers and the poller share this file, so
+    # concurrent writes (a sign-up landing mid-poll-cycle) are expected — WAL
+    # serialises them, and this lets a blocked write queue rather than error.
+    conn.execute("PRAGMA busy_timeout=5000")
     return conn
 
 @contextmanager
@@ -122,6 +128,11 @@ def init_schema(conn: sqlite3.Connection) -> None:
         "polls_total":    "INTEGER NOT NULL DEFAULT 0",
         "requests_total": "INTEGER NOT NULL DEFAULT 0",
         "counts_date":    "TEXT",
+    })
+    # Tracks when a pending sign-up's confirmation email was successfully sent,
+    # so the retry pass can re-send confirmations that were quota-deferred.
+    _add_missing_columns(conn, "subscriptions", {
+        "confirmation_sent_at": "TIMESTAMP",
     })
     conn.execute(
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?) "

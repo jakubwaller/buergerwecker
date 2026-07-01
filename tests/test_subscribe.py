@@ -38,33 +38,49 @@ def _form(email="alice@example.com"):
 
 def test_subscribe_success_with_mocked_mail(client):
     from unittest.mock import patch
-    with patch("app.web._send_confirmation_email") as send:
+    with patch("app.web._send_confirmation_email", return_value=True) as send:
         r = client.post("/subscribe", data=_form())
-    assert r.status_code in (200, 302)
+    assert r.status_code == 302
+    assert "confirmed=pending" in r.headers.get("Location", "")
     send.assert_called_once()
 
-def test_subscribe_mail_failure_does_not_500(client):
-    """If the confirmation email fails to send, /subscribe must NOT 500 and
-    must NOT pretend success. It surfaces a retryable error and drops the
-    orphaned (unconfirmable) pending row. Regression test for the same
-    unguarded-mail-send class of bug as /confirm."""
+def test_subscribe_quota_deferral_keeps_registration_and_shows_queued(client):
+    """When the confirmation email is deferred (daily quota exhausted), the
+    sign-up must stay a valid pending row — NOT be discarded — and the user is
+    told it may arrive tomorrow. The poller retry pass sends it later."""
     import os
     from unittest.mock import patch
     from app.db import connect
-    # Distinct IP + email so the session-global IP limiter and the DB row
-    # query don't collide with other subscribe tests.
-    email = "mailfail@example.com"
-    with patch("app.web._send_confirmation_email",
-               side_effect=RuntimeError("mail provider exploded")):
+    email = "queued@example.com"
+    with patch("app.web._send_confirmation_email", return_value=False):
         r = client.post("/subscribe", data=_form(email=email),
                         headers={"X-Forwarded-For": "9.9.9.9"})
     assert r.status_code == 302, r.data[:300]
-    assert "subscribe_error=mail" in r.headers.get("Location", "")
-    # The pending row must not linger as an unconfirmable orphan.
+    assert "confirmed=queued" in r.headers.get("Location", "")
+    conn = connect(os.environ["DB_PATH"])
+    row = conn.execute("SELECT deleted_at, confirmed_at FROM subscriptions "
+                       "WHERE email=?", (email,)).fetchone()
+    assert row is not None
+    assert row["deleted_at"] is None      # kept, not discarded
+    assert row["confirmed_at"] is None    # still awaiting confirmation
+
+def test_subscribe_mail_error_keeps_registration_not_discarded(client):
+    """Even an unexpected send error must not lose the sign-up: keep it pending
+    and let the retry pass handle it (shown to the user as 'queued')."""
+    import os
+    from unittest.mock import patch
+    from app.db import connect
+    email = "mailerr@example.com"
+    with patch("app.web._send_confirmation_email",
+               side_effect=RuntimeError("mail provider exploded")):
+        r = client.post("/subscribe", data=_form(email=email),
+                        headers={"X-Forwarded-For": "8.8.8.8"})
+    assert r.status_code == 302
+    assert "confirmed=queued" in r.headers.get("Location", "")
     conn = connect(os.environ["DB_PATH"])
     row = conn.execute("SELECT deleted_at FROM subscriptions WHERE email=?",
                        (email,)).fetchone()
-    assert row is not None and row["deleted_at"] is not None
+    assert row is not None and row["deleted_at"] is None
 
 def test_honeypot_silently_drops_and_does_not_email(client):
     from unittest.mock import patch

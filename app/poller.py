@@ -28,6 +28,10 @@ def main() -> None:
                       cycle_id=cycle_id,
                       cfg=cfg,
                       http=http)
+            # Retry confirmation emails deferred by quota exhaustion. After
+            # run_cycle so time-sensitive slot notifications get quota first.
+            from app.confirmations import send_pending_confirmations
+            send_pending_confirmations(conn, cfg)
             consecutive_failures = 0
         except Exception as exc:
             consecutive_failures += 1

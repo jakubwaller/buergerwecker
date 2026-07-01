@@ -125,17 +125,12 @@ def _parse_hhmm(s: str) -> time_cls:
     return time_cls(int(h), int(m))
 
 
-def _send_confirmation_email(conn, sub_id: int, email: str, lang: str, cfg) -> None:
-    tok = sign(sub_id, "confirm",
-               primary=cfg.token_secret_primary,
-               previous=cfg.token_secret_previous)
-    url = f"{cfg.public_base_url}/confirm/{tok}"
-    body_de = f"Bitte bestätige dein Abonnement: {url}"
-    body_en = f"Please confirm your subscription: {url}"
-    body = body_en if lang == "en" else body_de
-    subj = "Bestätigung benötigt" if lang == "de" else "Confirmation needed"
-    key = _idem_key(sub_id, [], f"confirm-{sub_id}")
-    mail_send(conn, email, subj, body, idem_key=key)
+def _send_confirmation_email(conn, sub_id: int, email: str, lang: str, cfg) -> bool:
+    """Try to send the confirmation now. Returns True if delivered, False if
+    deferred (quota exhausted) — the sign-up stays pending and the poller's
+    retry pass sends it later (e.g. next day once quota resets)."""
+    from app.confirmations import send_confirmation_now
+    return send_confirmation_now(conn, sub_id, email, lang, cfg)
 
 
 def _send_manage_link_email(conn, sub_id: int, cfg) -> None:
@@ -284,17 +279,18 @@ def create_app() -> Flask:
             sub_id = insert_pending(conn, email=email, city=city,
                                     language=lang, filter_=f,
                                     ttl_days=cfg.subscription_ttl_days)
-        # The confirmation email is the ONLY way the user can complete signup,
-        # so — unlike the manage-link email in /confirm — we must NOT claim
-        # success if it fails. Surface a retryable error instead of a 500 and
-        # drop the orphaned pending row so it can't linger unconfirmable.
+        # Try to send the confirmation now. If the daily email quota is
+        # exhausted (or the send errors), we KEEP the pending sign-up and the
+        # poller's retry pass sends the confirmation on a later cycle — so the
+        # registration is never lost. Only the message differs: "check your
+        # inbox" vs "it may arrive tomorrow". No soft-delete, no lockout.
         try:
-            _send_confirmation_email(conn, sub_id, email, lang, cfg)
+            delivered = _send_confirmation_email(conn, sub_id, email, lang, cfg)
         except Exception:
-            log.exception("confirmation email failed for sub %s", sub_id)
-            soft_delete(conn, sub_id)
-            return redirect("/?subscribe_error=mail")
-        return redirect("/?confirmed=pending")
+            log.exception("confirmation email errored for sub %s; will retry", sub_id)
+            delivered = False
+        return redirect("/?confirmed=pending" if delivered
+                        else "/?confirmed=queued")
 
     @app.route("/confirm/<token>")
     def confirm_route(token):

@@ -16,6 +16,24 @@
     </div>
   {% endif %}
 
+  {% if confirmed == 'queued' %}
+    <div class="notice notice-success" role="status">
+      {% if lang == 'en' %}
+        <strong>You're registered!</strong> Due to high demand we've hit
+        today's email limit, so your confirmation email will arrive a little
+        later — possibly not until tomorrow. Your sign-up is saved and the
+        email will be sent automatically; there's no need to register again.
+        (Please check your spam folder too.)
+      {% else %}
+        <strong>Du bist registriert!</strong> Wegen hoher Nachfrage ist das
+        heutige E-Mail-Limit erreicht. Deine Bestätigungs-E-Mail kommt daher
+        etwas später — möglicherweise erst morgen. Deine Anmeldung ist
+        gespeichert und die E-Mail wird automatisch verschickt; du musst dich
+        nicht erneut anmelden. (Schau bitte auch im Spam-Ordner nach.)
+      {% endif %}
+    </div>
+  {% endif %}
+
   {% if error == 'mail' %}
     <div class="notice notice-error" role="alert">
       {% if lang == 'en' %}
