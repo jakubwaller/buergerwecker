@@ -5,14 +5,13 @@ from datetime import datetime, timedelta
 import requests
 from app.filters import matches
 from app.planning import build_plans
-from app.repo import (active_subscriptions, has_seen_slot, record_seen_slot,
-                       set_last_notified)
+from app.repo import active_subscriptions, has_seen_slot
 from app.scrapers import get_scraper
 from app.http_session import CountingSession
 from app.models import Subscription, Slot, PollPlan
 
 # Imported here so tests can monkey-patch it.
-from app.digest import send_digest  # noqa: E402
+from app.digest import send_digest, flush_digests  # noqa: E402
 
 def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
               rate_limit_minutes: int, cycle_id: str,
@@ -96,7 +95,12 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
             )
     now = datetime.utcnow()
     rate_cutoff = now - timedelta(minutes=rate_limit_minutes)
-    for sub in subs:
+    # Fairness: serve longest-waiting subscribers first (never-notified, then
+    # oldest last_notified_at). When a burst exceeds the daily send quota, the
+    # deferred tail is whoever was most recently served — so nobody is
+    # permanently starved across cycles. datetime.min sorts NULLs to the front.
+    outbox: list = []
+    for sub in sorted(subs, key=lambda s: s.last_notified_at or datetime.min):
         if sub.last_notified_at and sub.last_notified_at > rate_cutoff:
             continue
         # Gather candidate slots from any plan that covers this subscription's filter.
@@ -122,10 +126,6 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
                 candidates.append(slot)
         if not candidates:
             continue
-        # Send and record atomically. Mailjet idempotency prevents double
-        # sends across retries; this transaction ensures that IF the email
-        # was sent, the seen_slots + last_notified_at writes are visible
-        # together — preventing a crash from re-presenting the same slots.
         # Cache each slot's city + upstream URL so /go/<token> works for
         # any city without hardcoding Leipzig. The scrapers know their
         # own upstream URL format; ask them via the catalog.
@@ -144,12 +144,12 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
                 "VALUES (?, ?, ?) ON CONFLICT (slot_token) DO NOTHING",
                 (slot_token, sub.city, upstream),
             )
+        # Stage for batched delivery. seen_slots + last_notified are recorded
+        # inside flush_digests, but only for digests that were actually sent —
+        # quota-deferred ones stay unrecorded so a later cycle re-sends them.
         send_digest(conn=conn, subscription=sub, matched_slots=candidates,
-                    cycle_id=cycle_id, cfg=cfg)
-        with transaction(conn):
-            for slot in candidates:
-                record_seen_slot(conn, sub.id, slot.hash())
-            set_last_notified(conn, sub.id)
+                    cycle_id=cycle_id, cfg=cfg, sink=outbox)
+    flush_digests(conn, outbox, cfg)
 
 def _build_upstream_url(scfg: dict, slot) -> str:
     """Vendor-specific upstream booking URL composition.

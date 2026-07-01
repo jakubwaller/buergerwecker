@@ -34,6 +34,15 @@ def test_full_flow(env):
     def fake_send(conn, to, subject, body, *, idem_key):
         sent_mails.append((to, subject))
 
+    # Digests are delivered via the batched path (app.digest.send_batch), so
+    # capture that too and report everything delivered.
+    from app.mail import BatchResult
+
+    def fake_send_batch(conn, items, cfg):
+        for it in items:
+            sent_mails.append((it.to, it.subject))
+        return BatchResult(delivered={it.idem_key for it in items})
+
     # 1. subscribe (mock mail)
     # Patch every binding site of app.mail.send since the symbol is imported by name
     # into app.web (as mail_send) and app.digest (as send), bypassing patching of
@@ -45,6 +54,7 @@ def test_full_flow(env):
         stack = ExitStack()
         for tgt in mail_patch_targets:
             stack.enter_context(patch(tgt, side_effect=fake_send))
+        stack.enter_context(patch("app.digest.send_batch", side_effect=fake_send_batch))
         return stack
 
     with _patch_mail():

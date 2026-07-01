@@ -1,9 +1,11 @@
 from __future__ import annotations
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime
 from app.i18n import t
 from app.models import Subscription, Slot
-from app.mail import send, _idem_key
+from app.mail import (send, send_batch, maybe_quota_alert, Outgoing,
+                      _idem_key)
 
 # Weekday abbreviations for the date line (i18n.t is string-only, so the
 # per-language lists live here rather than in the JSON bundles). Index 0 = Mon.
@@ -87,11 +89,24 @@ def render_digest_text(sub: Subscription, slots: list[Slot], *,
     lines.append(t(lang, "digest.kofi", kofi_url=kofi_url))
     return "\n".join(lines)
 
+@dataclass
+class QueuedDigest:
+    """A rendered digest staged for batched delivery. Carries the subscription
+    and slots so the flush can record seen_slots only for what was delivered."""
+    item: Outgoing
+    subscription: Subscription
+    slots: list[Slot]
+
 def send_digest(*, conn: sqlite3.Connection, subscription: Subscription,
-                matched_slots: list[Slot], cycle_id: str, cfg) -> None:
-    """Send a digest. `cfg` is the loaded Config (passed in by callers
-    that already have it loaded — never re-read from os.environ here).
-    render_digest_text loads the per-city catalog itself for label lookups."""
+                matched_slots: list[Slot], cycle_id: str, cfg,
+                sink: list | None = None) -> None:
+    """Render a digest and stage it for delivery. `cfg` is the loaded Config
+    (passed in by callers that already have it loaded — never re-read from
+    os.environ here). render_digest_text loads the per-city catalog itself.
+
+    With a `sink` list (the normal cycle path), the rendered digest is appended
+    for batched delivery via `flush_digests`. Without one, it is delivered
+    immediately (used for one-off sends outside a poll cycle)."""
     from app.tokens import sign
     unsub_token = sign(subscription.id, "unsubscribe",
                        primary=cfg.token_secret_primary,
@@ -105,4 +120,30 @@ def send_digest(*, conn: sqlite3.Connection, subscription: Subscription,
     key = _idem_key(subscription.id,
                     [s.hash() for s in matched_slots],
                     cycle_id)
-    send(conn, subscription.email, subj, body, idem_key=key)
+    queued = QueuedDigest(
+        item=Outgoing(to=subscription.email, subject=subj, body=body, idem_key=key),
+        subscription=subscription,
+        slots=list(matched_slots),
+    )
+    if sink is None:
+        flush_digests(conn, [queued], cfg)
+    else:
+        sink.append(queued)
+
+def flush_digests(conn: sqlite3.Connection, sink: list, cfg) -> None:
+    """Deliver every staged digest in `sink` via quota-aware batches, then
+    record seen_slots + last_notified for the ones that were actually sent.
+    Deferred digests are left unrecorded so the next cycle re-sends them."""
+    if not sink:
+        return
+    from app.db import transaction
+    from app.repo import record_seen_slot, set_last_notified
+    result = send_batch(conn, [q.item for q in sink], cfg)
+    for q in sink:
+        if q.item.idem_key not in result.delivered:
+            continue
+        with transaction(conn):
+            for slot in q.slots:
+                record_seen_slot(conn, q.subscription.id, slot.hash())
+            set_last_notified(conn, q.subscription.id)
+    maybe_quota_alert(conn, cfg, deferred=result.deferred)

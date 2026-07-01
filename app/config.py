@@ -10,6 +10,9 @@ class Config:
     mailjet_from_name: str
     mailjet_daily_quota: int
     resend_api_key: str
+    resend_daily_quota: int
+    mailjet_hourly_quota: int
+    quota_alert_threshold_pct: int
     token_secret_primary: str
     token_secret_previous: str
     admin_token: str
@@ -48,6 +51,12 @@ def load_config() -> Config:
         mailjet_from_name=_req("MAILJET_FROM_NAME"),
         mailjet_daily_quota=_req_int("MAILJET_DAILY_QUOTA"),
         resend_api_key=os.environ.get("RESEND_API_KEY", ""),
+        # Free-tier send caps used for quota-aware delivery + alerting. Defaults
+        # match Resend's free tier (100/day) and the current Mailjet allowance
+        # (10/hour). Raise these after upgrading to a paid plan.
+        resend_daily_quota=int(os.environ.get("RESEND_DAILY_QUOTA", "100")),
+        mailjet_hourly_quota=int(os.environ.get("MAILJET_HOURLY_QUOTA", "10")),
+        quota_alert_threshold_pct=int(os.environ.get("QUOTA_ALERT_THRESHOLD_PCT", "80")),
         token_secret_primary=_req("TOKEN_SECRET_PRIMARY"),
         token_secret_previous=os.environ.get("TOKEN_SECRET_PREVIOUS", ""),
         admin_token=_req("ADMIN_TOKEN"),
