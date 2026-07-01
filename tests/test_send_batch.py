@@ -23,6 +23,7 @@ def resend_on(monkeypatch):
 
 def _cfg(order=("mailjet", "resend"), **over):
     base = dict(resend_daily_quota=100, mailjet_hourly_quota=10,
+                mailjet_daily_quota=100_000,  # effectively unbounded unless set
                 quota_alert_threshold_pct=80, developer_email="dev@x",
                 email_provider_order=order)
     base.update(over)
@@ -72,6 +73,24 @@ def test_order_is_configurable(db, resend_on):
         send_batch(db, _items(2), _cfg(order=("resend", "mailjet")))
     rb.assert_called_once()
     mb.assert_not_called()
+
+
+def test_mailjet_daily_cap_binds_when_tighter_than_hourly(db, resend_on):
+    # Hourly headroom is generous (50) but the daily cap (200/day free tier) has
+    # only 3 left → Mailjet sends 3, the rest spill to Resend. The 197 prior
+    # sends are dated 2h ago: inside the daily window, outside the hourly one.
+    db.executemany(
+        "INSERT INTO sent_idempotency (idem_key, provider, sent_at) "
+        "VALUES (?, 'mailjet', datetime('now','-2 hours'))",
+        [(f"mj{i}",) for i in range(197)])
+    with patch("app.mail._call_mailjet_batch", return_value=True) as mb, \
+         patch("app.mail._call_resend_batch", return_value=True) as rb:
+        res = send_batch(db, _items(5), _cfg(mailjet_hourly_quota=50,
+                                             mailjet_daily_quota=200,
+                                             resend_daily_quota=100))
+    assert len(res.delivered) == 5 and res.deferred == 0
+    assert res.sent_by_provider.get("mailjet") == 3    # 200 - 197
+    assert res.sent_by_provider.get("resend") == 2
 
 
 def test_mailjet_overflow_spills_to_resend(db, resend_on):
