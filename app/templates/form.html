@@ -49,21 +49,34 @@
   {% endif %}
 
   <h1>
-    {% if lang == 'en' %}Never miss a Leipzig appointment again
+    {% if heading %}{{ heading }}
+    {% elif lang == 'en' %}Never miss a Leipzig appointment again
     {% else %}Nie wieder freie Bürgerbüro-Termine verpassen{% endif %}
   </h1>
+
+  {% if other_cities %}
+    <p class="city-switch">
+      {% for label, url in other_cities %}
+        <a href="{{ url }}">→ {{ label }}</a>{% if not loop.last %} · {% endif %}
+      {% endfor %}
+    </p>
+  {% endif %}
 
   <p class="disclaimer">
     {% if lang == 'en' %}
       This website is not officially affiliated with the City of Leipzig or
-      its Bürgerbüros. We are an independent service that only informs
+      its authorities. We are an independent service that only informs
       about available appointments.
     {% else %}
-      Diese Website ist nicht offiziell mit der Stadt Leipzig oder den
-      Bürgerbüros der Stadt Leipzig verbunden. Wir sind ein unabhängiger
-      Dienst, der ausschließlich über verfügbare Termine informiert.
+      Diese Website ist nicht offiziell mit der Stadt Leipzig oder ihren
+      Behörden verbunden. Wir sind ein unabhängiger Dienst, der
+      ausschließlich über verfügbare Termine informiert.
     {% endif %}
   </p>
+
+  {% if note %}
+    <p class="disclaimer">{{ note }}</p>
+  {% endif %}
 
   <form action="/subscribe" method="post">
     <input type="hidden" name="lang" value="{{ lang }}">

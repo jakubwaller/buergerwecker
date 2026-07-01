@@ -43,6 +43,15 @@ class Catalog:
     scraper_config: dict               # vendor-specific, opaque to web layer
     appointment_types_en: dict[str, str] = field(default_factory=dict)
     locations_en: dict[str, str] = field(default_factory=dict)
+    # Optional per-tenant UI copy from display.json: keys like "label",
+    # "heading", "note", each a {"de": …, "en": …} map. Missing file or keys →
+    # the templates fall back to their built-in default copy.
+    display: dict = field(default_factory=dict)
+
+    def display_text(self, key: str, lang: str) -> str | None:
+        """Localized display.json text for `key`; falls back to German; None if unset."""
+        entry = self.display.get(key) or {}
+        return entry.get(lang) or entry.get("de") or None
 
     def appointment_type_name_for(self, uuid: str) -> str | None:
         return next((n for n, u in self.appointment_types.items() if u == uuid), None)
@@ -91,9 +100,21 @@ def load_catalog(city: str) -> Catalog:
     # back to the German names everywhere (see Catalog.appointment_types_for).
     ats_en = _read_optional_json(city_dir / "appointment_type.en.json")
     locs_en = _read_optional_json(city_dir / "locations.en.json")
+    display = _read_optional_json(city_dir / "display.json")
     return Catalog(city=city, appointment_types=ats, locations=locs,
                    scraper_config=scfg,
-                   appointment_types_en=ats_en, locations_en=locs_en)
+                   appointment_types_en=ats_en, locations_en=locs_en,
+                   display=display)
+
+
+def available_cities() -> list[str]:
+    """Catalog directory names that hold a complete tenant config, sorted.
+
+    Drives the cross-links between tenants on the sign-up form; a directory
+    without a scraper_config.json (e.g. a scaffold) is not offered.
+    """
+    return sorted(d.name for d in CATALOG_ROOT.iterdir()
+                  if d.is_dir() and (d / "scraper_config.json").is_file())
 
 
 def _read_optional_json(path: Path) -> dict:

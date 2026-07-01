@@ -6,7 +6,7 @@ from urllib.parse import urlencode
 from flask import Flask, request, render_template, redirect
 from app.config import load_config
 from app.db import connect, init_schema, transaction
-from app.catalog import load_catalog
+from app.catalog import load_catalog, available_cities, CatalogError
 from app.models import Filter
 from app.repo import insert_pending, active_subscriptions, confirm, soft_delete
 from app.ratelimit import GLOBAL_IP_LIMITER, email_rate_limit_ok
@@ -215,12 +215,29 @@ def create_app() -> Flask:
         # retryable error instead of silently re-rendering.
         confirmed = request.args.get("confirmed")
         error = request.args.get("subscribe_error")
-        catalog = load_catalog(city)
+        try:
+            catalog = load_catalog(city)
+        except CatalogError:
+            # Unknown/garbage ?city= — land on the default tenant, not a 500.
+            return redirect("/")
+        # Cross-links to the other tenants (e.g. Bürgerbüro ⇄ Ausländerbehörde),
+        # labeled from each catalog's display.json.
+        other_cities = []
+        for other in available_cities():
+            if other == city:
+                continue
+            ocat = load_catalog(other)
+            label = ocat.display_text("label", lang) or other
+            url = f"/?city={other}" + ("&lang=en" if lang == "en" else "")
+            other_cities.append((label, url))
         return render_template("form.html",
                                lang=lang,
                                city=city,
                                confirmed=confirmed,
                                error=error,
+                               heading=catalog.display_text("heading", lang),
+                               note=catalog.display_text("note", lang),
+                               other_cities=other_cities,
                                appointment_types=catalog.appointment_types_for(lang),
                                locations=catalog.locations_for(lang),
                                kofi_url=app.config["TERMINE_CONFIG"].kofi_url)

@@ -67,11 +67,17 @@ def sync_city(city: str,
     current_services = json.loads(svc_path.read_text())
     current_locations = json.loads(loc_path.read_text())
 
+    # Single-location tenants (e.g. leipzig-abh-h) have no locations step in
+    # their flow, so there is nothing to probe: the location list is static in
+    # the catalog and never drift-checked.
+    has_locations_step = "locations" in scfg["steps"]
+
     try:
         live_services, live_services_en = fetch_services(http, scfg["base_url"], scfg["uid"])
-        live_locations = fetch_locations(http, scfg["base_url"], scfg["uid"],
+        live_locations = (fetch_locations(http, scfg["base_url"], scfg["uid"],
                                           list(live_services.values()),
                                           scfg["steps"])
+                          if has_locations_step else current_locations)
     except (requests.RequestException, RuntimeError) as exc:
         return {"error": str(exc),
                 "service_drift": {}, "location_drift": {}}
