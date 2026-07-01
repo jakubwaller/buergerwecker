@@ -210,17 +210,22 @@ def send_batch(conn: sqlite3.Connection, items: list[Outgoing], cfg) -> BatchRes
     the next provider. Anything past the combined quota is deferred: its claim
     is released so a later cycle re-sends it (fresh cycle_id ⇒ fresh idem_key).
     """
+    from app.db import transaction
     result = BatchResult()
     pending: list[Outgoing] = []
-    for it in items:
-        cur = conn.execute(
-            "INSERT OR IGNORE INTO sent_idempotency (idem_key, provider) "
-            "VALUES (?, 'pending')",
-            (it.idem_key,),
-        )
-        if cur.rowcount == 1:
-            pending.append(it)
-        # rowcount 0 → already sent/claimed by an earlier cycle: skip silently.
+    # Claim all idempotency rows in ONE transaction. In autocommit each INSERT
+    # would fsync separately — fatal when a popular slot matches tens of
+    # thousands of subscribers (that many fsyncs would overrun the cycle).
+    with transaction(conn):
+        for it in items:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO sent_idempotency (idem_key, provider) "
+                "VALUES (?, 'pending')",
+                (it.idem_key,),
+            )
+            if cur.rowcount == 1:
+                pending.append(it)
+            # rowcount 0 → already sent/claimed by an earlier cycle: skip.
 
     remaining = list(pending)
     for name, send_fn, batch_size, limits in _providers(cfg):
@@ -239,11 +244,12 @@ def send_batch(conn: sqlite3.Connection, items: list[Outgoing], cfg) -> BatchRes
                 # (still 'pending') so the next provider can send them. If every
                 # provider fails, the trailing deferral block releases them.
                 break
-            conn.executemany(
-                "UPDATE sent_idempotency SET provider=?, sent_at=CURRENT_TIMESTAMP "
-                "WHERE idem_key=?",
-                [(name, c.idem_key) for c in chunk],
-            )
+            with transaction(conn):
+                conn.executemany(
+                    "UPDATE sent_idempotency SET provider=?, sent_at=CURRENT_TIMESTAMP "
+                    "WHERE idem_key=?",
+                    [(name, c.idem_key) for c in chunk],
+                )
             for c in chunk:
                 result.delivered.add(c.idem_key)
             result.sent_by_provider[name] = result.sent_by_provider.get(name, 0) + take
@@ -253,9 +259,11 @@ def send_batch(conn: sqlite3.Connection, items: list[Outgoing], cfg) -> BatchRes
     if remaining:
         # Over quota (or every provider failed): defer. Release the claims so
         # the next cycle can retry — do NOT mark seen; the caller must skip
-        # recording seen_slots for these so they resurface.
-        conn.executemany("DELETE FROM sent_idempotency WHERE idem_key=?",
-                         [(c.idem_key,) for c in remaining])
+        # recording seen_slots for these so they resurface. One transaction so
+        # the release is a single fsync, not one per deferred item.
+        with transaction(conn):
+            conn.executemany("DELETE FROM sent_idempotency WHERE idem_key=?",
+                             [(c.idem_key,) for c in remaining])
         result.deferred = len(remaining)
     return result
 
