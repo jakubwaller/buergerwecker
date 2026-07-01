@@ -54,7 +54,7 @@ def appointment_types():
 @pytest.fixture
 def http():
     s = requests.Session()
-    s.headers["User-Agent"] = "termine-notifier/live-test (jakubwaller.eu)"
+    s.headers["User-Agent"] = "termine-notifier/live-test (buergerwecker.de)"
     return s
 
 
