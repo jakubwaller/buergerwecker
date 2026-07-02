@@ -85,13 +85,27 @@ def render_summary_text(s: dict, *, now: datetime) -> str:
             status = f"NO MATCHES since {zms}" if zms else "matching slots"
             subs = s.get("active_subscriptions_by_city", {}).get(city, 0)
             plans = s.get("current_plan_count_by_city", {}).get(city, 0)
-            out.append(f"  {city} — {status}")
+            label = s.get("city_labels", {}).get(city, city)
+            out.append(f"  {label} — {status}")
             out.append(f"    Last polled   {_ts(lp, now, missing='never')}")
             out.append(f"    Active subs   {subs} · Plans {plans}")
             out.append(f"    Polls         {up.get('polls_today', 0)} today "
                        f"· {up.get('polls_total', 0)} total")
             out.append(f"    Requests      {up.get('requests_today', 0)} today "
                        f"· {up.get('requests_total', 0)} total")
+    # Combined load per physical upstream host — several tenants can share one
+    # server, and the rate-limit/ban-risk number is the host total.
+    hosts = s.get("upstream_by_host") or {}
+    if hosts:
+        out += ["", "UPSTREAM HOSTS (combined load across tenants)"]
+        for host in sorted(hosts):
+            agg = hosts[host]
+            out.append(f"  {host}")
+            out.append(f"    Requests      {agg.get('requests_today', 0)} today "
+                       f"· {agg.get('requests_total', 0)} total")
+            out.append(f"    Polls         {agg.get('polls_today', 0)} today "
+                       f"· {agg.get('polls_total', 0)} total")
+            out.append(f"    Tenants       {', '.join(agg.get('tenants', []))}")
     out += ["",
             "SYSTEM",
             f"  Last housekeeping  {_ts(s.get('last_housekeeping_at'), now, missing='never')}",
@@ -160,6 +174,46 @@ def stats(conn: sqlite3.Connection) -> dict:
                 last_polled_at_by_city[r["city"]] = r["last_polled_at"]
     except sqlite3.OperationalError:
         pass  # pre-migration DB; counters not available yet
+    # Human labels + upstream host per tenant, from the catalog. The "city"
+    # key is a tenant (leipzig, leipzig-abh), not a geography; the label comes
+    # from display.json. A key whose catalog dir no longer exists renders as
+    # the raw key and is left out of host aggregation.
+    from urllib.parse import urlsplit
+    from app.catalog import load_catalog
+    city_labels: dict[str, str] = {}
+    city_hosts: dict[str, str] = {}
+    for c in set(list(by_city_subs) + list(upstream_by_city)
+                 + list(last_polled_at_by_city)):
+        try:
+            cat = load_catalog(c)
+        except Exception:
+            continue
+        label = cat.display_text("label", "en")  # admin is English-only
+        if label:
+            city_labels[c] = label
+        host = urlsplit(cat.scraper_config.get("base_url", "")).netloc
+        if host:
+            city_hosts[c] = host
+    # Aggregate upstream counters per physical host: several tenants can share
+    # one upstream (leipzig + leipzig-abh both poll
+    # terminvereinbarung.leipzig.de), and the number that matters for
+    # rate-limit/ban risk is the HOST total, not the per-tenant split. The
+    # *_today values are already normalized to 0 for stale counts_date above,
+    # so summing is safe.
+    upstream_by_host: dict[str, dict] = {}
+    for c, up in upstream_by_city.items():
+        host = city_hosts.get(c)
+        if not host:
+            continue
+        agg = upstream_by_host.setdefault(host, {
+            "polls_today": 0, "polls_total": 0,
+            "requests_today": 0, "requests_total": 0, "tenants": [],
+        })
+        for k in ("polls_today", "polls_total", "requests_today", "requests_total"):
+            agg[k] += up[k]
+        agg["tenants"].append(c)
+    for agg in upstream_by_host.values():
+        agg["tenants"].sort()
     # Slot-match notifications actually delivered to subscribers. `last_notified_at`
     # is set only when a real appointment slot matched and a digest went out, so it
     # is the truest "a subscriber was served" signal — distinct from emails_sent_total,
@@ -200,6 +254,8 @@ def stats(conn: sqlite3.Connection) -> dict:
                    "WHERE sent_at > datetime('now','-7 days') "
                    "AND provider != 'pending'"),
         "upstream_by_city": upstream_by_city,
+        "upstream_by_host": upstream_by_host,
+        "city_labels": city_labels,
         "last_polled_at_by_city": last_polled_at_by_city,
         "slots_cached": scalar("SELECT COUNT(*) FROM slots_cache"),
         "emails_sent_total":

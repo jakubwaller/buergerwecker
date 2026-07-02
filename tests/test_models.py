@@ -59,3 +59,23 @@ def test_slot_resource_uuid_is_captured_and_excluded_from_hash():
     c = Slot(date="2026-06-10", time_str="10:30", location_uuid="loc-1",
              service_uuid="svc-B", booking_token="t1", resource_uuid="res-1")
     assert a.hash() != c.hash()
+
+
+def test_filter_json_roundtrip_max_days_ahead():
+    from datetime import time
+    from app.models import Filter
+    f = Filter(appointment_types=["a"], locations="all", weekdays=[1],
+               time_window_start=time(9, 0), time_window_end=time(17, 0),
+               max_days_ahead=7)
+    assert Filter.from_json(f.to_json()).max_days_ahead == 7
+
+
+def test_filter_from_json_without_max_days_ahead_defaults_to_none():
+    """Rows written before the field existed must load as 'no limit'."""
+    import json as _json
+    from app.models import Filter
+    legacy = _json.dumps({
+        "appointment_types": ["a"], "locations": "all", "weekdays": [1],
+        "time_window": {"start": "09:00", "end": "17:00"},
+    })
+    assert Filter.from_json(legacy).max_days_ahead is None

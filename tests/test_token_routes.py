@@ -115,7 +115,8 @@ def test_manage_get_prefills_current_filter(tmp_path, monkeypatch):
                locations=[loc_uuid_a, loc_uuid_b],
                weekdays=[2, 4],  # Tue + Thu only
                time_window_start=time(9, 30),
-               time_window_end=time(17, 0))
+               time_window_end=time(17, 0),
+               max_days_ahead=14)
     sid = insert_pending(conn, email="m@x.com", city="leipzig", language="de",
                          filter_=f, ttl_days=90)
     conn.execute("UPDATE subscriptions SET confirmed_at=datetime('now') WHERE id=?", (sid,))
@@ -141,6 +142,8 @@ def test_manage_get_prefills_current_filter(tmp_path, monkeypatch):
     # Time window values.
     assert 'value="09:30"' in html
     assert 'value="17:00"' in html
+    # Max-days-ahead window preselected.
+    assert 'value="14" selected' in html
 
 def test_manage_get_prefills_all_locations(tmp_path, monkeypatch):
     """When `locations == 'all'`, the All-locations checkbox must be checked

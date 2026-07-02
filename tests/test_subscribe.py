@@ -101,3 +101,30 @@ def test_ip_ratelimit(client):
         r = client.post("/subscribe", data=_form(email="c@x.com"),
                         headers={"X-Forwarded-For":"1.2.3.4"})
         assert r.status_code == 429
+
+def test_subscribe_stores_max_days_ahead(client):
+    import os, json
+    from unittest.mock import patch
+    from app.db import connect
+    f = _form(email="window@example.com")
+    f["max_days_ahead"] = "7"
+    with patch("app.web._send_confirmation_email", return_value=True):
+        r = client.post("/subscribe", data=f, headers={"X-Forwarded-For": "7.7.7.7"})
+    assert r.status_code == 302
+    conn = connect(os.environ["DB_PATH"])
+    row = conn.execute("SELECT filters_json FROM subscriptions WHERE email=?",
+                       ("window@example.com",)).fetchone()
+    assert json.loads(row["filters_json"])["max_days_ahead"] == 7
+
+def test_subscribe_empty_max_days_ahead_means_no_limit(client):
+    import os, json
+    from unittest.mock import patch
+    from app.db import connect
+    f = _form(email="nolimit@example.com")
+    f["max_days_ahead"] = ""
+    with patch("app.web._send_confirmation_email", return_value=True):
+        client.post("/subscribe", data=f, headers={"X-Forwarded-For": "7.7.7.8"})
+    conn = connect(os.environ["DB_PATH"])
+    row = conn.execute("SELECT filters_json FROM subscriptions WHERE email=?",
+                       ("nolimit@example.com",)).fetchone()
+    assert json.loads(row["filters_json"])["max_days_ahead"] is None

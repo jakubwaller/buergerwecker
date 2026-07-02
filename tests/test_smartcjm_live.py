@@ -110,3 +110,21 @@ def test_live_locations_probe_returns_known_uids(http, scfg, appointment_types):
     assert intersection, \
         f"NO overlap between catalog locations and live probe — flow may have broken.\n" \
         f"catalog={catalog_loc_uids}\nlive={live_loc_uids}"
+
+
+# ---------- leipzig-abh (Ausländerbehörde, single-location tenant) ----------
+
+def test_live_abh_poll_completes_without_raising(http):
+    """Smoke: the abh-h tenant's single-POST flow (no locations step) returns a
+    list without raising, with every slot stamped with the searched service."""
+    abh_dir = REPO_ROOT / "catalog" / "leipzig-abh"
+    types = json.loads((abh_dir / "appointment_type.json").read_text())
+    (target_uid,) = types.values()
+    plan = PollPlan(city="leipzig-abh", appointment_type=target_uid, locations="all")
+    slots = smartcjm.poll(plan, http=http)
+    assert isinstance(slots, list)
+    if slots:
+        assert all(s.service_uuid == target_uid for s in slots)
+        # single-location tenant: every slot is at the ABH building
+        locs = json.loads((abh_dir / "locations.json").read_text())
+        assert {s.location_uuid for s in slots} <= set(locs.values())

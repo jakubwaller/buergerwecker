@@ -51,3 +51,36 @@ def test_match_time_window():
 def test_invalid_date_string_does_not_match():
     f = make_filter()
     assert matches(f, make_slot(date_str="not-a-date")) is False
+
+def test_max_days_ahead_boundary():
+    from freezegun import freeze_time
+    f = make_filter(weekdays=(1,2,3,4,5,6,7))
+    f = Filter(appointment_types=["svc-A"], locations="all",
+               weekdays=[1,2,3,4,5,6,7],
+               time_window_start=time(0,0), time_window_end=time(23,59),
+               max_days_ahead=7)
+    with freeze_time("2026-06-01"):
+        assert matches(f, make_slot(date_str="2026-06-01")) is True   # today
+        assert matches(f, make_slot(date_str="2026-06-08")) is True   # day 7: inclusive
+        assert matches(f, make_slot(date_str="2026-06-09")) is False  # day 8: out
+
+def test_max_days_ahead_none_means_no_limit():
+    f = Filter(appointment_types=["svc-A"], locations="all",
+               weekdays=[1,2,3,4,5,6,7],
+               time_window_start=time(0,0), time_window_end=time(23,59))
+    assert f.max_days_ahead is None
+    assert matches(f, make_slot(date_str="2099-01-01")) is True
+
+def test_max_days_ahead_uses_berlin_local_today_not_utc():
+    """At 22:30 UTC Berlin has already rolled to the next day. 'Today' for the
+    window must be the Berlin date: a slot exactly one Berlin-day ahead matches
+    max_days_ahead=1 even though it is two UTC-days ahead."""
+    from freezegun import freeze_time
+    f = Filter(appointment_types=["svc-A"], locations="all",
+               weekdays=[1,2,3,4,5,6,7],
+               time_window_start=time(0,0), time_window_end=time(23,59),
+               max_days_ahead=1)
+    # 2026-06-01 22:30 UTC == 2026-06-02 00:30 Europe/Berlin (CEST)
+    with freeze_time("2026-06-01 22:30:00"):
+        assert matches(f, make_slot(date_str="2026-06-03")) is True   # Berlin: +1 day
+        assert matches(f, make_slot(date_str="2026-06-04")) is False  # Berlin: +2 days

@@ -112,7 +112,7 @@ def test_slot_line_has_weekday_date_time_and_link():
     text = _render(sub, slots, catalog=_cat())
     line = next(ln for ln in text.splitlines() if "09:20" in ln)
     assert "Fr 12.06." in line                       # 2026-06-12 is a Friday
-    assert "https://x/go/tok-A" in line
+    assert "https://x/go/leipzig:tok-A" in line
 
 
 # ---------- per-slot service only when the filter spans >1 type ----------
@@ -143,3 +143,52 @@ def test_out_of_catalog_location_uuid_renders_uuid_not_crash():
     slots = [Slot("2026-06-12", "09:20", "ghost-loc", "svc-A", "tA")]
     text = _render(sub, slots, catalog=_cat())
     assert "ghost-loc" in text  # raw uuid as the office header, no exception
+
+
+def test_digest_echoes_max_days_ahead_window():
+    from dataclasses import replace
+    sub = _sub("de")
+    sub = replace(sub, sub_filter=replace(sub.sub_filter, max_days_ahead=7))
+    slots = [Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")]
+    text = _render(sub, slots, catalog=_cat())
+    assert "innerhalb der nächsten 7 Tage" in text
+    text_en = _render(replace(sub, language="en"), slots, catalog=_cat())
+    assert "within the next 7 days" in text_en
+
+
+def test_digest_omits_window_line_when_unlimited():
+    text = _render(_sub("de"), [Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")],
+                   catalog=_cat())
+    assert "Zeitraum" not in text
+
+
+def test_digest_caps_slots_at_soonest_and_summarizes_rest():
+    """More matches than MAX_SLOTS_PER_DIGEST → render only the soonest N and
+    one count line for the rest (keeps abundant tenants under Gmail's ~102KB
+    clipping threshold). The soonest slot must survive the cut; the latest
+    must not."""
+    from app.digest import MAX_SLOTS_PER_DIGEST
+    n_total = MAX_SLOTS_PER_DIGEST + 40
+    slots = [Slot(f"2026-07-{(i % 28) + 1:02d}", f"{8 + (i % 10)}:00",
+                  "loc-1", "svc-A", f"tok-{i}") for i in range(n_total)]
+    text = _render(_sub("de"), slots, catalog=_cat())
+    rendered = text.count("/go/leipzig:tok-")
+    assert rendered == MAX_SLOTS_PER_DIGEST
+    assert "40 weitere passende Termine" in text
+    # soonest-first selection: the earliest (day 01, 08:00) is in, and a
+    # late-July slot beyond the cap horizon is out.
+    soonest = min(slots, key=lambda s: (s.date, s.time_str))
+    latest = max(slots, key=lambda s: (s.date, s.time_str))
+    assert soonest.booking_token in text
+    assert latest.booking_token not in text
+    # sanity: body stays far below Gmail's clipping threshold
+    assert len(text.encode()) < 20_000
+
+
+def test_digest_no_summary_line_when_under_cap():
+    from app.digest import MAX_SLOTS_PER_DIGEST
+    slots = [Slot("2026-07-01", "09:00", "loc-1", "svc-A", f"t{i}")
+             for i in range(MAX_SLOTS_PER_DIGEST)]
+    text = _render(_sub("de"), slots, catalog=_cat())
+    assert "weitere passende Termine" not in text
+    assert text.count("/go/") == MAX_SLOTS_PER_DIGEST

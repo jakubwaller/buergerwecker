@@ -142,3 +142,22 @@ def test_no_error_banner_on_bare_form(client):
     assert "leider nicht geklappt" not in body
     body_en = client.get("/?lang=en").data.decode().lower()
     assert "didn't go through" not in body_en
+
+
+def test_abh_tenant_form_renders_with_own_copy_and_cross_links(client):
+    """/?city=leipzig-abh renders the Ausländerbehörde tenant: its display.json
+    heading, the Termin-Code note, its service, and a cross-link back to the
+    Bürgerbüro tenant (and vice versa)."""
+    abh = client.get("/?city=leipzig-abh").data.decode()
+    assert "Abhol-Termine bei der Ausländerbehörde" in abh
+    assert "Termin-Code" in abh
+    assert "Ausgabe  Aufenthaltsdokument" in abh
+    assert 'city=leipzig' in abh                      # link back
+    ba = client.get("/").data.decode()
+    assert "city=leipzig-abh" in ba                   # link over
+
+
+def test_unknown_city_redirects_to_default(client):
+    r = client.get("/?city=nope-nothing-here")
+    assert r.status_code == 302
+    assert r.headers["Location"].endswith("/")

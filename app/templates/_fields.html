@@ -1,0 +1,18 @@
+{# Shared form fields used by both the sign-up form and the manage page. #}
+
+{% macro max_days_select(lang, mda=None) %}
+  {% set day_options = [3, 7, 14, 30] %}
+  <label>{% if lang == 'en' %}Only appointments within the next …{% else %}Nur Termine innerhalb der nächsten …{% endif %}
+    <select name="max_days_ahead">
+      <option value="" {% if not mda %}selected{% endif %}>{% if lang == 'en' %}no limit{% else %}ohne Begrenzung{% endif %}</option>
+      {# A stored value outside the standard list (e.g. set via an older
+         option set) must stay selectable, not silently reset on save. #}
+      {% if mda and mda not in day_options %}
+        <option value="{{ mda }}" selected>{{ mda }} {% if lang == 'en' %}days{% else %}Tage{% endif %}</option>
+      {% endif %}
+      {% for n in day_options %}
+        <option value="{{ n }}" {% if mda == n %}selected{% endif %}>{{ n }} {% if lang == 'en' %}days{% else %}Tage{% endif %}</option>
+      {% endfor %}
+    </select>
+  </label>
+{% endmacro %}
