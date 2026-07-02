@@ -7,6 +7,11 @@ from app.models import Subscription, Slot
 from app.mail import (send, send_batch, maybe_quota_alert, Outgoing,
                       _idem_key)
 
+# Render at most this many slots per digest email (soonest first). Keeps even
+# an abundant tenant's digest far under Gmail's ~102KB clipping threshold;
+# anything beyond is summarized in a single count line.
+MAX_SLOTS_PER_DIGEST = 25
+
 # Weekday abbreviations for the date line (i18n.t is string-only, so the
 # per-language lists live here rather than in the JSON bundles). Index 0 = Mon.
 _WEEKDAY_ABBR = {
@@ -56,11 +61,28 @@ def render_digest_text(sub: Subscription, slots: list[Slot], *,
         locations = ", ".join(loc_label(u) for u in f.locations)
     svc_lbl = t(lang, "digest.selection_service_label")
     loc_lbl = t(lang, "digest.selection_locations_label")
-    pad = max(len(svc_lbl), len(loc_lbl)) + 1  # width of the longest "label:"
+    win_lbl = t(lang, "digest.selection_window_label") if f.max_days_ahead else ""
+    labels = [l for l in (svc_lbl, loc_lbl, win_lbl) if l]
+    pad = max(len(l) for l in labels) + 1  # width of the longest "label:"
     lines.append(t(lang, "digest.selection_heading"))
     lines.append(f"  {(svc_lbl + ':').ljust(pad)} {services}")
     lines.append(f"  {(loc_lbl + ':').ljust(pad)} {locations}")
+    if f.max_days_ahead:
+        lines.append(f"  {(win_lbl + ':').ljust(pad)} "
+                     f"{t(lang, 'digest.window_days', n=f.max_days_ahead)}")
     lines.append("")
+
+    # Cap the rendered slots at the soonest MAX_SLOTS_PER_DIGEST. Abundant
+    # tenants (the Ausländerbehörde calendar can hold 1000+ open slots) would
+    # otherwise produce a digest past Gmail's ~102KB clipping threshold —
+    # hiding the unsubscribe link in the clipped tail. Omitted slots are
+    # summarized in one count line; the caller still marks ALL matched slots
+    # seen (flush_digests works off the full candidate list), so the omission
+    # does not drip-feed follow-up emails.
+    omitted = 0
+    if len(slots) > MAX_SLOTS_PER_DIGEST:
+        omitted = len(slots) - MAX_SLOTS_PER_DIGEST
+        slots = sorted(slots, key=lambda s: (s.date, s.time_str))[:MAX_SLOTS_PER_DIGEST]
 
     # Slots grouped by office (offices sorted by display name); within an
     # office, sorted by day then time. The per-slot service label is shown
@@ -73,13 +95,18 @@ def render_digest_text(sub: Subscription, slots: list[Slot], *,
     for office_uuid in sorted(by_office, key=loc_label):
         lines.append(loc_label(office_uuid))
         for s in sorted(by_office[office_uuid], key=lambda s: (s.date, s.time_str)):
-            go_url = f"{public_base_url}/go/{s.booking_token}"
+            # Tenant-prefixed to match the slots_cache key (see cycle.py): the
+            # bare token is only a datetime and would collide across tenants.
+            go_url = f"{public_base_url}/go/{sub.city}:{s.booking_token}"
             date_str = _format_date(s.date, lang)
             if multi_service:
                 lines.append(f"  {date_str}  {s.time_str}  ·  "
                              f"{svc_label(s.service_uuid)}  →  {go_url}")
             else:
                 lines.append(f"  {date_str}  {s.time_str}  →  {go_url}")
+    if omitted:
+        lines.append("")
+        lines.append(t(lang, "digest.more_available", n=omitted))
     lines.append("")
 
     lines.append(t(lang, "digest.burst_warning"))

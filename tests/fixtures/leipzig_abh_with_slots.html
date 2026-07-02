@@ -1,0 +1,50 @@
+<!doctype html>
+<!-- Trimmed from a real leipzig-abh-h search_results page (2026-07-01).
+     Key differences from the leipzig-ba fixture this exercises:
+       * slot buttons carry NO data-testid attributes (older Smart-CJM skin),
+       * the <script> block contains the appointment_reserve function
+         DEFINITION — the parser must not false-positive on script text. -->
+<html lang="de">
+<head><meta charset="utf-8"><title>Stadt Leipzig | Ausländerbehörde | Ausgabe</title></head>
+<body>
+<script>
+	function day_show(date) {
+		$('.day_' + date).show().attr("aria-hidden", "false");
+		$('.timeslot_cards .actions').show().attr("aria-hidden", "false");;
+		window.location.hash = "day_" + date;
+	}
+
+	function appointment_reserve(appointment_datetime, appointment_duration, location, resource) {
+		window.location='/m/leipzig-abh-h/extern/calendar/appointment_reserve?uid=435a0539-e829-4660-ae0b-99a9c418cf68';
+	}
+</script>
+<main>
+  <h1>Auswahl des Termins</h1>
+  <h2>Tage mit verfügbaren Terminen</h2>
+
+  <section class="day_2026-07-02">
+    <h3>Termine Donnerstag, 02.07.2026</h3>
+    <ol>
+      <li><button class="card" id="slot_3da7cfe2-ac16-4668-b6e7-36a6cb51a454" aria-label="Termin um 11:50 Uhr auswählen und zum nächsten Schritt wechseln." onclick="return appointment_reserve('2026-07-02T11%3a50%3a00%2b02%3a00', '10', '8e470125-efec-47cc-bb60-4e3a072e7e67', 'd401d84d-045d-4680-a01e-50150094c435');"><strong>11:50</strong></button></li>
+      <li><button class="card" id="slot_8f704397-8fbd-41ec-8146-6c85bfa0dfb3" aria-label="Termin um 13:20 Uhr auswählen und zum nächsten Schritt wechseln." onclick="return appointment_reserve('2026-07-02T13%3a20%3a00%2b02%3a00', '10', '8e470125-efec-47cc-bb60-4e3a072e7e67', 'd401d84d-045d-4680-a01e-50150094c435');"><strong>13:20</strong></button></li>
+    </ol>
+  </section>
+
+  <section class="day_2026-07-13">
+    <h3>Termine Montag, 13.07.2026</h3>
+    <ol>
+      <li><button class="card" id="slot_11f0a2aa-9d6f-4f2f-8e6c-0f8e3b7c9a10" aria-label="Termin um 08:30 Uhr auswählen und zum nächsten Schritt wechseln." onclick="return appointment_reserve('2026-07-13T08%3a30%3a00%2b02%3a00', '10', '8e470125-efec-47cc-bb60-4e3a072e7e67', 'd401d84d-045d-4680-a01e-50150094c435');"><strong>08:30</strong></button></li>
+    </ol>
+  </section>
+
+  <button id="dates_back" onclick="days_show();">Zurück</button>
+
+  <h2>Ihre bisherigen Angaben</h2>
+  <dl>
+    <dt>Dienstleistung</dt><dd>1x&nbsp;Ausgabe Aufenthaltsdokument</dd>
+    <dt>Standort</dt><dd>Ausländerbehörde Wartebereich Erdgeschoss Prager Straße 126 04317 Leipzig</dd>
+    <dt>Termindauer</dt><dd>10 min.</dd>
+  </dl>
+</main>
+</body>
+</html>

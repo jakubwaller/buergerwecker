@@ -338,3 +338,39 @@ def _stack_get(prefix_responses, probe_get_side_effect):
             return r
         return probe_get_side_effect(url, *a, **kw)
     return _side
+
+
+def test_sync_city_skips_location_probe_for_tenant_without_locations_step(tmp_path):
+    """Single-location tenants (e.g. leipzig-abh) have no locations step in
+    their flow — sync must not probe locations (no POSTs at all), report no
+    location drift, and leave the static locations file untouched."""
+    root = tmp_path / "catalog"
+    city = root / "leipzig-abh"
+    city.mkdir(parents=True)
+    (city / "scraper_config.json").write_text(json.dumps({
+        "vendor": "smartcjm",
+        "base_url": "https://terminvereinbarung.leipzig.de/m/leipzig-abh-h/extern/calendar",
+        "uid": "435a0539-e829-4660-ae0b-99a9c418cf68",
+        "steps": "servicessearch_resultsbookingfinish",
+    }))
+    (city / "appointment_type.json").write_text(json.dumps({
+        "Ausgabe  Aufenthaltsdokument": "svc-1",
+    }))
+    (city / "locations.json").write_text(json.dumps({
+        "Ausländerbehörde (Prager Straße 126, Erdgeschoss)": "loc-abh",
+    }))
+    loc_before = (city / "locations.json").read_text()
+
+    http = MagicMock()
+    http.get.return_value = MagicMock(status_code=200, json=lambda: {
+        "success": True,
+        "results": [{"uid": "svc-1", "display_name": "Ausgabe  Aufenthaltsdokument"}],
+    })
+    alerts = []
+    res = catalog_sync.sync_city("leipzig-abh", http,
+                                 alert_fn=lambda **kw: alerts.append(kw),
+                                 catalog_root=root)
+    assert res == {"service_drift": {}, "location_drift": {}}
+    assert alerts == []
+    http.post.assert_not_called()          # no location probing whatsoever
+    assert (city / "locations.json").read_text() == loc_before

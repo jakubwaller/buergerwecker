@@ -24,7 +24,6 @@ APPOINTMENT_RESERVE_RE = re.compile(
     r"'([^']+)'\s*,\s*"   # location uuid
     r"'([^']+)'\s*\)"     # resource uuid (counter/staff — NOT the service; see parse_slots)
 )
-SLOT_LI_TESTID_RE = re.compile(r"^slot_button_li-\d+$")
 
 
 def parse_slots(html: str, *, service_uuid: str) -> list[Slot]:
@@ -35,17 +34,21 @@ def parse_slots(html: str, *, service_uuid: str) -> list[Slot]:
     service. The search is server-side filtered to a single service, so the
     service every returned slot belongs to is `service_uuid` (the one we
     searched for, supplied by the caller from the plan).
+
+    Slot buttons are matched by their onclick handler rather than markup
+    decoration: the leipzig-ba tenant wraps them in
+    `<li data-testid="slot_button_li-N">`, but the leipzig-abh-h tenant renders
+    the same buttons without any data-testid. The page's <script> block also
+    contains the appointment_reserve function *definition*, but that lives in
+    script text, never in a button's onclick attribute, so scanning onclick
+    attributes cannot false-positive on it.
     """
     if "Session abgelaufen" in html:
         return []
     soup = BeautifulSoup(html, "html.parser")
     slots: list[Slot] = []
-    for li in soup.find_all("li", attrs={"data-testid": SLOT_LI_TESTID_RE}):
-        btn = li.find("button")
-        if not btn:
-            continue
-        onclick = btn.get("onclick", "")
-        m = APPOINTMENT_RESERVE_RE.search(onclick)
+    for btn in soup.find_all("button", onclick=True):
+        m = APPOINTMENT_RESERVE_RE.search(btn["onclick"])
         if not m:
             continue
         encoded_dt, _duration, location_uuid, resource_uuid = m.groups()
@@ -63,6 +66,18 @@ def parse_slots(html: str, *, service_uuid: str) -> list[Slot]:
             resource_uuid=resource_uuid,
         ))
     return slots
+
+
+def has_locations_step(scfg: dict) -> bool:
+    """Whether this tenant's booking flow includes a locations step.
+
+    Single source of truth for the flow-topology decision — both poll()
+    (_run_flow) and catalog_sync.sync_city branch on it, and the two must
+    never disagree. `steps` is the vendor's delimiter-less concatenation
+    (e.g. "servicessearch_resultsbookingfinish"), posted back verbatim, so
+    substring containment is the only test available.
+    """
+    return "locations" in scfg["steps"]
 
 
 def _rewrite_8443(url: str) -> str:
@@ -124,16 +139,22 @@ def _invalidate_wsid(scfg: dict) -> None:
 
 
 def _post_services(http: requests.Session, wsid: str, csrf: str, rev: str,
-                   plan: PollPlan, scfg: dict) -> None:
+                   plan: PollPlan, scfg: dict, *,
+                   action_type: str = "") -> str:
     # Submit ONLY the selected service, amount 1 — mirroring the browser's
     # `autoSelectServiceAndSubmit` (one `services=<uid>` + `service_<uid>_amount`).
     # Blasting every catalog service at once makes the server fall back to the
     # global "earliest" slot regardless of the chosen service (amount_min is 1
     # for every Leipzig service).
+    #
+    # `action_type` is "" when a locations step follows (leipzig-ba), and
+    # "search" on single-location tenants whose flow goes straight from
+    # services to search_results (leipzig-abh-h) — there the returned page IS
+    # the results page.
     sel = plan.appointment_type
     body = (
         f"__RequestVerificationToken={csrf}&"
-        f"action_type=&steps={scfg['steps']}&"
+        f"action_type={action_type}&steps={scfg['steps']}&"
         "step_current=services&step_current_index=0&step_goto=%2B1&services=&"
         f"services={sel}&service_{sel}_amount=1"
     )
@@ -143,7 +164,8 @@ def _post_services(http: requests.Session, wsid: str, csrf: str, rev: str,
         data=body, timeout=30, allow_redirects=False,
     )
     # Follow :8443 redirect if the load balancer injects one.
-    _follow_if_redirect(http, r)
+    r = _follow_if_redirect(http, r)
+    return r.text
 
 
 def _post_locations(http: requests.Session, wsid: str, csrf: str, rev: str,
@@ -170,6 +192,22 @@ def _post_locations(http: requests.Session, wsid: str, csrf: str, rev: str,
     return r.text
 
 
+def _run_flow(http: requests.Session, wsid: str, csrf: str, rev: str,
+              plan: PollPlan, catalog, scfg: dict) -> str:
+    """Drive the tenant's step sequence to the search-results page.
+
+    Tenants differ in their configured step list (`scfg["steps"]`): leipzig-ba
+    is services → locations → search_results, while single-location tenants
+    like leipzig-abh-h skip the locations step entirely — there the services
+    POST (with action_type=search) already returns the results page.
+    """
+    if has_locations_step(scfg):
+        _post_services(http, wsid, csrf, rev, plan, scfg)
+        return _post_locations(http, wsid, csrf, rev, plan, catalog, scfg)
+    return _post_services(http, wsid, csrf, rev, plan, scfg,
+                          action_type="search")
+
+
 def poll(plan: PollPlan, http: requests.Session) -> list[Slot]:
     """Run the Smart-CJM flow against the city's tenant. Returns parsed slots.
 
@@ -185,11 +223,9 @@ def poll(plan: PollPlan, http: requests.Session) -> list[Slot]:
             f"(vendor={scfg.get('vendor')})"
         )
     wsid, csrf, rev = _get_session_state(http, scfg)
-    _post_services(http, wsid, csrf, rev, plan, scfg)
-    html = _post_locations(http, wsid, csrf, rev, plan, catalog, scfg)
+    html = _run_flow(http, wsid, csrf, rev, plan, catalog, scfg)
     if "Session abgelaufen" in html:
         _invalidate_wsid(scfg)
         wsid, csrf, rev = _get_session_state(http, scfg)
-        _post_services(http, wsid, csrf, rev, plan, scfg)
-        html = _post_locations(http, wsid, csrf, rev, plan, catalog, scfg)
+        html = _run_flow(http, wsid, csrf, rev, plan, catalog, scfg)
     return parse_slots(html, service_uuid=plan.appointment_type)

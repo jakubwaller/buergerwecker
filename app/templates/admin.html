@@ -98,7 +98,7 @@
         {% set lp = s.last_polled_at_by_city.get(city) %}
         <div class="city">
           <div class="city-head">
-            <span class="city-name">{{ city|capitalize }}</span>
+            <span class="city-name">{{ s.city_labels.get(city, city|capitalize) }}</span>
             {% if zms %}
               <span class="status"><span class="dot dot-warn"></span>No matches since <time class="ts" data-ts="{{ zms }}">{{ zms }}</time></span>
             {% else %}
@@ -118,6 +118,27 @@
       <p class="adm-muted">No polling activity yet.</p>
     {% endif %}
   </section>
+
+  {% if s.upstream_by_host %}
+  <section class="adm-section">
+    <h2>Upstream hosts</h2>
+    {# Combined load per physical server: several tenants can share one host
+       (leipzig + leipzig-abh both poll terminvereinbarung.leipzig.de), and the
+       rate-limit / ban-risk number is the host total, not the tenant split. #}
+    <table class="adm-table">
+      {% for host, agg in s.upstream_by_host|dictsort %}
+        <tr>
+          <td class="k">{{ host }}</td>
+          <td class="v">
+            Requests {{ agg.requests_today }} today · {{ agg.requests_total }} total
+            &nbsp;·&nbsp; Polls {{ agg.polls_today }} today · {{ agg.polls_total }} total
+            <br><span class="adm-muted">Tenants: {{ agg.tenants|join(', ') }}</span>
+          </td>
+        </tr>
+      {% endfor %}
+    </table>
+  </section>
+  {% endif %}
 
   <section class="adm-section">
     <h2>System</h2>

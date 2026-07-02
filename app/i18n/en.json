@@ -8,5 +8,8 @@
   "digest.all_locations": "All locations",
   "digest.burst_warning": "Many appointments open at once — the fastest click wins.",
   "digest.unsubscribe": "Unsubscribe: {unsubscribe_url}",
-  "digest.kofi": "Did this notification help? You can buy me a coffee: {kofi_url} (only if you want — the service stays free.)"
+  "digest.kofi": "Did this notification help? You can buy me a coffee: {kofi_url} (only if you want — the service stays free.)",
+  "digest.selection_window_label": "Window",
+  "digest.window_days": "within the next {n} days",
+  "digest.more_available": "… and {n} more matching appointments are currently bookable online — the soonest are listed above."
 }

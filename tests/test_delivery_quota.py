@@ -72,3 +72,36 @@ def test_quota_limited_cycle_serves_longest_waiting_first_and_defers_rest(db):
     assert _has_seen(db, s_new) and not _has_seen(db, s_recent)
     # The deferred subscriber was left untouched → it will resurface next cycle.
     assert _last_notified(db, s_recent) is not None  # unchanged (its old value)
+
+
+def test_render_cap_still_marks_all_matched_slots_seen(db):
+    """More matches than the digest render cap → ONE email, but ALL matched
+    slots recorded as seen, so the omitted ones don't drip-feed follow-up
+    emails on later cycles."""
+    from app.digest import MAX_SLOTS_PER_DIGEST
+    import os
+    os.environ["RESEND_DAILY_QUOTA"] = "100"; os.environ["MAILJET_HOURLY_QUOTA"] = "10"
+    sid = insert_pending(db, email="cap@x.com", city="leipzig", language="de",
+                         filter_=_f(), ttl_days=90); confirm(db, sid)
+    n_total = MAX_SLOTS_PER_DIGEST + 15
+    slots = [Slot(f"2026-07-{(i % 28) + 1:02d}", f"{8 + (i % 10)}:00",
+                  "loc-1", "svc-A", f"tok-{i}") for i in range(n_total)]
+    scraper = MagicMock(); scraper.poll.return_value = slots
+    with patch("app.cycle.get_scraper", return_value=scraper), \
+         patch("app.mail._call_mailjet_batch", return_value=True) as mb, \
+         patch("app.mail._call_resend_batch", return_value=True):
+        run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
+    sent_bodies = [i.body for i in mb.call_args_list[0].args[0]]
+    assert len(sent_bodies) == 1                       # one email, not a flood
+    assert sent_bodies[0].count("/go/") == MAX_SLOTS_PER_DIGEST
+    seen = db.execute("SELECT COUNT(*) AS n FROM seen_slots WHERE subscription_id=?",
+                      (sid,)).fetchone()["n"]
+    assert seen == n_total                             # omitted ones seen too
+
+    # A later cycle with the SAME slots sends nothing.
+    db.execute("UPDATE subscriptions SET last_notified_at=NULL WHERE id=?", (sid,))
+    with patch("app.cycle.get_scraper", return_value=scraper), \
+         patch("app.mail._call_mailjet_batch", return_value=True) as mb2, \
+         patch("app.mail._call_resend_batch", return_value=True):
+        run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c2")
+    mb2.assert_not_called()

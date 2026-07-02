@@ -14,6 +14,10 @@ class Filter:
     weekdays: list[int]                # ISO 8601: 1=Mon … 7=Sun
     time_window_start: time
     time_window_end: time
+    # Only notify about slots within the next N days (None = no limit). A slot
+    # further out is deliberately not marked seen: if it is still free once it
+    # enters the window, a later cycle notifies about it then.
+    max_days_ahead: int | None = None
 
     def to_json(self) -> str:
         return json.dumps({
@@ -25,6 +29,7 @@ class Filter:
                 "start": self.time_window_start.strftime("%H:%M"),
                 "end":   self.time_window_end.strftime("%H:%M"),
             },
+            "max_days_ahead": self.max_days_ahead,
         })
 
     @classmethod
@@ -37,6 +42,11 @@ class Filter:
             weekdays=list(d.get("weekdays", [1, 2, 3, 4, 5, 6, 7])),
             time_window_start=_parse_hhmm(tw["start"]),
             time_window_end=_parse_hhmm(tw["end"]),
+            # Absent in rows written before this field existed → no limit.
+            # 0 also normalizes to no-limit: the form can't produce it, and the
+            # consumers (matches() vs digest/manage truthiness) would otherwise
+            # disagree on what 0 means.
+            max_days_ahead=d.get("max_days_ahead") or None,
         )
 
 def _parse_hhmm(s: str) -> time:

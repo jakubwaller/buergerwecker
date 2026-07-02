@@ -1,15 +1,21 @@
 # Termine-Notifier
 
-Free email notifications for free Bürgerbüro appointments in German cities.
+Free email notifications for free Amt appointments in German cities.
 
-**v1 covers Leipzig.** Support for more cities may follow.
+**v1 covers Leipzig:** the Bürgerbüros (e.g. Wohnsitzanmeldung, Ausweise) and
+the Ausländerbehörde (residence-document pickup). Support for more cities may
+follow.
 
 ## What this does
 
 You enter your email, pick the appointment type (e.g. Wohnsitzanmeldung) and
-which Bürgerbüros work for you, and receive an email the moment a matching
+which offices work for you, and receive an email the moment a matching
 slot is available on `terminvereinbarung.leipzig.de`. You then book it
 yourself on the official city website. We never book on your behalf.
+
+For the Ausländerbehörde, booking additionally requires the personal
+Termin-Code from the office's letter — this service only tells you when a
+pickup slot is free.
 
 ## What this explicitly does NOT do
 

@@ -216,3 +216,54 @@ def test_poll_session_expired_returns_empty_after_retry():
         MagicMock(text="Session abgelaufen", status_code=200, url="", headers={}),
     ]
     assert poll(plan, http=sess) == []
+
+
+# --- single-location tenant (leipzig-abh: no locations step in the flow) ---
+
+ABH_BASE = "https://terminvereinbarung.leipzig.de/m/leipzig-abh-h/extern/calendar"
+ABH_SVC = "6d72c63a-31a8-4aca-9d46-c9f3f90d39ec"
+
+
+def test_poll_abh_uses_single_search_post_without_locations_step():
+    """leipzig-abh's steps have no locations step: poll must issue exactly ONE
+    POST (services with action_type=search) and parse ITS response as the
+    results page — never a second locations POST."""
+    plan = PollPlan(city="leipzig-abh", appointment_type=ABH_SVC, locations="all")
+    results_html = (
+        '<ol><li><button class="card" onclick="return appointment_reserve('
+        "'2026-07-02T11%3a50%3a00%2b02%3a00', '10', "
+        "'8e470125-efec-47cc-bb60-4e3a072e7e67', 'res-1');\">"
+        '<strong>11:50</strong></button></li></ol>'
+    )
+    sess = _make_session(wsid_redirect_url=f"{ABH_BASE}/?wsid=w&uid=435a0539",
+                         services_html=results_html,
+                         locations_html="<never-requested/>")
+    slots = poll(plan, http=sess)
+    assert sess.post.call_count == 1
+    body = sess.post.call_args_list[0].kwargs["data"]
+    assert "action_type=search" in body
+    assert "step_current=services" in body
+    assert len(slots) == 1
+    assert slots[0].date == "2026-07-02" and slots[0].time_str == "11:50"
+    assert slots[0].service_uuid == ABH_SVC
+
+
+def test_poll_abh_session_expired_retries_single_step_flow():
+    """'Session abgelaufen' on the abh flow must invalidate and retry the
+    SAME single-POST flow once."""
+    plan = PollPlan(city="leipzig-abh", appointment_type=ABH_SVC, locations="all")
+    sess = MagicMock()
+
+    def _get(url, *a, **kw):
+        if "search_result" in url:
+            return MagicMock(url=f"{ABH_BASE}/?wsid=w&uid=4", text="",
+                             status_code=200, headers={})
+        return MagicMock(url=url, text=SERVICES_PAGE_HTML, status_code=200, headers={})
+
+    sess.get.side_effect = _get
+    sess.post.side_effect = [
+        MagicMock(text="Session abgelaufen", status_code=200, url="", headers={}),
+        MagicMock(text="<ol></ol>", status_code=200, url="", headers={}),
+    ]
+    assert poll(plan, http=sess) == []
+    assert sess.post.call_count == 2  # one failed attempt + one retry, no locations POSTs

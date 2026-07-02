@@ -131,19 +131,32 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
         # own upstream URL format; ask them via the catalog.
         from app.catalog import load_catalog
         scfg = load_catalog(sub.city).scraper_config
-        for slot in candidates:
-            upstream = _build_upstream_url(scfg, slot)
-            # The booking_token is a URL-encoded datetime (e.g. ...T17%3a20%3a00%2b02%3a00).
-            # The email links to /go/<booking_token>, and Flask URL-DECODES the path
-            # param on click — so the slots_cache key must be the DECODED form, or the
-            # /go lookup misses and every link 410s. (upstream_url keeps the encoded
-            # token: it sits in a query string the city site decodes itself.)
-            slot_token = urllib.parse.unquote(slot.booking_token)
-            conn.execute(
-                "INSERT INTO slots_cache (slot_token, city, upstream_url) "
-                "VALUES (?, ?, ?) ON CONFLICT (slot_token) DO NOTHING",
-                (slot_token, sub.city, upstream),
-            )
+        # One transaction for the whole candidate batch: in autocommit each
+        # INSERT is its own fsync, and an abundant tenant (leipzig-abh holds
+        # 1000+ open slots) times N subscribers would overrun the one-minute
+        # cycle on fsyncs alone.
+        with transaction(conn):
+            for slot in candidates:
+                upstream = _build_upstream_url(scfg, slot)
+                # The booking_token is a URL-encoded datetime (e.g.
+                # ...T17%3a20%3a00%2b02%3a00). The email links to
+                # /go/<city>:<booking_token>, and Flask URL-DECODES the path
+                # param on click — so the slots_cache key must use the DECODED
+                # form, or the /go lookup misses and every link 410s.
+                # (upstream_url keeps the encoded token: it sits in a query
+                # string the city site decodes itself.)
+                #
+                # The key is prefixed with the tenant because the bare token is
+                # just a wall-clock datetime: two tenants (leipzig, leipzig-abh)
+                # sharing the same instant would otherwise collide on the
+                # single-column primary key and /go would 302 subscribers to
+                # whichever tenant's URL was cached first.
+                slot_token = f"{sub.city}:{urllib.parse.unquote(slot.booking_token)}"
+                conn.execute(
+                    "INSERT INTO slots_cache (slot_token, city, upstream_url) "
+                    "VALUES (?, ?, ?) ON CONFLICT (slot_token) DO NOTHING",
+                    (slot_token, sub.city, upstream),
+                )
         # Stage for batched delivery. seen_slots + last_notified are recorded
         # inside flush_digests, but only for digests that were actually sent —
         # quota-deferred ones stay unrecorded so a later cycle re-sends them.

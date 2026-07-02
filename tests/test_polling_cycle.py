@@ -163,3 +163,46 @@ def test_cycle_respects_rate_limit(db):
         run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15,
                   cycle_id="c1")
     send_d.assert_not_called()
+
+def test_cycle_window_filter_defers_far_slots_until_they_enter_window(db):
+    """A subscriber with max_days_ahead=7 must only be notified about slots
+    inside the window — and a farther slot must NOT be marked seen, so a later
+    cycle (once the slot is within 7 days) still notifies about it."""
+    from datetime import date, timedelta
+    from freezegun import freeze_time
+    from app.repo import has_seen_slot
+    f = Filter(appointment_types=["svc-A"], locations="all",
+               weekdays=[1,2,3,4,5,6,7],
+               time_window_start=time(0,0), time_window_end=time(23,59),
+               max_days_ahead=7)
+    sid = insert_pending(db, email="w@x.com", city="leipzig",
+                         language="de", filter_=f, ttl_days=90)
+    confirm(db, sid)
+    near = Slot("2026-06-03", "10:00", "loc-1", "svc-A", "t-near")
+    far = Slot("2026-06-20", "10:00", "loc-1", "svc-A", "t-far")
+    with freeze_time("2026-06-01"), \
+         patch("app.cycle.get_scraper") as gs, \
+         patch("app.cycle.send_digest") as send_d:
+        gs.return_value.poll.return_value = [near, far]
+        run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
+    send_d.assert_called_once()
+    sent = send_d.call_args.kwargs["matched_slots"]
+    assert [s.booking_token for s in sent] == ["t-near"]
+    # The far slot was never presented, so it must not be marked seen —
+    # otherwise it could never be notified once it enters the window.
+    assert has_seen_slot(db, sid, far.hash()) is False
+
+    # Mocking send_digest bypasses flush_digests, where delivered slots get
+    # recorded — record the near slot's delivery manually, as the flush would.
+    from app.repo import record_seen_slot
+    record_seen_slot(db, sid, near.hash())
+
+    # Two weeks later the same slot is inside the window: it fires now.
+    db.execute("UPDATE subscriptions SET last_notified_at=NULL WHERE id=?", (sid,))
+    with freeze_time("2026-06-15"), \
+         patch("app.cycle.get_scraper") as gs2, \
+         patch("app.cycle.send_digest") as send_d2:
+        gs2.return_value.poll.return_value = [near, far]
+        run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c2")
+    send_d2.assert_called_once()
+    assert [s.booking_token for s in send_d2.call_args.kwargs["matched_slots"]] == ["t-far"]

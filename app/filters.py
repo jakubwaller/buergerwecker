@@ -1,6 +1,13 @@
 from __future__ import annotations
-from datetime import date, time
+from datetime import date, datetime, time
+from zoneinfo import ZoneInfo
 from app.models import Filter, Slot
+
+# Slot dates are Europe/Berlin local dates (the city sites' timezone), while
+# the poller container runs UTC. "Today" for the max_days_ahead window must be
+# the Berlin date, or the window silently shrinks by a day between the Berlin
+# and UTC midnights (~22:00/23:00–00:00 UTC every night).
+_BERLIN = ZoneInfo("Europe/Berlin")
 
 def matches(f: Filter, slot: Slot) -> bool:
     if slot.service_uuid not in f.appointment_types:
@@ -11,6 +18,10 @@ def matches(f: Filter, slot: Slot) -> bool:
         d = date.fromisoformat(slot.date)
     except ValueError:
         return False
+    if f.max_days_ahead is not None:
+        today = datetime.now(_BERLIN).date()
+        if (d - today).days > f.max_days_ahead:
+            return False
     if d.isoweekday() not in f.weekdays:
         return False
     try:
