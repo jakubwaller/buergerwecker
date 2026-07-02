@@ -10,5 +10,6 @@
   "digest.unsubscribe": "Abmelden: {unsubscribe_url}",
   "digest.kofi": "Hat dir diese Benachrichtigung geholfen? Du kannst mir einen Kaffee spendieren: {kofi_url} (aber nur, wenn du magst — der Dienst bleibt kostenlos.)",
   "digest.selection_window_label": "Zeitraum",
-  "digest.window_days": "innerhalb der nächsten {n} Tage"
+  "digest.window_days": "innerhalb der nächsten {n} Tage",
+  "digest.more_available": "… und {n} weitere passende Termine sind aktuell online buchbar — die frühesten stehen oben."
 }

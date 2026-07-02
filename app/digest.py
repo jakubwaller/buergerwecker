@@ -7,6 +7,11 @@ from app.models import Subscription, Slot
 from app.mail import (send, send_batch, maybe_quota_alert, Outgoing,
                       _idem_key)
 
+# Render at most this many slots per digest email (soonest first). Keeps even
+# an abundant tenant's digest far under Gmail's ~102KB clipping threshold;
+# anything beyond is summarized in a single count line.
+MAX_SLOTS_PER_DIGEST = 25
+
 # Weekday abbreviations for the date line (i18n.t is string-only, so the
 # per-language lists live here rather than in the JSON bundles). Index 0 = Mon.
 _WEEKDAY_ABBR = {
@@ -67,6 +72,18 @@ def render_digest_text(sub: Subscription, slots: list[Slot], *,
                      f"{t(lang, 'digest.window_days', n=f.max_days_ahead)}")
     lines.append("")
 
+    # Cap the rendered slots at the soonest MAX_SLOTS_PER_DIGEST. Abundant
+    # tenants (the Ausländerbehörde calendar can hold 1000+ open slots) would
+    # otherwise produce a digest past Gmail's ~102KB clipping threshold —
+    # hiding the unsubscribe link in the clipped tail. Omitted slots are
+    # summarized in one count line; the caller still marks ALL matched slots
+    # seen (flush_digests works off the full candidate list), so the omission
+    # does not drip-feed follow-up emails.
+    omitted = 0
+    if len(slots) > MAX_SLOTS_PER_DIGEST:
+        omitted = len(slots) - MAX_SLOTS_PER_DIGEST
+        slots = sorted(slots, key=lambda s: (s.date, s.time_str))[:MAX_SLOTS_PER_DIGEST]
+
     # Slots grouped by office (offices sorted by display name); within an
     # office, sorted by day then time. The per-slot service label is shown
     # only when the filter spans more than one type — otherwise the header
@@ -85,6 +102,9 @@ def render_digest_text(sub: Subscription, slots: list[Slot], *,
                              f"{svc_label(s.service_uuid)}  →  {go_url}")
             else:
                 lines.append(f"  {date_str}  {s.time_str}  →  {go_url}")
+    if omitted:
+        lines.append("")
+        lines.append(t(lang, "digest.more_available", n=omitted))
     lines.append("")
 
     lines.append(t(lang, "digest.burst_warning"))

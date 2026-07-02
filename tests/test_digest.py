@@ -160,3 +160,35 @@ def test_digest_omits_window_line_when_unlimited():
     text = _render(_sub("de"), [Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")],
                    catalog=_cat())
     assert "Zeitraum" not in text
+
+
+def test_digest_caps_slots_at_soonest_and_summarizes_rest():
+    """More matches than MAX_SLOTS_PER_DIGEST → render only the soonest N and
+    one count line for the rest (keeps abundant tenants under Gmail's ~102KB
+    clipping threshold). The soonest slot must survive the cut; the latest
+    must not."""
+    from app.digest import MAX_SLOTS_PER_DIGEST
+    n_total = MAX_SLOTS_PER_DIGEST + 40
+    slots = [Slot(f"2026-07-{(i % 28) + 1:02d}", f"{8 + (i % 10)}:00",
+                  "loc-1", "svc-A", f"tok-{i}") for i in range(n_total)]
+    text = _render(_sub("de"), slots, catalog=_cat())
+    rendered = text.count("/go/tok-")
+    assert rendered == MAX_SLOTS_PER_DIGEST
+    assert "40 weitere passende Termine" in text
+    # soonest-first selection: the earliest (day 01, 08:00) is in, and a
+    # late-July slot beyond the cap horizon is out.
+    soonest = min(slots, key=lambda s: (s.date, s.time_str))
+    latest = max(slots, key=lambda s: (s.date, s.time_str))
+    assert soonest.booking_token in text
+    assert latest.booking_token not in text
+    # sanity: body stays far below Gmail's clipping threshold
+    assert len(text.encode()) < 20_000
+
+
+def test_digest_no_summary_line_when_under_cap():
+    from app.digest import MAX_SLOTS_PER_DIGEST
+    slots = [Slot("2026-07-01", "09:00", "loc-1", "svc-A", f"t{i}")
+             for i in range(MAX_SLOTS_PER_DIGEST)]
+    text = _render(_sub("de"), slots, catalog=_cat())
+    assert "weitere passende Termine" not in text
+    assert text.count("/go/") == MAX_SLOTS_PER_DIGEST
