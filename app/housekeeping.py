@@ -92,6 +92,10 @@ def _send_heartbeats(conn, cfg, *, milestone_days: int, milestone_col: str):
                           primary=cfg.token_secret_primary,
                           previous=cfg.token_secret_previous)
         manage_url = f"{cfg.public_base_url}/manage/{manage_tok}"
+        unsub_tok = sign(row["id"], "unsubscribe",
+                         primary=cfg.token_secret_primary,
+                         previous=cfg.token_secret_previous)
+        unsub_url = f"{cfg.public_base_url}/unsubscribe/{unsub_tok}"
         body = (f"Du bist weiterhin abonniert — dein Filter passt einfach noch nicht. "
                 f"Hier verwalten: {manage_url}"
                 if row["language"] == "de" else
@@ -109,7 +113,8 @@ def _send_heartbeats(conn, cfg, *, milestone_days: int, milestone_col: str):
                 )
                 mail_send(conn, row["email"], subj, body,
                           idem_key=_idem_key(row["id"], [],
-                                             f"heartbeat-{milestone_days}d-{row['id']}"))
+                                             f"heartbeat-{milestone_days}d-{row['id']}"),
+                          unsub_url=unsub_url)
         except Exception:
             pass
 

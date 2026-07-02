@@ -5,7 +5,7 @@ from datetime import time as time_cls
 from urllib.parse import urlencode
 from flask import Flask, request, render_template, redirect
 from app.config import load_config
-from app.db import connect, init_schema, transaction
+from app.db import connect, transaction
 from app.catalog import load_catalog, available_cities, CatalogError
 from app.models import Filter
 from app.repo import insert_pending, active_subscriptions, confirm, soft_delete
@@ -352,7 +352,9 @@ def create_app() -> Flask:
         return render_template("confirmed.html", lang=lang,
                                kofi_url=cfg.kofi_url), 200
 
-    @app.route("/unsubscribe/<token>")
+    # POST is the RFC 8058 one-click unsubscribe mail clients send to the
+    # List-Unsubscribe URL; GET is the human clicking the link in the body.
+    @app.route("/unsubscribe/<token>", methods=["GET", "POST"])
     def unsubscribe_route(token):
         cfg = app.config["TERMINE_CONFIG"]
         try:

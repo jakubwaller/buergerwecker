@@ -148,7 +148,8 @@ def send_digest(*, conn: sqlite3.Connection, subscription: Subscription,
                     [s.hash() for s in matched_slots],
                     cycle_id)
     queued = QueuedDigest(
-        item=Outgoing(to=subscription.email, subject=subj, body=body, idem_key=key),
+        item=Outgoing(to=subscription.email, subject=subj, body=body,
+                      idem_key=key, unsub_url=unsub_url),
         subscription=subscription,
         slots=list(matched_slots),
     )

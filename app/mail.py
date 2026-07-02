@@ -14,7 +14,19 @@ def _idem_key(subscription_id: int, slot_hashes: list[str], cycle_id: str) -> st
     payload = f"{subscription_id}|{','.join(sorted(slot_hashes))}|{cycle_id}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
-def _mailjet_message(to: str, subject: str, body: str) -> dict:
+def _unsub_headers(unsub_url: str | None) -> dict:
+    """RFC 8058 one-click unsubscribe headers, only when a REAL per-recipient
+    unsubscribe URL exists. Gmail/Yahoo bulk-sender rules require the target to
+    actually work — a placeholder URL is worse than no header, so mails without
+    a subscriber unsubscribe token (confirmations, developer alerts) send none.
+    """
+    if not unsub_url:
+        return {}
+    return {"List-Unsubscribe": f"<{unsub_url}>",
+            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"}
+
+def _mailjet_message(to: str, subject: str, body: str,
+                     unsub_url: str | None = None) -> dict:
     """One entry of Mailjet's v3.1 `Messages` array (shared by single + batch)."""
     message = {
         "From": {"Email": os.environ["MAILJET_FROM_EMAIL"],
@@ -22,11 +34,10 @@ def _mailjet_message(to: str, subject: str, body: str) -> dict:
         "To":   [{"Email": to}],
         "Subject":  subject,
         "TextPart": body,
-        "Headers":  {
-            "List-Unsubscribe": _list_unsub_header(to),
-            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-        },
     }
+    headers = _unsub_headers(unsub_url)
+    if headers:
+        message["Headers"] = headers
     # From is the validated sending subdomain; Reply-To (optional) routes
     # replies to a real mailbox so the From address can be a subdomain that
     # doesn't itself receive mail.
@@ -35,46 +46,43 @@ def _mailjet_message(to: str, subject: str, body: str) -> dict:
         message["ReplyTo"] = {"Email": reply_to}
     return message
 
-def _resend_email(to: str, subject: str, body: str) -> dict:
+def _resend_email(to: str, subject: str, body: str,
+                  unsub_url: str | None = None) -> dict:
     """One Resend email object (shared by single `/emails` + `/emails/batch`)."""
     payload = {
         "from": f"{os.environ['MAILJET_FROM_NAME']} <{os.environ['MAILJET_FROM_EMAIL']}>",
         "to": [to],
         "subject": subject,
         "text": body,
-        "headers": {
-            "List-Unsubscribe": _list_unsub_header(to),
-            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
-        },
     }
+    headers = _unsub_headers(unsub_url)
+    if headers:
+        payload["headers"] = headers
     reply_to = os.environ.get("REPLY_TO_EMAIL")
     if reply_to:
         payload["reply_to"] = reply_to
     return payload
 
-def _call_mailjet(to: str, subject: str, body: str) -> Any:
+def _call_mailjet(to: str, subject: str, body: str,
+                  unsub_url: str | None = None) -> Any:
     return requests.post(
         "https://api.mailjet.com/v3.1/send",
         auth=(os.environ["MAILJET_API_KEY"], os.environ["MAILJET_API_SECRET"]),
-        json={"Messages": [_mailjet_message(to, subject, body)]},
+        json={"Messages": [_mailjet_message(to, subject, body, unsub_url)]},
         timeout=30,
     )
 
-def _call_resend(to: str, subject: str, body: str) -> Any:
+def _call_resend(to: str, subject: str, body: str,
+                 unsub_url: str | None = None) -> Any:
     return requests.post(
         "https://api.resend.com/emails",
         headers={"Authorization": f"Bearer {os.environ['RESEND_API_KEY']}"},
-        json=_resend_email(to, subject, body),
+        json=_resend_email(to, subject, body, unsub_url),
         timeout=30,
     )
 
-def _list_unsub_header(to_email: str) -> str:
-    # Caller is expected to inject the actual unsubscribe URL via the
-    # mail-template flow; this is a placeholder header until tied in.
-    return f"<{os.environ.get('PUBLIC_BASE_URL', '')}/unsubscribe>"
-
 def send(conn: sqlite3.Connection, to: str, subject: str, body: str,
-         *, idem_key: str) -> None:
+         *, idem_key: str, unsub_url: str | None = None) -> None:
     """Send `body` to `to`. Idempotent on `idem_key`.
 
     Order: claim the idempotency row FIRST (atomic INSERT OR IGNORE), then
@@ -91,13 +99,13 @@ def send(conn: sqlite3.Connection, to: str, subject: str, body: str,
     if cur.rowcount == 0:
         return  # already claimed by an earlier call
     try:
-        resp = _call_mailjet(to, subject, body)
+        resp = _call_mailjet(to, subject, body, unsub_url)
         provider = "mailjet"
         # Fail over to Resend on ANY Mailjet error (4xx incl. 401/403 account
         # blocks, and 5xx/429), not just transient ones — a blocked Mailjet
         # account returns 401, and that's exactly when the fallback must engage.
         if resp.status_code >= 400 and os.environ.get("RESEND_API_KEY"):
-            resp = _call_resend(to, subject, body)
+            resp = _call_resend(to, subject, body, unsub_url)
             provider = "resend"
         if resp.status_code >= 400:
             raise MailFailed(f"provider failed; last status {resp.status_code}")
@@ -127,6 +135,9 @@ class Outgoing:
     subject: str
     body: str
     idem_key: str
+    # Per-recipient one-click unsubscribe URL; None for mails that have no
+    # subscriber unsubscribe semantics (confirmations, developer alerts).
+    unsub_url: str | None = None
 
 @dataclass
 class BatchResult:
@@ -138,7 +149,8 @@ def _call_mailjet_batch(items: list[Outgoing]) -> bool:
     resp = requests.post(
         "https://api.mailjet.com/v3.1/send",
         auth=(os.environ["MAILJET_API_KEY"], os.environ["MAILJET_API_SECRET"]),
-        json={"Messages": [_mailjet_message(i.to, i.subject, i.body) for i in items]},
+        json={"Messages": [_mailjet_message(i.to, i.subject, i.body, i.unsub_url)
+              for i in items]},
         timeout=60,
     )
     return resp.status_code < 400
@@ -147,7 +159,7 @@ def _call_resend_batch(items: list[Outgoing]) -> bool:
     resp = requests.post(
         "https://api.resend.com/emails/batch",
         headers={"Authorization": f"Bearer {os.environ['RESEND_API_KEY']}"},
-        json=[_resend_email(i.to, i.subject, i.body) for i in items],
+        json=[_resend_email(i.to, i.subject, i.body, i.unsub_url) for i in items],
         timeout=60,
     )
     return resp.status_code < 400
