@@ -8,7 +8,7 @@ from app.planning import build_plans
 from app.repo import active_subscriptions, has_seen_slot
 from app.scrapers import get_scraper
 from app.http_session import CountingSession
-from app.models import Subscription, Slot, PollPlan
+from app.models import Slot
 
 # Imported here so tests can monkey-patch it.
 from app.digest import send_digest, flush_digests  # noqa: E402

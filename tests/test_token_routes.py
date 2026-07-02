@@ -183,3 +183,15 @@ def test_manage_get_prefills_all_locations(tmp_path, monkeypatch):
     # No individual location should be checked.
     for loc_uuid in cat.locations.values():
         assert f'value="{loc_uuid}" checked' not in html
+
+def test_one_click_unsubscribe_post(client):
+    """Mail clients POST to the List-Unsubscribe URL (RFC 8058); the route must
+    accept it and actually unsubscribe."""
+    c, sid = client
+    r = c.post(f"/unsubscribe/{_sign(sid, 'unsubscribe')}")
+    assert r.status_code == 200
+    import os
+    from app.db import connect
+    row = connect(os.environ["DB_PATH"]).execute(
+        "SELECT deleted_at FROM subscriptions WHERE id=?", (sid,)).fetchone()
+    assert row["deleted_at"] is not None

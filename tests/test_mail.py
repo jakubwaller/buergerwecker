@@ -147,3 +147,16 @@ def test_pending_row_blocks_second_call_after_crash(db):
         send(db, "alice@example.com", "subj", "body", idem_key="k5")
     mj.assert_not_called()
     re_.assert_not_called()
+
+def test_unsub_headers_only_with_real_url(monkeypatch, mailjet_env):
+    """RFC 8058 headers must carry the per-recipient unsubscribe URL when given,
+    and be ABSENT otherwise — a placeholder/dead URL is worse than no header."""
+    seen, fake = _capture()
+    with patch("app.mail.requests.post", side_effect=fake):
+        _call_mailjet("a@x.com", "s", "b", "https://x/unsubscribe/tok123")
+    h = seen["json"]["Messages"][0]["Headers"]
+    assert h["List-Unsubscribe"] == "<https://x/unsubscribe/tok123>"
+    assert h["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
+    with patch("app.mail.requests.post", side_effect=fake):
+        _call_mailjet("a@x.com", "s", "b")   # no unsub semantics (e.g. confirmation)
+    assert "Headers" not in seen["json"]["Messages"][0]
