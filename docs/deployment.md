@@ -54,6 +54,14 @@ failing:
 
 Delivery mix over the last 7 days is visible on `/admin`.
 
+## Polling cadence
+
+The poller wakes once a minute, but each tenant can set
+`poll_interval_seconds` in its `catalog/<tenant>/scraper_config.json` to be
+polled less often (e.g. 180 for a city that mandates one request per three
+minutes). Skipped cycles leave the tenant's counters, canary, and
+last-polled timestamp untouched.
+
 ## Load testing
 
 `scripts/loadtest.py` measures sign-up write contention and `run_cycle` time at

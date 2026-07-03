@@ -206,3 +206,46 @@ def test_cycle_window_filter_defers_far_slots_until_they_enter_window(db):
         run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c2")
     send_d2.assert_called_once()
     assert [s.booking_token for s in send_d2.call_args.kwargs["matched_slots"]] == ["t-far"]
+
+def test_poll_interval_skips_city_until_due(db):
+    """A tenant with poll_interval_seconds=180 is skipped while its interval
+    hasn't elapsed (no poll, no counter/last_polled_at update) and polled once
+    it has. Default-cadence tenants are unaffected (covered by every other
+    test in this file)."""
+    sid = insert_pending(db, email="a@x.com", city="leipzig",
+                         language="de", filter_=_f(["svc-A"]), ttl_days=90)
+    confirm(db, sid)
+    # last polled 60s ago; interval 180 → not due
+    db.execute("INSERT INTO city_state (city, last_polled_at, polls_total) "
+               "VALUES ('leipzig', datetime('now','-60 seconds'), 7)")
+    with patch("app.cycle._poll_interval_s", return_value=180), \
+         patch("app.cycle.get_scraper") as gs, \
+         patch("app.cycle.send_digest") as send_d:
+        run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
+    gs.return_value.poll.assert_not_called()
+    send_d.assert_not_called()
+    row = db.execute("SELECT polls_total FROM city_state WHERE city='leipzig'").fetchone()
+    assert row["polls_total"] == 7          # untouched — not even a zero-delta write
+
+    # 200s ago → due
+    db.execute("UPDATE city_state SET last_polled_at=datetime('now','-200 seconds') "
+               "WHERE city='leipzig'")
+    with patch("app.cycle._poll_interval_s", return_value=180), \
+         patch("app.cycle.get_scraper") as gs2, \
+         patch("app.cycle.send_digest"):
+        gs2.return_value.poll.return_value = []
+        run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c2")
+    assert gs2.return_value.poll.called
+
+
+def test_poll_interval_fails_open_without_last_polled(db):
+    """No city_state row yet (first ever cycle) → the tenant is due."""
+    sid = insert_pending(db, email="b@x.com", city="leipzig",
+                         language="de", filter_=_f(["svc-A"]), ttl_days=90)
+    confirm(db, sid)
+    with patch("app.cycle._poll_interval_s", return_value=600), \
+         patch("app.cycle.get_scraper") as gs, \
+         patch("app.cycle.send_digest"):
+        gs.return_value.poll.return_value = []
+        run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
+    assert gs.return_value.poll.called

@@ -13,6 +13,49 @@ from app.models import Slot
 # Imported here so tests can monkey-patch it.
 from app.digest import send_digest, flush_digests  # noqa: E402
 
+
+def _poll_interval_s(city: str) -> int:
+    """Per-tenant minimum seconds between polls (scraper_config key
+    `poll_interval_seconds`, default 60 = every cycle). Lets a tenant honor a
+    mandated slower cadence — e.g. Berlin's ZMS team requires >=180s between
+    requests — without changing the poller's one-minute heartbeat."""
+    try:
+        from app.catalog import load_catalog
+        return int(load_catalog(city).scraper_config.get("poll_interval_seconds", 60))
+    except Exception:
+        return 60
+
+
+def _due_cities(conn: sqlite3.Connection, cities: set[str]) -> set[str]:
+    """Cities whose poll interval has elapsed since city_state.last_polled_at.
+
+    Default-cadence cities (<=60s) are always due. The 5s grace absorbs cycle
+    -boundary jitter so a 180s interval polls every 3rd cycle, not every 4th.
+    Unparseable or missing timestamps count as due (fail open: poll)."""
+    due: set[str] = set()
+    now = datetime.utcnow()
+    for city in cities:
+        interval = _poll_interval_s(city)
+        if interval <= 60:
+            due.add(city)
+            continue
+        row = conn.execute(
+            "SELECT last_polled_at FROM city_state WHERE city=?", (city,)
+        ).fetchone()
+        last = row["last_polled_at"] if row else None
+        if not last:
+            due.add(city)
+            continue
+        try:
+            elapsed = (now - datetime.fromisoformat(last)).total_seconds()
+        except ValueError:
+            due.add(city)
+            continue
+        if elapsed >= interval - 5:
+            due.add(city)
+    return due
+
+
 def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
               rate_limit_minutes: int, cycle_id: str,
               cfg=None,
@@ -32,7 +75,14 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
     cities_polled: set[str] = set()
     polls_delta: dict[str, int] = {}
     requests_delta: dict[str, int] = {}
+    # Skip tenants whose per-tenant poll interval hasn't elapsed. A skipped
+    # city is left out of cities_polled entirely: its canary, counters, and
+    # last_polled_at stay untouched, and its subscribers simply see no new
+    # candidates this cycle.
+    due = _due_cities(conn, {p.city for p in plans})
     for p in plans:
+        if p.city not in due:
+            continue
         cities_polled.add(p.city)
         # Snapshot the HTTP-request counter so we can attribute the requests
         # this single poll makes to its city (a CountingSession exposes it; a
