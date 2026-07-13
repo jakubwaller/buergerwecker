@@ -14,6 +14,11 @@ class CountingSession(requests.Session):
     def __init__(self) -> None:
         super().__init__()
         self.request_count = 0
+        # Identify ourselves to upstream (ethical-scraping stance: cities can
+        # see who is polling and how to reach us).
+        self.headers["User-Agent"] = (
+            "Buergerwecker/1.0 (+https://buergerwecker.de)"
+        )
 
     def request(self, *args, **kwargs):  # type: ignore[override]
         self.request_count += 1
