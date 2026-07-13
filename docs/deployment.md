@@ -134,7 +134,7 @@ If `terminvereinbarung.leipzig.de` starts returning 403 for the Pi's IP:
    booking, polling once per minute (a handful of requests per minute; well
    under 1 req/sec even at the `MAX_PLANS_PER_CITY` cap), GDPR-compliant,
    open source at
-   `github.com/jakubwaller/termine-notifier`. Ask if there is a way to
+   `github.com/jakubwaller/buergerwecker`. Ask if there is a way to
    continue operation that the city would accept.
 3. Do NOT attempt to rotate IPs or use proxies — this is ethically
    worse than the polling itself and undermines the legal posture.
