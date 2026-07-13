@@ -57,7 +57,7 @@ def _maybe_alert(conn, cfg, last_error: str) -> None:
         body = (f"Poller has been failing repeatedly. Last error:\n\n{last_error}\n\n"
                 f"Check logs: docker compose logs poller")
         mail_send(conn, cfg.developer_email,
-                  "[termine-notifier] poller failure burst",
+                  "[buergerwecker] poller failure burst",
                   body,
                   idem_key=_idem_key(0, [], f"alert-{datetime.utcnow().date()}"))
         conn.execute(

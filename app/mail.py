@@ -299,7 +299,7 @@ def maybe_quota_alert(conn: sqlite3.Connection, cfg, *, deferred: int) -> None:
         except ValueError:
             pass
     pct = round(used / cfg.resend_daily_quota * 100) if cfg.resend_daily_quota else 0
-    subject = "[termine-notifier] email quota running low"
+    subject = "[buergerwecker] email quota running low"
     body = (
         f"Resend usage in the last 24h: {used}/{cfg.resend_daily_quota} ({pct}%).\n"
         f"Notifications deferred this cycle for lack of quota: {deferred}.\n\n"
