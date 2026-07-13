@@ -102,8 +102,8 @@ def test_no_fallback_on_mailjet_429_without_resend(db, monkeypatch):
 def mailjet_env(monkeypatch):
     monkeypatch.setenv("MAILJET_API_KEY", "k")
     monkeypatch.setenv("MAILJET_API_SECRET", "s")
-    monkeypatch.setenv("MAILJET_FROM_EMAIL", "hallo@termine.jakubwaller.eu")
-    monkeypatch.setenv("MAILJET_FROM_NAME", "Leipzig-Termine")
+    monkeypatch.setenv("MAILJET_FROM_EMAIL", "hallo@buergerwecker.de")
+    monkeypatch.setenv("MAILJET_FROM_NAME", "Bürgerwecker")
 
 def _capture():
     """Patch-ready post that records the json= payload and returns 200."""

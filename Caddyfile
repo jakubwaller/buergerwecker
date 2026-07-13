@@ -1,3 +1,11 @@
-termine.jakubwaller.eu {
+# Primary site.
+buergerwecker.de {
     reverse_proxy web:8000
+}
+
+# Keep the old domain working: confirmation / manage / unsubscribe links in
+# emails already sent point at termine.jakubwaller.eu. A permanent redirect
+# preserves them (tokens stay valid — same backend). Keep this indefinitely.
+termine.jakubwaller.eu {
+    redir https://buergerwecker.de{uri} permanent
 }
