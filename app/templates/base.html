@@ -282,6 +282,10 @@
       <a href="/impressum{% if lang == 'en' %}?lang=en{% endif %}">{% if lang == 'en' %}Imprint{% else %}Impressum{% endif %}</a> ·
       <a href="/datenschutz{% if lang == 'en' %}?lang=en{% endif %}">{% if lang == 'en' %}Privacy{% else %}Datenschutz{% endif %}</a> ·
       <a href="{{ kofi_url or 'https://ko-fi.com/jakubwaller' }}">{% if lang == 'en' %}☕ Buy me a coffee{% else %}☕ Kaffee spendieren{% endif %}</a>
+      <br>
+      {% if lang == 'en' %}Built by{% else %}Erstellt von{% endif %}
+      <a href="https://jakubwaller.eu" rel="author">Jakub Waller</a> ·
+      <a href="https://github.com/jakubwaller/termine-notifier">{% if lang == 'en' %}Source code{% else %}Quellcode{% endif %}</a>
     </footer>
   </div>
 </body>
