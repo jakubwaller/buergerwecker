@@ -160,7 +160,7 @@ def _check_parser_canary(conn, cfg):
                 f"(> {cfg.parser_canary_threshold_hours}h).")
         try:
             mail_send(conn, cfg.developer_email,
-                      f"[termine-notifier] parser canary: {city}",
+                      f"[buergerwecker] parser canary: {city}",
                       body,
                       idem_key=_idem_key(0, [], f"canary-{city}-{now.date()}"))
             conn.execute(
@@ -188,7 +188,7 @@ def _check_backup_health(conn, cfg):
         return
     try:
         mail_send(conn, cfg.developer_email,
-                  "[termine-notifier] backup is stale",
+                  "[buergerwecker] backup is stale",
                   "meta.last_backup_at is missing or older than 48h. "
                   "Check the backup container logs and /mnt/backup for "
                   "BACKUP-FAIL / BACKUP-METAFAIL sentinel files.",
@@ -223,7 +223,7 @@ def _sync_catalogs(conn, cfg):
         body = "\n".join(lines)
         try:
             mail_send(conn, cfg.developer_email,
-                      f"[termine-notifier] catalog drift: {city}",
+                      f"[buergerwecker] catalog drift: {city}",
                       body,
                       idem_key=_idem_key(0, [],
                                          f"catalog-drift-{city}-{datetime.utcnow().date()}"))
@@ -243,7 +243,7 @@ def _send_summary_email(conn, cfg):
     s = stats(conn)
     body = render_summary_text(s, now=datetime.utcnow())
     try:
-        mail_send(conn, cfg.developer_email, "[termine-notifier] ops summary", body,
+        mail_send(conn, cfg.developer_email, "[buergerwecker] ops summary", body,
                   idem_key=_idem_key(0, [], f"summary-{datetime.utcnow().date()}"))
     except Exception:
         pass
