@@ -152,7 +152,7 @@ def main() -> None:
                     help="seconds to sleep after each request (be polite)")
     args = ap.parse_args()
     http = requests.Session()
-    http.headers["User-Agent"] = "termine-notifier/city-survey (jakubwaller.eu)"
+    http.headers["User-Agent"] = "Buergerwecker/city-survey (+https://buergerwecker.de)"
     w = csv.writer(sys.stdout)
     w.writerow(["city", "pop_k", "class", "captcha", "booking_url", "notes"])
     for name, pop, domain in CITIES:
