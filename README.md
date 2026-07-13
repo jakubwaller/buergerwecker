@@ -1,6 +1,8 @@
-# Termine-Notifier
+# Bürgerwecker
 
 Free email notifications for free Amt appointments in German cities.
+
+**Live: [buergerwecker.de](https://buergerwecker.de)**
 
 **v1 covers Leipzig:** the Bürgerbüros (e.g. Wohnsitzanmeldung, Ausweise) and
 the Ausländerbehörde (residence-document pickup). Support for more cities may
