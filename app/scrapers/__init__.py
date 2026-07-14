@@ -26,6 +26,7 @@ class UnsupportedCity(Exception):
 
 _REGISTRY: dict[str, ModuleType] = {
     "leipzig": smartcjm,
+    "leipzig-abh": smartcjm,
     # When adding Hamburg, etc.:
     #   from app.scrapers import odcontrols
     #   "hamburg": odcontrols,
