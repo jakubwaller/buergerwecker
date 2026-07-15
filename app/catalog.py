@@ -107,6 +107,23 @@ def load_catalog(city: str) -> Catalog:
                    display=display)
 
 
+def booking_start_url(scfg: dict, lang: str = "de") -> str:
+    """Entry URL of the city's booking flow, per vendor.
+
+    This is what digest emails link to (via /go/<city>). Per-slot deep links
+    are not possible on any current vendor: Smart-CJM's /booking endpoint
+    rejects requests whose cookie session hasn't walked the
+    services→locations→search_results steps, and TEVIS booking is equally
+    session-bound — so the start page is the deepest reachable target.
+    """
+    vendor = scfg.get("vendor")
+    if vendor == "smartcjm":
+        return f"{scfg['base_url']}/?uid={scfg['uid']}&lang={lang}"
+    if vendor == "tevis":
+        return f"{scfg['base_url']}/select2?md={scfg['md']}"
+    raise CatalogError(f"no booking-start URL for vendor: {vendor}")
+
+
 def available_cities() -> list[str]:
     """Catalog directory names that hold a complete tenant config, sorted.
 

@@ -1,10 +1,19 @@
+import re
 from datetime import datetime, time
 from unittest.mock import patch
 import pytest
 from app.db import connect, init_schema
 from app.catalog import Catalog
 from app.models import Filter, Slot, Subscription
-from app.digest import render_digest_text
+from app.digest import render_digest_text, _format_date
+
+# A rendered slot line: two-space indent, weekday + dd.mm., time — optionally
+# followed by a per-slot service label (multi-service filters only).
+SLOT_LINE = re.compile(r"^  \S+ \d{2}\.\d{2}\.  \d{2}:\d{2}(?:$|  ·  )")
+
+
+def _slot_lines(text: str) -> list[str]:
+    return [ln for ln in text.splitlines() if SLOT_LINE.match(ln)]
 
 
 def _sub(language="de", appointment_types=("svc-A",), locations="all"):
@@ -49,14 +58,16 @@ def test_render_digest_de():
     text = _render(_sub("de"), slots)
     assert "10.06." in text          # weekday + dd.mm. (2026-06-10 is a Wednesday)
     assert "10:30" in text
-    assert "schneller Klick" in text  # burst-congestion line
+    assert "schnell vergriffen" in text            # burst-congestion line
+    assert "nur neue Termine" in text              # no-repeat note
     assert "https://x/unsubscribe/tok" in text
 
 
 def test_render_digest_en():
     slots = [Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")]
     text = _render(_sub("en"), slots)
-    assert "click wins" in text.lower()
+    assert "taken quickly" in text.lower()
+    assert "new since your last notification" in text
 
 
 # ---------- "Deine Auswahl" selection header ----------
@@ -106,13 +117,57 @@ def test_slots_grouped_by_office():
     assert text.index("08:00") > nord          # Nord's slot under its header
 
 
-def test_slot_line_has_weekday_date_time_and_link():
+def test_slot_line_has_weekday_date_and_time():
     sub = _sub("de", appointment_types=["svc-A"], locations="all")
     slots = [Slot("2026-06-12", "09:20", "loc-1", "svc-A", "tok-A")]
     text = _render(sub, slots, catalog=_cat())
     line = next(ln for ln in text.splitlines() if "09:20" in ln)
     assert "Fr 12.06." in line                       # 2026-06-12 is a Friday
-    assert "https://x/go/leipzig:tok-A" in line
+    assert "tok-A" not in text                       # booking token never renders
+
+
+def test_digest_links_once_to_city_booking_page():
+    """Per-slot deep links are gone (session-bound upstream — they only ever
+    landed on the start page). The digest carries exactly ONE booking link,
+    the never-expiring city-level /go/<city>."""
+    sub = _sub("de", appointment_types=["svc-A"], locations=["loc-1"])
+    slots = [Slot("2026-06-12", "09:20", "loc-1", "svc-A", "tA"),
+             Slot("2026-06-13", "10:00", "loc-2", "svc-A", "tB")]
+    text = _render(sub, slots, catalog=_cat())
+    assert "https://x/go/leipzig" in text
+    assert "/go/leipzig:" not in text
+    assert text.count("/go/") == 1
+
+
+def test_digest_instructions_name_service_and_location():
+    sub = _sub("de", appointment_types=["svc-A"], locations=["loc-1"])
+    slots = [Slot("2026-06-12", "09:20", "loc-1", "svc-A", "tA")]
+    text = _render(sub, slots, catalog=_cat())
+    line = next(ln for ln in text.splitlines() if ln.startswith("Wähle dort"))
+    assert "Anliegen „Personalausweis“" in line
+    assert "Standort „Bürgerbüro Mitte“" in line
+    assert "Direktlink" in text                      # honesty note present
+
+
+def test_digest_instructions_drop_location_for_single_location_tenant():
+    """Tenants with one location (e.g. leipzig-abh) have no location step in
+    the booking flow — the instruction must not tell users to pick one."""
+    single_loc = Catalog(
+        city="leipzig", appointment_types={"Abholung": "svc-A"},
+        locations={"Otto-Schill-Straße": "loc-1"}, scraper_config={})
+    sub = _sub("de", appointment_types=["svc-A"], locations="all")
+    slots = [Slot("2026-06-12", "09:20", "loc-1", "svc-A", "tA")]
+    text = _render(sub, slots, catalog=single_loc)
+    line = next(ln for ln in text.splitlines() if ln.startswith("Wähle dort"))
+    assert "Anliegen „Abholung“" in line
+    assert "dann den Standort" not in line
+
+
+def test_digest_en_booking_link_carries_lang_param():
+    sub = _sub("en", appointment_types=["svc-A"], locations=["loc-1"])
+    slots = [Slot("2026-06-12", "09:20", "loc-1", "svc-A", "tA")]
+    text = _render(sub, slots, catalog=_cat())
+    assert "https://x/go/leipzig?lang=en" in text
 
 
 # ---------- per-slot service only when the filter spans >1 type ----------
@@ -169,26 +224,26 @@ def test_digest_caps_slots_at_soonest_and_summarizes_rest():
     must not."""
     from app.digest import MAX_SLOTS_PER_DIGEST
     n_total = MAX_SLOTS_PER_DIGEST + 40
-    slots = [Slot(f"2026-07-{(i % 28) + 1:02d}", f"{8 + (i % 10)}:00",
+    # Distinct (date, time) per slot so rendered lines are unique.
+    slots = [Slot(f"2026-07-{(i % 28) + 1:02d}", f"{8 + (i % 10):02d}:{i % 60:02d}",
                   "loc-1", "svc-A", f"tok-{i}") for i in range(n_total)]
     text = _render(_sub("de"), slots, catalog=_cat())
-    rendered = text.count("/go/leipzig:tok-")
-    assert rendered == MAX_SLOTS_PER_DIGEST
+    assert len(_slot_lines(text)) == MAX_SLOTS_PER_DIGEST
     assert "40 weitere passende Termine" in text
-    # soonest-first selection: the earliest (day 01, 08:00) is in, and a
-    # late-July slot beyond the cap horizon is out.
+    # soonest-first selection: the earliest is in, the latest is out.
     soonest = min(slots, key=lambda s: (s.date, s.time_str))
     latest = max(slots, key=lambda s: (s.date, s.time_str))
-    assert soonest.booking_token in text
-    assert latest.booking_token not in text
+    assert f"  {_format_date(soonest.date, 'de')}  {soonest.time_str}" in text
+    assert f"  {_format_date(latest.date, 'de')}  {latest.time_str}" not in text
     # sanity: body stays far below Gmail's clipping threshold
     assert len(text.encode()) < 20_000
 
 
 def test_digest_no_summary_line_when_under_cap():
     from app.digest import MAX_SLOTS_PER_DIGEST
-    slots = [Slot("2026-07-01", "09:00", "loc-1", "svc-A", f"t{i}")
-             for i in range(MAX_SLOTS_PER_DIGEST)]
+    slots = [Slot("2026-07-01", f"{9 + i // 60:02d}:{i % 60:02d}", "loc-1",
+                  "svc-A", f"t{i}") for i in range(MAX_SLOTS_PER_DIGEST)]
     text = _render(_sub("de"), slots, catalog=_cat())
     assert "weitere passende Termine" not in text
-    assert text.count("/go/") == MAX_SLOTS_PER_DIGEST
+    assert len(_slot_lines(text)) == MAX_SLOTS_PER_DIGEST
+    assert text.count("/go/") == 1                   # just the city booking link

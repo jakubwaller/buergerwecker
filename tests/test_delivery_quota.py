@@ -93,7 +93,7 @@ def test_render_cap_still_marks_all_matched_slots_seen(db):
         run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
     sent_bodies = [i.body for i in mb.call_args_list[0].args[0]]
     assert len(sent_bodies) == 1                       # one email, not a flood
-    assert sent_bodies[0].count("/go/") == MAX_SLOTS_PER_DIGEST
+    assert sent_bodies[0].count("/go/") == 1   # one city booking link, no per-slot links
     seen = db.execute("SELECT COUNT(*) AS n FROM seen_slots WHERE subscription_id=?",
                       (sid,)).fetchone()["n"]
     assert seen == n_total                             # omitted ones seen too

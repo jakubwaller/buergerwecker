@@ -1,6 +1,5 @@
 from __future__ import annotations
 import sqlite3
-import urllib.parse
 from datetime import datetime, timedelta
 import requests
 from app.filters import matches
@@ -176,52 +175,17 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
                 candidates.append(slot)
         if not candidates:
             continue
-        # Cache each slot's city + upstream URL so /go/<token> works for
-        # any city without hardcoding Leipzig. The scrapers know their
-        # own upstream URL format; ask them via the catalog.
-        from app.catalog import load_catalog
-        scfg = load_catalog(sub.city).scraper_config
-        # One transaction for the whole candidate batch: in autocommit each
-        # INSERT is its own fsync, and an abundant tenant (leipzig-abh holds
-        # 1000+ open slots) times N subscribers would overrun the one-minute
-        # cycle on fsyncs alone.
-        with transaction(conn):
-            for slot in candidates:
-                upstream = _build_upstream_url(scfg, slot)
-                # The booking_token is a URL-encoded datetime (e.g.
-                # ...T17%3a20%3a00%2b02%3a00). The email links to
-                # /go/<city>:<booking_token>, and Flask URL-DECODES the path
-                # param on click — so the slots_cache key must use the DECODED
-                # form, or the /go lookup misses and every link 410s.
-                # (upstream_url keeps the encoded token: it sits in a query
-                # string the city site decodes itself.)
-                #
-                # The key is prefixed with the tenant because the bare token is
-                # just a wall-clock datetime: two tenants (leipzig, leipzig-abh)
-                # sharing the same instant would otherwise collide on the
-                # single-column primary key and /go would 302 subscribers to
-                # whichever tenant's URL was cached first.
-                slot_token = f"{sub.city}:{urllib.parse.unquote(slot.booking_token)}"
-                conn.execute(
-                    "INSERT INTO slots_cache (slot_token, city, upstream_url) "
-                    "VALUES (?, ?, ?) ON CONFLICT (slot_token) DO NOTHING",
-                    (slot_token, sub.city, upstream),
-                )
+        # No per-slot slots_cache writes anymore: Smart-CJM bookings are
+        # session-bound (the step machine rejects /booking without walking
+        # services→locations→search_results in the same cookie session), so a
+        # per-slot deep link cannot work. Digests link to /go/<city>, resolved
+        # from the catalog at click time (see web.go_route). The slots_cache
+        # table stays: /go/<city>:<token> keeps serving links from old emails
+        # until housekeeping prunes the rows.
+        #
         # Stage for batched delivery. seen_slots + last_notified are recorded
         # inside flush_digests, but only for digests that were actually sent —
         # quota-deferred ones stay unrecorded so a later cycle re-sends them.
         send_digest(conn=conn, subscription=sub, matched_slots=candidates,
                     cycle_id=cycle_id, cfg=cfg, sink=outbox)
     flush_digests(conn, outbox, cfg)
-
-def _build_upstream_url(scfg: dict, slot) -> str:
-    """Vendor-specific upstream booking URL composition.
-
-    For Smart-CJM, the URL is `{base_url}/?uid={uid}&appointment_reserve={token}`.
-    Add new branches when adding non-Smart-CJM vendors.
-    """
-    vendor = scfg.get("vendor")
-    if vendor == "smartcjm":
-        return (f"{scfg['base_url']}/?uid={scfg['uid']}"
-                f"&appointment_reserve={slot.booking_token}")
-    raise RuntimeError(f"no upstream-URL builder for vendor: {vendor}")
