@@ -88,6 +88,11 @@ def render_digest_text(sub: Subscription, slots: list[Slot], *,
     # office, sorted by day then time. The per-slot service label is shown
     # only when the filter spans more than one type — otherwise the header
     # already names the single service and the line stays uncluttered.
+    #
+    # Times are plain text — no per-slot links. Both current vendors bind
+    # booking to a browser session (see catalog.booking_start_url), so a
+    # per-slot link could only ever land on the start page while looking
+    # like a deep link; one honest booking link below the list replaces it.
     multi_service = len(f.appointment_types) > 1
     by_office: dict[str, list[Slot]] = {}
     for s in slots:
@@ -95,21 +100,37 @@ def render_digest_text(sub: Subscription, slots: list[Slot], *,
     for office_uuid in sorted(by_office, key=loc_label):
         lines.append(loc_label(office_uuid))
         for s in sorted(by_office[office_uuid], key=lambda s: (s.date, s.time_str)):
-            # Tenant-prefixed to match the slots_cache key (see cycle.py): the
-            # bare token is only a datetime and would collide across tenants.
-            go_url = f"{public_base_url}/go/{sub.city}:{s.booking_token}"
             date_str = _format_date(s.date, lang)
             if multi_service:
                 lines.append(f"  {date_str}  {s.time_str}  ·  "
-                             f"{svc_label(s.service_uuid)}  →  {go_url}")
+                             f"{svc_label(s.service_uuid)}")
             else:
-                lines.append(f"  {date_str}  {s.time_str}  →  {go_url}")
+                lines.append(f"  {date_str}  {s.time_str}")
     if omitted:
         lines.append("")
         lines.append(t(lang, "digest.more_available", n=omitted))
     lines.append("")
 
+    # One booking link per digest: /go/<city> resolves to the city's booking
+    # start page at click time. The instruction names the subscriber's own
+    # selection so they can re-select it there; single-location tenants
+    # (e.g. leipzig-abh) have no location step, so the location clause is
+    # dropped for them.
+    go_url = f"{public_base_url}/go/{sub.city}"
+    if lang == "en":
+        go_url += "?lang=en"
+    lines.append(t(lang, "digest.book_link", url=go_url))
+    if catalog is not None and len(catalog.locations) <= 1:
+        lines.append(t(lang, "digest.book_instructions_service_only",
+                       services=services))
+    else:
+        lines.append(t(lang, "digest.book_instructions",
+                       services=services, locations=locations))
+    lines.append(t(lang, "digest.no_deeplink_note"))
+    lines.append("")
+
     lines.append(t(lang, "digest.burst_warning"))
+    lines.append(t(lang, "digest.no_repeat_note"))
     lines.append("")
     lines.append(t(lang, "digest.unsubscribe", unsubscribe_url=unsubscribe_url))
     lines.append("")

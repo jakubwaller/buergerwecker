@@ -1,12 +1,14 @@
 from __future__ import annotations
 import logging
 import os
+import re
 from datetime import time as time_cls
 from urllib.parse import urlencode
 from flask import Flask, request, render_template, redirect
 from app.config import load_config
 from app.db import connect, transaction
-from app.catalog import load_catalog, available_cities, CatalogError
+from app.catalog import (load_catalog, available_cities, booking_start_url,
+                         CatalogError)
 from app.models import Filter
 from app.repo import insert_pending, active_subscriptions, confirm, soft_delete
 from app.ratelimit import GLOBAL_IP_LIMITER, email_rate_limit_ok
@@ -447,6 +449,21 @@ def create_app() -> Flask:
     @app.route("/go/<slot_token>")
     def go_route(slot_token):
         cfg = app.config["TERMINE_CONFIG"]
+        # City-level link (current emails): /go/<city> — no colon. Resolved
+        # from the catalog at click time so it never expires and survives an
+        # upstream base-URL change. Tokens with a colon are per-slot links
+        # from old emails, served from slots_cache until housekeeping prunes
+        # them (per-slot deep links turned out not to work upstream — the
+        # booking flow is session-bound; see catalog.booking_start_url).
+        if ":" not in slot_token:
+            lang = "en" if request.args.get("lang") == "en" else "de"
+            if not re.fullmatch(r"[a-z0-9-]+", slot_token):
+                return _result_page("link_expired", lang, status=410)
+            try:
+                scfg = load_catalog(slot_token).scraper_config
+                return redirect(booking_start_url(scfg, lang), code=302)
+            except CatalogError:
+                return _result_page("link_expired", lang, status=410)
         conn = connect(cfg.db_path)
         row = conn.execute(
             "SELECT upstream_url FROM slots_cache WHERE slot_token=?",

@@ -38,25 +38,41 @@ def test_admin_wrong_token(client):
     assert r.status_code == 401
 
 def test_go_route_redirects_on_cache_hit(client):
+    """Per-slot tokens from OLD emails (colon-prefixed) keep resolving from
+    slots_cache until housekeeping prunes the rows."""
     from app.db import connect
     conn = connect(os.environ["DB_PATH"])
     conn.execute(
         "INSERT INTO slots_cache (slot_token, city, upstream_url) "
-        "VALUES ('tok1', 'leipzig', 'https://example.eu/book/123')"
+        "VALUES ('leipzig:tok1', 'leipzig', 'https://example.eu/book/123')"
     )
-    r = client.get("/go/tok1", follow_redirects=False)
+    r = client.get("/go/leipzig:tok1", follow_redirects=False)
     assert r.status_code == 302
     assert r.headers["Location"] == "https://example.eu/book/123"
 
 def test_go_route_returns_410_on_miss(client):
-    r = client.get("/go/nonexistent-token", follow_redirects=False)
+    r = client.get("/go/leipzig:nonexistent-token", follow_redirects=False)
     assert r.status_code == 410
 
-def test_go_link_from_email_resolves_for_datetime_token(client):
-    """End-to-end: the booking link the digest email contains must resolve via /go,
-    not 410. Smart-CJM slot tokens are URL-encoded datetimes (T%3a..%2b..); Flask
-    decodes the /go path param on click, so slots_cache must be keyed so the decoded
-    token matches what run_cycle stored."""
+def test_go_city_link_redirects_to_booking_start(client):
+    """The digest's one booking link, /go/<city>, resolves from the catalog at
+    click time — no cache row, never expires."""
+    r = client.get("/go/leipzig", follow_redirects=False)
+    assert r.status_code == 302
+    loc = r.headers["Location"]
+    assert loc.startswith("https://terminvereinbarung.leipzig.de/m/leipzig-ba/")
+    assert "uid=" in loc and "lang=de" in loc
+    assert "appointment_reserve" not in loc   # upstream ignores it; never emit it
+    r_en = client.get("/go/leipzig?lang=en", follow_redirects=False)
+    assert "lang=en" in r_en.headers["Location"]
+
+def test_go_city_link_unknown_city_410(client):
+    r = client.get("/go/atlantis", follow_redirects=False)
+    assert r.status_code == 410
+
+def test_run_cycle_writes_no_slot_cache_and_digest_links_city_page(client):
+    """Since per-slot deep links can't work upstream (session-bound booking),
+    run_cycle stages digests that link /go/<city> and leaves slots_cache empty."""
     from unittest.mock import patch, MagicMock
     from datetime import time
     from app.db import connect
@@ -70,18 +86,19 @@ def test_go_link_from_email_resolves_for_datetime_token(client):
     sid = insert_pending(conn, email="a@x.com", city="leipzig", language="de",
                          filter_=f, ttl_days=90)
     confirm(conn, sid)
-    # booking_token as it appears in the upstream button / email link: URL-encoded datetime
     booking_token = "2026-06-18T17%3a20%3a00%2b02%3a00"
     slot = Slot("2026-06-18", "17:20", "loc-1",
                 "29cd0a26-fe7a-4d65-88cd-1e05fd749c71", booking_token, "res-1")
-    with patch("app.cycle.get_scraper") as gs, patch("app.cycle.send_digest"):
+    with patch("app.cycle.get_scraper") as gs, \
+         patch("app.mail._call_mailjet_batch", return_value=True) as mb, \
+         patch("app.mail._call_resend_batch", return_value=True):
         sc = MagicMock(); sc.poll.return_value = [slot]; gs.return_value = sc
         run_cycle(conn, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
-    # The email link is /go/<city>:<booking_token> (tenant-prefixed so equal
-    # datetimes on different tenants cannot collide); Flask decodes the path.
-    r = client.get(f"/go/leipzig:{booking_token}", follow_redirects=False)
-    assert r.status_code == 302
-    assert "appointment_reserve" in r.headers["Location"]
+    cached = conn.execute("SELECT COUNT(*) AS n FROM slots_cache").fetchone()["n"]
+    assert cached == 0
+    body = mb.call_args_list[0].args[0][0].body
+    assert "https://x/go/leipzig" in body
+    assert booking_token not in body
 
 def test_admin_renders_new_metrics(client):
     r = client.get("/admin?token=admin-tok")
