@@ -491,7 +491,7 @@ def create_app() -> Flask:
         conn = connect(cfg.db_path)
         # Admin is an internal, English-only stats page — hide the (no-op)
         # DE/EN switcher that base.html otherwise renders.
-        return render_template("admin.html", stats=stats(conn),
+        return render_template("admin.html", stats=stats(conn, cfg),
                                show_lang_switcher=False)
 
     @app.route("/datenschutz")

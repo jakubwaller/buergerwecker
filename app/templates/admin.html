@@ -54,6 +54,7 @@
   .dot-bad { background: #dc2626; }
 
   time.ts.stale { color: #dc2626; font-weight: 600; }
+  .quota-hot { color: #dc2626; font-weight: 600; }
   .adm-muted { color: var(--text-muted); }
 </style>
 {% endblock %}
@@ -82,6 +83,24 @@
       <tr><td class="k">Awaiting first match</td><td class="v">{{ s.active_awaiting_first_match }} of {{ s.active_subscriptions }} active</td></tr>
       <tr><td class="k">Most recent</td><td class="v">{% if s.last_notification %}<time class="ts" data-ts="{{ s.last_notification.at }}">{{ s.last_notification.at }}</time> · sub #{{ s.last_notification.sub_id }}{% else %}<span class="adm-muted">none yet</span>{% endif %}</td></tr>
       <tr><td class="k">Delivery · 7d</td><td class="v">{% set prov = s.emails_by_provider_7d %}{% if prov %}{% for p, n in prov|dictsort %}{{ p }} {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}{% else %}<span class="adm-muted">none</span>{% endif %}</td></tr>
+    </table>
+  </section>
+
+  <section class="adm-section">
+    <h2>Email quota <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· sends counted here, UTC calendar · caps from config</span></h2>
+    <table class="adm-table">
+      {% for p, u in s.email_usage|dictsort %}
+        <tr>
+          <td class="k">{{ p }}</td>
+          <td class="v">
+            {% set mpct = (100 * u.month / u.month_quota)|round|int if u.month_quota else 0 %}
+            {% set dpct = (100 * u.today / u.day_quota)|round|int if u.day_quota else 0 %}
+            month <span{% if mpct >= 80 %} class="quota-hot"{% endif %}>{{ u.month }}{% if u.month_quota %} / {{ u.month_quota }} ({{ mpct }}%){% endif %}</span>
+            &nbsp;·&nbsp;
+            today <span{% if dpct >= 80 %} class="quota-hot"{% endif %}>{{ u.today }}{% if u.day_quota %} / {{ u.day_quota }}{% endif %}</span>
+          </td>
+        </tr>
+      {% endfor %}
     </table>
   </section>
 

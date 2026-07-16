@@ -160,3 +160,32 @@ def test_unsub_headers_only_with_real_url(monkeypatch, mailjet_env):
     with patch("app.mail.requests.post", side_effect=fake):
         _call_mailjet("a@x.com", "s", "b")   # no unsub semantics (e.g. confirmation)
     assert "Headers" not in seen["json"]["Messages"][0]
+
+# ---------- durable per-day send counters (admin quota view) ----------
+
+def _day_count(db, provider):
+    row = db.execute(
+        "SELECT n FROM email_send_counts WHERE provider=? AND day=date('now')",
+        (provider,)).fetchone()
+    return row["n"] if row else 0
+
+def test_send_bumps_daily_counter(db):
+    with patch("app.mail._call_mailjet", return_value=_ok()):
+        send(db, "a@x.com", "s", "b", idem_key="cnt1")
+        send(db, "a@x.com", "s", "b", idem_key="cnt2")
+        send(db, "a@x.com", "s", "b", idem_key="cnt2")  # idempotent repeat
+    assert _day_count(db, "mailjet") == 2
+
+def test_send_counter_follows_failover_provider(db, resend_configured):
+    with patch("app.mail._call_mailjet", return_value=_resp(503)), \
+         patch("app.mail._call_resend", return_value=_ok()):
+        send(db, "a@x.com", "s", "b", idem_key="cnt3")
+    assert _day_count(db, "resend") == 1
+    assert _day_count(db, "mailjet") == 0
+
+def test_failed_send_does_not_bump_counter(db, monkeypatch):
+    monkeypatch.delenv("RESEND_API_KEY", raising=False)
+    with patch("app.mail._call_mailjet", return_value=_resp(500)):
+        with pytest.raises(MailFailed):
+            send(db, "a@x.com", "s", "b", idem_key="cnt4")
+    assert _day_count(db, "mailjet") == 0

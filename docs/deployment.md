@@ -56,7 +56,13 @@ failing:
   the cue to ask Mailjet to raise the throttle, upgrade to a paid plan, and/or
   raise the quota vars above.
 
-Delivery mix over the last 7 days is visible on `/admin`.
+Delivery mix over the last 7 days is visible on `/admin`, along with an
+**Email quota** section showing month-to-date and today's sends per provider
+against `MAILJET_MONTHLY_QUOTA` / `RESEND_MONTHLY_QUOTA` (display-only caps,
+free tiers: 6000/mo and 3000/mo) — so you can watch quota burn without logging
+into the provider dashboards. Counts come from the app's own durable
+`email_send_counts` table (UTC days, an approximation of each provider's reset
+cycle) and only include mail this app sent.
 
 ## Polling cadence
 
