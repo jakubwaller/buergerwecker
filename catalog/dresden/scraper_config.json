@@ -1,0 +1,7 @@
+{
+  "vendor": "tevis",
+  "base_url": "https://termine-buergerbuero.dresden.de",
+  "md": 2,
+  "mdt": 14,
+  "poll_interval_seconds": 120
+}

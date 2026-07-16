@@ -1,0 +1,14 @@
+{
+  "label": {
+    "de": "Dresden: Bürgerbüros & Meldestellen",
+    "en": "Dresden: citizens' offices (Bürgerbüros)"
+  },
+  "heading": {
+    "de": "Nie wieder freie Termine im Dresdner Bürgerbüro verpassen",
+    "en": "Never miss a free appointment at Dresden's citizens' offices"
+  },
+  "note": {
+    "de": "Hinweis: Dieser Dienst meldet je Bürgerbüro den jeweils frühesten freien Termin (so zeigt es auch die Terminseite der Stadt an). Gebucht wird weiterhin selbst auf der offiziellen Terminseite der Landeshauptstadt Dresden.",
+    "en": "Note: this service reports the earliest free slot per office (matching what the city's appointment page shows). You still book yourself on the City of Dresden's official appointment page."
+  }
+}
