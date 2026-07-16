@@ -1,7 +1,11 @@
 {
+  "city_name": {
+    "de": "Leipzig",
+    "en": "Leipzig"
+  },
   "label": {
-    "de": "Bürgerbüro-Termine (Anmeldung, Ausweise u. a.)",
-    "en": "Citizen office appointments (registration, ID cards, …)"
+    "de": "Leipzig: Bürgerbüro-Termine (Anmeldung, Ausweise u. a.)",
+    "en": "Leipzig: citizen office appointments (registration, ID cards, …)"
   },
   "heading": {
     "de": "Nie wieder freie Bürgerbüro-Termine verpassen",

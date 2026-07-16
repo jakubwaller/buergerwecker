@@ -340,8 +340,8 @@ def test_admin_aggregates_upstream_load_per_host_and_labels_tenants(client):
     assert host["polls_today"] == 14
     assert host["tenants"] == ["leipzig", "leipzig-abh"]
     # Tenant labels come from display.json (admin is English-only).
-    assert "Ausländerbehörde" in s["city_labels"]["leipzig-abh"] or \
-           "Foreigners" in s["city_labels"]["leipzig-abh"]
+    assert "ausländerbehörde" in s["city_labels"]["leipzig-abh"].lower() or \
+           "foreigners" in s["city_labels"]["leipzig-abh"].lower()
     # Dashboard renders the labeled card + the host section.
     html = client.get("/admin?token=admin-tok").data.decode()
     assert "Upstream hosts" in html

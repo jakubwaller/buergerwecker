@@ -1,7 +1,11 @@
 {
+  "city_name": {
+    "de": "Leipzig",
+    "en": "Leipzig"
+  },
   "label": {
-    "de": "Ausländerbehörde: Abholung Aufenthaltsdokument",
-    "en": "Foreigners' office: residence document pickup"
+    "de": "Leipzig: Ausländerbehörde, Abholung Aufenthaltsdokument",
+    "en": "Leipzig: foreigners' office, residence document pickup"
   },
   "heading": {
     "de": "Nie wieder freie Abhol-Termine bei der Ausländerbehörde verpassen",

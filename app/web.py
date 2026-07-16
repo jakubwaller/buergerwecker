@@ -251,6 +251,7 @@ def create_app() -> Flask:
                                confirmed=confirmed,
                                error=error,
                                heading=catalog.display_text("heading", lang),
+                               city_name=catalog.display_text("city_name", lang),
                                note=catalog.display_text("note", lang),
                                other_cities=other_cities,
                                appointment_types=catalog.appointment_types_for(lang),

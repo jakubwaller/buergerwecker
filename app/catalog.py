@@ -44,8 +44,8 @@ class Catalog:
     appointment_types_en: dict[str, str] = field(default_factory=dict)
     locations_en: dict[str, str] = field(default_factory=dict)
     # Optional per-tenant UI copy from display.json: keys like "label",
-    # "heading", "note", each a {"de": …, "en": …} map. Missing file or keys →
-    # the templates fall back to their built-in default copy.
+    # "heading", "note", "city_name", each a {"de": …, "en": …} map. Missing
+    # file or keys → the templates fall back to their built-in default copy.
     display: dict = field(default_factory=dict)
 
     def display_text(self, key: str, lang: str) -> str | None:
