@@ -245,6 +245,9 @@ def create_app() -> Flask:
             label = ocat.display_text("label", lang) or other
             url = f"/?city={other}" + ("&lang=en" if lang == "en" else "")
             other_cities.append((label, url))
+        # Labels start with the city name, so a label sort orders the links
+        # by city, then service.
+        other_cities.sort(key=lambda pair: pair[0].casefold())
         return render_template("form.html",
                                lang=lang,
                                city=city,
