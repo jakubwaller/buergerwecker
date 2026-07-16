@@ -1,0 +1,1024 @@
+<!DOCTYPE html>
+<html lang="de" xmlns="http://www.w3.org/1999/xhtml">
+
+    <head>
+        <!--###NOINDEX###-->
+        <meta charset="UTF-8">
+        <title>Amt33</title>
+        <meta http-equiv="Content-type" content="text/html; charset=utf-8" />
+        <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link rel="stylesheet" href="styles/web/basis/css/bootstrap/css/bootstrap.min.css">
+        <link rel="stylesheet" href="styles/web/basis/css/fontawesome/css/font-awesome.min.css">
+
+        <link rel="stylesheet" href="styles/web/basis/css/leaflet.css"/>
+        <script src="app/js/leaflet.js"></script>
+        <script src="app/js/osm2geojson-lite.js"></script>
+        <script src="app/js/svg-icon.js"></script>
+        
+        <script type="text/javascript" src="app/js/jquery-3.7.1.min.js"></script>
+        
+        <link rel="stylesheet" href="styles/web/basis/css/jquery-ui_1.14.1.css">
+        <script src="app/js/jquery-ui_1.14.1.min.js"></script>
+
+        <link rel="stylesheet" href="styles/web/basis/css/combobox.css"/>
+        <script src="app/js/combobox.js"></script>
+
+        <link rel="stylesheet" href="styles/web/basis/css/Font.css">
+        <link rel="stylesheet" href="styles/web/basis/css/tvo.css?cache_buster=1762954400" type="text/css" />
+        <link rel="stylesheet" href="styles/web/basis_DD/css/custom.css?cache_buster=1773493258" type="text/css" />
+        <!--###KONTRASTSTYLE###-->
+
+        <script type="text/javascript" src="styles/web/basis/css/bootstrap/js/bootstrap.min.js"></script>
+        <script type="text/javascript" src="app/js/tvweb.js?cache_buster=1762954400"></script>
+        <script type="text/javascript" src="scripts/web/basis/javascript/basis.js"></script>
+        <script type="text/javascript" src="scripts/web/basis/javascript/calendar.js"></script>
+        <script type="text/javascript" src="app/js/js.cookie.min.js"></script>
+
+        <link rel="icon" href="data:,">
+
+        <script src="app/js/customA11ySelect.js"></script>
+
+	<script type="text/javascript" src="styles/web/basis_DD/javascript/custom.js"></script>
+
+        <!--##CONWORD_ONLOAD##-->
+    </head>
+
+    <body class="TEVISWEB">
+            <header class="page_header">
+                <div class="wrapper_nav" style="
+			height: 30px;
+			">
+                    <div class="page oversize">
+                        <div class="logo_container">
+                            <a class="logo_link" href="">
+                                <img alt="Logo: Dresden" src="styles/web/basis_DD/images/logo_header_wo_bg_min.svg" style="
+				padding-top: 20px;
+				"/>
+                            </a>
+                        </div>
+                
+                        <div class="mixed_content_container">
+                            
+                        </div>
+                    </div>
+                </div>
+                <div class="wrapper_breadcrumb">
+                    <div class="page"></div>
+                </div>
+            </header>
+        <div id="cookie_msg">
+            <span tabindex="1" style="">Diese Website verwendet Cookies - nähere Informationen dazu und zu Ihren Rechten als Benutzer finden Sie in unserer Datenschutzerklärung.</span>
+            <input type="button" id="cookie_msg_btn_yes" class="btn" value="Akzeptieren"/>
+            <input type="button" id="cookie_msg_btn_no" class="btn" value="Ablehnen"/>
+        </div>
+        
+         <nav id="einstellungen-nav" class="mainheader" aria-labelledby="Einstellungen-Label">
+                <div style="margin-top:-17px;">
+                    <a class="unsichtbar" href="#inhalt" style="margin-top:-10px;">Hauptregion der Seite anspringen</a><p id="Einstellungen-Label" class="menuEinstellung" >Einstellungen</p><ul id="exTest" role="menu" class="disclosure-nav"><li><button class="NavigationButton nomenu set_contrast_btn" title="Kontrast an" data-languageAN="Kontrast an" data-languageAUS="Kontrast aus" style="height: 100% !important;"><img  alt="Icon Kontrast" aria-hidden="true" src="styles/web/basis/images/contrast_low_black.svg" width="32"><img  alt="Icon Kontrast" aria-hidden="true" src="styles/web/basis/images/contrast_low_white.svg" width="32"></button > </li > <li><button id="easyLanguage" class="NavigationButton nomenu"  aria-label="Einfache Sprache umschalten" title="Einfache Sprache an" data-easyLanguageON="Einfache Sprache an" data-easyLanguageOFF="Einfache Sprache aus"><img alt="Icon einfache Sprache" aria-hidden="true" focusable="false" src="styles/web/basis/images/leichte_Sprache_aktiv_252525.svg" width="32px"><img alt="Icon einfache Sprache" aria-hidden="true" focusable="false" src="styles/web/basis/images/leichte_Sprache_aktiv_FFFFFF.svg" width="32px"></button></li></ul>
+                </div>
+                </nav>
+            <!--##LANGUAGE_MENU##-->
+        <!--##CORONA_LOGOUT##-->
+
+        <main class="container wrapper">
+
+            <div class="content content--location" id="inhalt">
+            <div role="banner" class="wizard">
+                <div class="wizard-inner">
+                
+                    <ul class="nav nav-tabs" role="presentation" aria-hidden="true">
+                        <li role="presentation" class="done">
+                            <span class="round-tab" aria-hidden="true" data-container="body" data-toggle="popover" data-placement="bottom" data-content="" data-trigger="hover">1</span>
+                        </li>
+                        <li role="presentation" class="done">
+                            <span class="round-tab" aria-hidden="true" data-container="body" data-toggle="popover" data-placement="bottom" data-content="" data-trigger="hover">2</span>
+                        </li>
+                        <li role="presentation" class="active">
+                            <span class="round-tab" aria-hidden="true" data-container="body" data-toggle="popover" data-placement="bottom" data-content="Terminvorschläge - Standortauswahl" data-trigger="hover">3</span>
+                        </li>
+                        <li role="presentation" class="disabled">
+                            <span class="round-tab" aria-hidden="true" data-container="body" data-toggle="popover" data-placement="bottom" data-content="" data-trigger="hover">4</span>
+                        </li>
+                        <li role="presentation" class="disabled">
+                            <span class="round-tab" aria-hidden="true" data-container="body" data-toggle="popover" data-placement="bottom" data-content="" data-trigger="hover">5</span>
+                        </li>
+                        <li role="presentation" class="disabled">
+                            <span class="round-tab" aria-hidden="true" data-container="body" data-toggle="popover" data-placement="bottom" data-content="" data-trigger="hover">6</span>
+                        </li>
+                    </ul>
+                
+                    <div>
+                        <h1> Schritt 3<span class='visuallyhidden'> von 6</span>: Terminvorschläge - Standortauswahl </h1>
+                    </div><!--ende div inhalt-->
+                </div><!-- ende div wizard-inner-->
+            </div><!--ende div wizard-->
+            <details id="details_infobox" class="ui-accordion ui-widget ui-helper-reset" isOpen>
+                            <summary id="infobox_summary" class="ui-accordion-header ui-corner-top ui-state-default ui-accordion-header-active ui-state-active ui-accordion-icons">
+                                <span class="ui-accordion-header-icon ui-icon ui-icon-triangle-1-s"></span>Übersicht zu Ihrem Termin</summary>
+                            <div id="infobox_content" class="ui-accordion-content ui-corner-bottom ui-helper-reset ui-widget-content">
+                                <dl class="grid" style="margin-bottom: 0px;"><dt><span class='infobox_text'>Funktionseinheit</span></dt><dd class=''>Bürgerbüros</dd><dt><span class='infobox_text'>Anliegen</span></dt><dd class=''><ul id="info_box_cnc_list"><li>1 <span class="visuallyhidden">Mal</span><span aria-hidden="true">x</span> Abholung Personaldokument</li></ul></dd><dt><span class='infobox_text'>Standort</span></dt><dd><span class='visuallyhidden '>noch nicht gesetzt</span></dd><dt><span class='infobox_text'>Termin</span></dt><dd><span class='visuallyhidden '>noch nicht gesetzt</span></dd><dt><span class='infobox_text'>Persönliche Daten</span></dt><dd><span class='visuallyhidden cnw_skip_translation'>noch nicht gesetzt</span></dd></dl>
+                            </div>
+                        </details>
+            <script>
+                $(document).ready(function(){
+                    var title = document.title.split("Schritt");
+                    var titleNeu = title[0] + " - " + $("h1:not(#Einstellungen-Label)").html();
+                    titleNeu = titleNeu.replace('<span class="visuallyhidden">', '');
+                    titleNeu = titleNeu.replace('</span>', '').trim();
+                    document.title= titleNeu;
+                    var lang = "de_DE"
+                    lang = lang.split('_')[0];
+                    if( lang != "vs" ){ //nicht vereinfachte Sprache -> lang-Attribut setzen
+                        $('html').attr('lang', lang);
+                    } else { //vereinfachte Sprache -> de nehmen
+                        $('html').attr('lang', 'de');
+                    }
+                });
+            </script>
+
+<div class="header"><h2 class="h1like" style="display: inline-block;">Bitte wählen Sie den gewünschten Standort für Ihren Termin aus:</h2></div>
+<div>
+    <div id="map_agreement"><p id="info_activate_map">Das Anzeigen der Karte erfordert das Laden externer Daten von Drittanbietern (OpenStreetMap, Nominatim, Overpass).</p><img src="https://termine-buergerbuero.dresden.de/styles/web/basis/images/loader.gif" id="map_agreement_loading" alt="loading-icon"><button class="btn" id="map_agreement_accept" onclick="map_agreement()" aria-describedby="info_activate_map">Karte anzeigen</button><script>function map_agreement(){$("#map_agreement_accept").hide();$("#map_agreement_loading").show();if( Cookies.get("tvo_map_agreement") == 1 ){showMap({'0':{'0':'Naumannstra\u00dfe 5','1':'01309','2':'Dresden','3':'B\u00fcrgerb\u00fcro Blasewitz (Teilweise barrierefrei)','4':'61','5':'51.05268','6':'13.806035','7':0},'1':{'0':'Kieler Stra\u00dfe 52','1':'01109','2':'Dresden','3':'B\u00fcrgerb\u00fcro Klotzsche (Teilweise barrierefrei)','4':'63','5':'51.11187','6':'13.774455','7':1},'2':{'0':'Wei\u00dfiger Stra\u00dfe 5','1':'01465','2':'Dresden','3':'Meldestelle Langebr\u00fcck (barrierefrei)','4':'71','5':'51.126904','6':'13.84672','7':2},'3':{'0':'Prohliser Allee 10','1':'01239','2':'Dresden','3':'B\u00fcrgerb\u00fcro Prohlis (barrierefrei)','4':'68','5':'51.0056','6':'13.798322','7':3},'4':{'0':'Weixdorfer Rathausplatz 2','1':'01108','2':'Dresden','3':'Meldestelle Weixdorf','4':'73','5':'51.14529','6':'13.800797','7':4},'5':{'0':'B\u00fcrgerstra\u00dfe 63','1':'01127','2':'Dresden','3':'B\u00fcrgerb\u00fcro Pieschen','4':'66','5':'51.077465','6':'13.722372','7':5},'6':{'0':'Amalie-Dietrich-Platz 3','1':'01169','2':'Dresden','3':'B\u00fcrgerb\u00fcro Cotta (Teilweise barrierefrei)','4':'62','5':'51.04467','6':'13.679253','7':6},'7':{'0':'Hoyerswerdaer Stra\u00dfe 3','1':'01099','2':'Dresden','3':'B\u00fcrgerb\u00fcro Neustadt (barrierefrei)','4':'65','5':'51.060177','6':'13.752543','7':7},'8':{'0':'Schweriner Stra\u00dfe 1','1':'01067','2':'Dresden','3':'Junioramt','4':'69','5':'999','6':'999','7':8},'9':{'0':'Prager Str. 12','1':'01069','2':'Dresden','3':'B\u00fcrgerb\u00fcro Altstadt (barrierefrei)','4':'60','5':'999','6':'999','7':9},'10':{'0':'Hertzstra\u00dfe 23','1':'01257','2':'Dresden','3':'B\u00fcrgerb\u00fcro Leuben','4':'64','5':'51.01042','6':'13.825651','7':10},'11':{'0':'Dresdner Strasse 3','1':'01156','2':'Dresden','3':'Meldestelle Cossebaude (barrierefrei)','4':'70','5':'51.088406','6':'13.630148','7':11},'12':{'0':'Bautzner Landstra\u00dfe 291','1':'01328','2':'Dresden','3':'Meldestelle Sch\u00f6nfeld-Wei\u00dfig (barrierefrei)','4':'72','5':'51.061775','6':'13.885397','7':12},'13':{'0':'N\u00f6thnitzer Stra\u00dfe 2','1':'01187','2':'Dresden','3':'B\u00fcrgerb\u00fcro Plauen (Teilweise barrierefrei)','4':'67','5':'51.029156','6':'13.707531','7':13}}, 'suggest', []);}else{Cookies.set("tvo_map_agreement", 1, { secure: true, samesite: "None" } );window.location.reload();}}</script></div><div id="loc_map"><input type="hidden" id="local_popup_text" value="Aktueller Standort"<img src="https://termine-buergerbuero.dresden.de/styles/web/basis/images/loader.gif" id="map_loading" alt="loading-icon"></div><div id="map_legend"><div class="map_legend_entry"><div class="marker_local"></div><p aria-hidden="true" class="map_legend_text_2_lines">Ihr aktueller Standort<br>(kann ggf. abweichen)</p></div><div class="map_legend_entry"><div class="marker_possible"></div><p aria-hidden="true" class="map_legend_text">Mögliche Standorte</p></div></div><div style="display: none;" id="map_marker_content-61">
+    <div class="cnw_skip_translation">
+        <b>Bürgerbüro Blasewitz (Teilweise barrierefrei)</b><br/>
+        Naumannstraße 5<br/>
+        01309 Dresden<br/>
+    </div>
+    <form method="post">
+        <input type="hidden" name="loc" value="61" />
+        <input type="hidden" name="gps_lat" value="51.05268" />
+        <input type="hidden" name="gps_long" value="13.806035" />
+        <input type="submit" name="select_location" class="btn btn-primary map_loc_btn" style="border: none!important" value="Standort auswählen"/>
+    </form>
+    <a href="https://www.google.de/maps/place/Naumannstraße 5 01309 Dresden" target="_blank" class="btn btn-primary map_loc_btn" role="button">Hierhin navigieren</a>
+</div>
+<div style="display: none;" id="map_marker_content-63">
+    <div class="cnw_skip_translation">
+        <b>Bürgerbüro Klotzsche (Teilweise barrierefrei)</b><br/>
+        Kieler Straße 52<br/>
+        01109 Dresden<br/>
+    </div>
+    <form method="post">
+        <input type="hidden" name="loc" value="63" />
+        <input type="hidden" name="gps_lat" value="51.11187" />
+        <input type="hidden" name="gps_long" value="13.774455" />
+        <input type="submit" name="select_location" class="btn btn-primary map_loc_btn" style="border: none!important" value="Standort auswählen"/>
+    </form>
+    <a href="https://www.google.de/maps/place/Kieler Straße 52 01109 Dresden" target="_blank" class="btn btn-primary map_loc_btn" role="button">Hierhin navigieren</a>
+</div>
+<div style="display: none;" id="map_marker_content-71">
+    <div class="cnw_skip_translation">
+        <b>Meldestelle Langebrück (barrierefrei)</b><br/>
+        Weißiger Straße 5<br/>
+        01465 Dresden<br/>
+    </div>
+    <form method="post">
+        <input type="hidden" name="loc" value="71" />
+        <input type="hidden" name="gps_lat" value="51.126904" />
+        <input type="hidden" name="gps_long" value="13.84672" />
+        <input type="submit" name="select_location" class="btn btn-primary map_loc_btn" style="border: none!important" value="Standort auswählen"/>
+    </form>
+    <a href="https://www.google.de/maps/place/Weißiger Straße 5 01465 Dresden" target="_blank" class="btn btn-primary map_loc_btn" role="button">Hierhin navigieren</a>
+</div>
+<div style="display: none;" id="map_marker_content-68">
+    <div class="cnw_skip_translation">
+        <b>Bürgerbüro Prohlis (barrierefrei)</b><br/>
+        Prohliser Allee 10<br/>
+        01239 Dresden<br/>
+    </div>
+    <form method="post">
+        <input type="hidden" name="loc" value="68" />
+        <input type="hidden" name="gps_lat" value="51.0056" />
+        <input type="hidden" name="gps_long" value="13.798322" />
+        <input type="submit" name="select_location" class="btn btn-primary map_loc_btn" style="border: none!important" value="Standort auswählen"/>
+    </form>
+    <a href="https://www.google.de/maps/place/Prohliser Allee 10 01239 Dresden" target="_blank" class="btn btn-primary map_loc_btn" role="button">Hierhin navigieren</a>
+</div>
+<div style="display: none;" id="map_marker_content-73">
+    <div class="cnw_skip_translation">
+        <b>Meldestelle Weixdorf</b><br/>
+        Weixdorfer Rathausplatz 2<br/>
+        01108 Dresden<br/>
+    </div>
+    <form method="post">
+        <input type="hidden" name="loc" value="73" />
+        <input type="hidden" name="gps_lat" value="51.14529" />
+        <input type="hidden" name="gps_long" value="13.800797" />
+        <input type="submit" name="select_location" class="btn btn-primary map_loc_btn" style="border: none!important" value="Standort auswählen"/>
+    </form>
+    <a href="https://www.google.de/maps/place/Weixdorfer Rathausplatz 2 01108 Dresden" target="_blank" class="btn btn-primary map_loc_btn" role="button">Hierhin navigieren</a>
+</div>
+<div style="display: none;" id="map_marker_content-66">
+    <div class="cnw_skip_translation">
+        <b>Bürgerbüro Pieschen</b><br/>
+        Bürgerstraße 63<br/>
+        01127 Dresden<br/>
+    </div>
+    <form method="post">
+        <input type="hidden" name="loc" value="66" />
+        <input type="hidden" name="gps_lat" value="51.077465" />
+        <input type="hidden" name="gps_long" value="13.722372" />
+        <input type="submit" name="select_location" class="btn btn-primary map_loc_btn" style="border: none!important" value="Standort auswählen"/>
+    </form>
+    <a href="https://www.google.de/maps/place/Bürgerstraße 63 01127 Dresden" target="_blank" class="btn btn-primary map_loc_btn" role="button">Hierhin navigieren</a>
+</div>
+<div style="display: none;" id="map_marker_content-62">
+    <div class="cnw_skip_translation">
+        <b>Bürgerbüro Cotta (Teilweise barrierefrei)</b><br/>
+        Amalie-Dietrich-Platz 3<br/>
+        01169 Dresden<br/>
+    </div>
+    <form method="post">
+        <input type="hidden" name="loc" value="62" />
+        <input type="hidden" name="gps_lat" value="51.04467" />
+        <input type="hidden" name="gps_long" value="13.679253" />
+        <input type="submit" name="select_location" class="btn btn-primary map_loc_btn" style="border: none!important" value="Standort auswählen"/>
+    </form>
+    <a href="https://www.google.de/maps/place/Amalie-Dietrich-Platz 3 01169 Dresden" target="_blank" class="btn btn-primary map_loc_btn" role="button">Hierhin navigieren</a>
+</div>
+<div style="display: none;" id="map_marker_content-65">
+    <div class="cnw_skip_translation">
+        <b>Bürgerbüro Neustadt (barrierefrei)</b><br/>
+        Hoyerswerdaer Straße 3<br/>
+        01099 Dresden<br/>
+    </div>
+    <form method="post">
+        <input type="hidden" name="loc" value="65" />
+        <input type="hidden" name="gps_lat" value="51.060177" />
+        <input type="hidden" name="gps_long" value="13.752543" />
+        <input type="submit" name="select_location" class="btn btn-primary map_loc_btn" style="border: none!important" value="Standort auswählen"/>
+    </form>
+    <a href="https://www.google.de/maps/place/Hoyerswerdaer Straße 3 01099 Dresden" target="_blank" class="btn btn-primary map_loc_btn" role="button">Hierhin navigieren</a>
+</div>
+<div style="display: none;" id="map_marker_content-69">
+    <div class="cnw_skip_translation">
+        <b>Junioramt</b><br/>
+        Schweriner Straße 1<br/>
+        01067 Dresden<br/>
+    </div>
+    <form method="post">
+        <input type="hidden" name="loc" value="69" />
+        <input type="hidden" name="gps_lat" value="999" />
+        <input type="hidden" name="gps_long" value="999" />
+        <input type="submit" name="select_location" class="btn btn-primary map_loc_btn" style="border: none!important" value="Standort auswählen"/>
+    </form>
+    <a href="https://www.google.de/maps/place/Schweriner Straße 1 01067 Dresden" target="_blank" class="btn btn-primary map_loc_btn" role="button">Hierhin navigieren</a>
+</div>
+<div style="display: none;" id="map_marker_content-60">
+    <div class="cnw_skip_translation">
+        <b>Bürgerbüro Altstadt (barrierefrei)</b><br/>
+        Prager Str. 12<br/>
+        01069 Dresden<br/>
+    </div>
+    <form method="post">
+        <input type="hidden" name="loc" value="60" />
+        <input type="hidden" name="gps_lat" value="999" />
+        <input type="hidden" name="gps_long" value="999" />
+        <input type="submit" name="select_location" class="btn btn-primary map_loc_btn" style="border: none!important" value="Standort auswählen"/>
+    </form>
+    <a href="https://www.google.de/maps/place/Prager Str. 12 01069 Dresden" target="_blank" class="btn btn-primary map_loc_btn" role="button">Hierhin navigieren</a>
+</div>
+<div style="display: none;" id="map_marker_content-64">
+    <div class="cnw_skip_translation">
+        <b>Bürgerbüro Leuben</b><br/>
+        Hertzstraße 23<br/>
+        01257 Dresden<br/>
+    </div>
+    <form method="post">
+        <input type="hidden" name="loc" value="64" />
+        <input type="hidden" name="gps_lat" value="51.01042" />
+        <input type="hidden" name="gps_long" value="13.825651" />
+        <input type="submit" name="select_location" class="btn btn-primary map_loc_btn" style="border: none!important" value="Standort auswählen"/>
+    </form>
+    <a href="https://www.google.de/maps/place/Hertzstraße 23 01257 Dresden" target="_blank" class="btn btn-primary map_loc_btn" role="button">Hierhin navigieren</a>
+</div>
+<div style="display: none;" id="map_marker_content-70">
+    <div class="cnw_skip_translation">
+        <b>Meldestelle Cossebaude (barrierefrei)</b><br/>
+        Dresdner Strasse 3<br/>
+        01156 Dresden<br/>
+    </div>
+    <form method="post">
+        <input type="hidden" name="loc" value="70" />
+        <input type="hidden" name="gps_lat" value="51.088406" />
+        <input type="hidden" name="gps_long" value="13.630148" />
+        <input type="submit" name="select_location" class="btn btn-primary map_loc_btn" style="border: none!important" value="Standort auswählen"/>
+    </form>
+    <a href="https://www.google.de/maps/place/Dresdner Strasse 3 01156 Dresden" target="_blank" class="btn btn-primary map_loc_btn" role="button">Hierhin navigieren</a>
+</div>
+<div style="display: none;" id="map_marker_content-72">
+    <div class="cnw_skip_translation">
+        <b>Meldestelle Schönfeld-Weißig (barrierefrei)</b><br/>
+        Bautzner Landstraße 291<br/>
+        01328 Dresden<br/>
+    </div>
+    <form method="post">
+        <input type="hidden" name="loc" value="72" />
+        <input type="hidden" name="gps_lat" value="51.061775" />
+        <input type="hidden" name="gps_long" value="13.885397" />
+        <input type="submit" name="select_location" class="btn btn-primary map_loc_btn" style="border: none!important" value="Standort auswählen"/>
+    </form>
+    <a href="https://www.google.de/maps/place/Bautzner Landstraße 291 01328 Dresden" target="_blank" class="btn btn-primary map_loc_btn" role="button">Hierhin navigieren</a>
+</div>
+<div style="display: none;" id="map_marker_content-67">
+    <div class="cnw_skip_translation">
+        <b>Bürgerbüro Plauen (Teilweise barrierefrei)</b><br/>
+        Nöthnitzer Straße 2<br/>
+        01187 Dresden<br/>
+    </div>
+    <form method="post">
+        <input type="hidden" name="loc" value="67" />
+        <input type="hidden" name="gps_lat" value="51.029156" />
+        <input type="hidden" name="gps_long" value="13.707531" />
+        <input type="submit" name="select_location" class="btn btn-primary map_loc_btn" style="border: none!important" value="Standort auswählen"/>
+    </form>
+    <a href="https://www.google.de/maps/place/Nöthnitzer Straße 2 01187 Dresden" target="_blank" class="btn btn-primary map_loc_btn" role="button">Hierhin navigieren</a>
+</div>
+
+</div>
+
+<script>
+    function getLocation() {
+        if ( navigator.geolocation )
+            navigator.geolocation.getCurrentPosition( calculateDistances );
+    }
+    $( document ).ready(function(){
+        getLocation();
+    });
+</script>
+<div id="suggest_location_accordion" data-active="0">
+<h3 title="Bürgerbüro Blasewitz (Teilweise barrierefrei), Termine ab 14.07.2026, 08:15 Uhr"><b>1: </b><span class="cnw_skip_translation">Bürgerbüro Blasewitz (Teilweise barrierefrei)</span>, Termine ab 14.07.2026, 08:15 Uhr</h3>
+<div class="suggest_location_panel">
+<form method="post">
+<input type="hidden" name="loc" value="61" />
+<input type="hidden" name="gps_lat" value="51.05268" />
+<input type="hidden" name="gps_long" value="13.806035" />
+<dl class="grid suggest_location_tbl">
+<dt>Name</dt><dd class="cnw_skip_translation">Bürgerbüro Blasewitz (Teilweise barrierefrei)</dd>
+<dt>Anschrift</dt><dd class="cnw_skip_translation">Naumannstraße 5, 01309 Dresden</dd>
+<dt>Entfernung</dt><dd class="sugg_loc_distance"></dd>
+<dt>Nächster Termin</dt><dd>ab 14.07.2026, 08:15 Uhr</dd>
+<dt>Information</dt><dd><p>
+	Teilweise barrierefreie Einrichtung</p></dd>
+</dl>
+<input type="submit" name="select_location" value="Weiter mit 1" class="btn btn-primary onehundred pull-right" />
+</form>
+</div>
+<h3 title="Bürgerbüro Klotzsche (Teilweise barrierefrei), Termine ab 14.07.2026, 08:45 Uhr"><b>2: </b><span class="cnw_skip_translation">Bürgerbüro Klotzsche (Teilweise barrierefrei)</span>, Termine ab 14.07.2026, 08:45 Uhr</h3>
+<div class="suggest_location_panel">
+<form method="post">
+<input type="hidden" name="loc" value="63" />
+<input type="hidden" name="gps_lat" value="51.11187" />
+<input type="hidden" name="gps_long" value="13.774455" />
+<dl class="grid suggest_location_tbl">
+<dt>Name</dt><dd class="cnw_skip_translation">Bürgerbüro Klotzsche (Teilweise barrierefrei)</dd>
+<dt>Anschrift</dt><dd class="cnw_skip_translation">Kieler Straße 52, 01109 Dresden</dd>
+<dt>Entfernung</dt><dd class="sugg_loc_distance"></dd>
+<dt>Nächster Termin</dt><dd>ab 14.07.2026, 08:45 Uhr</dd>
+<dt>Information</dt><dd><p>
+	Teilweise barrierefreie Einrichtung</p></dd>
+</dl>
+<input type="submit" name="select_location" value="Weiter mit 2" class="btn btn-primary onehundred pull-right" />
+</form>
+</div>
+<h3 title="Meldestelle Langebrück (barrierefrei), Termine ab 14.07.2026, 09:30 Uhr"><b>3: </b><span class="cnw_skip_translation">Meldestelle Langebrück (barrierefrei)</span>, Termine ab 14.07.2026, 09:30 Uhr</h3>
+<div class="suggest_location_panel">
+<form method="post">
+<input type="hidden" name="loc" value="71" />
+<input type="hidden" name="gps_lat" value="51.126904" />
+<input type="hidden" name="gps_long" value="13.84672" />
+<dl class="grid suggest_location_tbl">
+<dt>Name</dt><dd class="cnw_skip_translation">Meldestelle Langebrück (barrierefrei)</dd>
+<dt>Anschrift</dt><dd class="cnw_skip_translation">Weißiger Straße 5, 01465 Dresden</dd>
+<dt>Entfernung</dt><dd class="sugg_loc_distance"></dd>
+<dt>Nächster Termin</dt><dd>ab 14.07.2026, 09:30 Uhr</dd>
+<dt>Information</dt><dd><p>
+	Vollst&auml;ndig barrierefreie Einrichtung</p></dd>
+</dl>
+<input type="submit" name="select_location" value="Weiter mit 3" class="btn btn-primary onehundred pull-right" />
+</form>
+</div>
+<h3 title="Bürgerbüro Prohlis (barrierefrei), Termine ab 14.07.2026, 09:45 Uhr"><b>4: </b><span class="cnw_skip_translation">Bürgerbüro Prohlis (barrierefrei)</span>, Termine ab 14.07.2026, 09:45 Uhr</h3>
+<div class="suggest_location_panel">
+<form method="post">
+<input type="hidden" name="loc" value="68" />
+<input type="hidden" name="gps_lat" value="51.0056" />
+<input type="hidden" name="gps_long" value="13.798322" />
+<dl class="grid suggest_location_tbl">
+<dt>Name</dt><dd class="cnw_skip_translation">Bürgerbüro Prohlis (barrierefrei)</dd>
+<dt>Anschrift</dt><dd class="cnw_skip_translation">Prohliser Allee 10, 01239 Dresden</dd>
+<dt>Entfernung</dt><dd class="sugg_loc_distance"></dd>
+<dt>Nächster Termin</dt><dd>ab 14.07.2026, 09:45 Uhr</dd>
+<dt>Information</dt><dd><p>
+	Vollst&auml;ndig barrierefreie Einrichtung</p></dd>
+</dl>
+<input type="submit" name="select_location" value="Weiter mit 4" class="btn btn-primary onehundred pull-right" />
+</form>
+</div>
+<h3 title="Meldestelle Weixdorf, Termine ab 14.07.2026, 10:00 Uhr"><b>5: </b><span class="cnw_skip_translation">Meldestelle Weixdorf</span>, Termine ab 14.07.2026, 10:00 Uhr</h3>
+<div class="suggest_location_panel">
+<form method="post">
+<input type="hidden" name="loc" value="73" />
+<input type="hidden" name="gps_lat" value="51.14529" />
+<input type="hidden" name="gps_long" value="13.800797" />
+<dl class="grid suggest_location_tbl">
+<dt>Name</dt><dd class="cnw_skip_translation">Meldestelle Weixdorf</dd>
+<dt>Anschrift</dt><dd class="cnw_skip_translation">Weixdorfer Rathausplatz 2, 01108 Dresden</dd>
+<dt>Entfernung</dt><dd class="sugg_loc_distance"></dd>
+<dt>Nächster Termin</dt><dd>ab 14.07.2026, 10:00 Uhr</dd>
+<dt>Information</dt><dd><p>
+	Einrichtung ist f&uuml;r Menschen im Rollstuhl nicht oder nur mit gr&ouml;&szlig;eren Erschwernissen zug&auml;nglich</p></dd>
+</dl>
+<input type="submit" name="select_location" value="Weiter mit 5" class="btn btn-primary onehundred pull-right" />
+</form>
+</div>
+<h3 title="Bürgerbüro Pieschen, Termine ab 14.07.2026, 10:00 Uhr"><b>6: </b><span class="cnw_skip_translation">Bürgerbüro Pieschen</span>, Termine ab 14.07.2026, 10:00 Uhr</h3>
+<div class="suggest_location_panel">
+<form method="post">
+<input type="hidden" name="loc" value="66" />
+<input type="hidden" name="gps_lat" value="51.077465" />
+<input type="hidden" name="gps_long" value="13.722372" />
+<dl class="grid suggest_location_tbl">
+<dt>Name</dt><dd class="cnw_skip_translation">Bürgerbüro Pieschen</dd>
+<dt>Anschrift</dt><dd class="cnw_skip_translation">Bürgerstraße 63, 01127 Dresden</dd>
+<dt>Entfernung</dt><dd class="sugg_loc_distance"></dd>
+<dt>Nächster Termin</dt><dd>ab 14.07.2026, 10:00 Uhr</dd>
+<dt>Information</dt><dd><p>
+	Einrichtung ist f&uuml;r Menschen im Rollstuhl nicht oder nur mit gr&ouml;&szlig;eren Erschwernissen zug&auml;nglich</p></dd>
+</dl>
+<input type="submit" name="select_location" value="Weiter mit 6" class="btn btn-primary onehundred pull-right" />
+</form>
+</div>
+<h3 title="Bürgerbüro Cotta (Teilweise barrierefrei), Termine ab 14.07.2026, 10:15 Uhr"><b>7: </b><span class="cnw_skip_translation">Bürgerbüro Cotta (Teilweise barrierefrei)</span>, Termine ab 14.07.2026, 10:15 Uhr</h3>
+<div class="suggest_location_panel">
+<form method="post">
+<input type="hidden" name="loc" value="62" />
+<input type="hidden" name="gps_lat" value="51.04467" />
+<input type="hidden" name="gps_long" value="13.679253" />
+<dl class="grid suggest_location_tbl">
+<dt>Name</dt><dd class="cnw_skip_translation">Bürgerbüro Cotta (Teilweise barrierefrei)</dd>
+<dt>Anschrift</dt><dd class="cnw_skip_translation">Amalie-Dietrich-Platz 3, 01169 Dresden</dd>
+<dt>Entfernung</dt><dd class="sugg_loc_distance"></dd>
+<dt>Nächster Termin</dt><dd>ab 14.07.2026, 10:15 Uhr</dd>
+<dt>Information</dt><dd><p>
+	Teilweise barrierefreie Einrichtung</p></dd>
+</dl>
+<input type="submit" name="select_location" value="Weiter mit 7" class="btn btn-primary onehundred pull-right" />
+</form>
+</div>
+<h3 title="Bürgerbüro Neustadt (barrierefrei), Termine ab 14.07.2026, 10:45 Uhr"><b>8: </b><span class="cnw_skip_translation">Bürgerbüro Neustadt (barrierefrei)</span>, Termine ab 14.07.2026, 10:45 Uhr</h3>
+<div class="suggest_location_panel">
+<form method="post">
+<input type="hidden" name="loc" value="65" />
+<input type="hidden" name="gps_lat" value="51.060177" />
+<input type="hidden" name="gps_long" value="13.752543" />
+<dl class="grid suggest_location_tbl">
+<dt>Name</dt><dd class="cnw_skip_translation">Bürgerbüro Neustadt (barrierefrei)</dd>
+<dt>Anschrift</dt><dd class="cnw_skip_translation">Hoyerswerdaer Straße 3, 01099 Dresden</dd>
+<dt>Entfernung</dt><dd class="sugg_loc_distance"></dd>
+<dt>Nächster Termin</dt><dd>ab 14.07.2026, 10:45 Uhr</dd>
+<dt>Information</dt><dd><p>
+	(vollst&auml;ndig barrierefreie Einrichtung)</p></dd>
+</dl>
+<input type="submit" name="select_location" value="Weiter mit 8" class="btn btn-primary onehundred pull-right" />
+</form>
+</div>
+<h3 title="Junioramt, Termine ab 14.07.2026, 10:45 Uhr"><b>9: </b><span class="cnw_skip_translation">Junioramt</span>, Termine ab 14.07.2026, 10:45 Uhr</h3>
+<div class="suggest_location_panel">
+<form method="post">
+<input type="hidden" name="loc" value="69" />
+<input type="hidden" name="gps_lat" value="999" />
+<input type="hidden" name="gps_long" value="999" />
+<dl class="grid suggest_location_tbl">
+<dt>Name</dt><dd class="cnw_skip_translation">Junioramt</dd>
+<dt>Anschrift</dt><dd class="cnw_skip_translation">Schweriner Straße 1, 01067 Dresden</dd>
+<dt>Entfernung</dt><dd class="sugg_loc_distance"></dd>
+<dt>Nächster Termin</dt><dd>ab 14.07.2026, 10:45 Uhr</dd>
+<dt>Information</dt><dd><p>
+	Vollst&auml;ndig barrierefreie Einrichtung</p></dd>
+</dl>
+<input type="submit" name="select_location" value="Weiter mit 9" class="btn btn-primary onehundred pull-right" />
+</form>
+</div>
+<h3 title="Bürgerbüro Altstadt (barrierefrei), Termine ab 14.07.2026, 11:00 Uhr"><b>10: </b><span class="cnw_skip_translation">Bürgerbüro Altstadt (barrierefrei)</span>, Termine ab 14.07.2026, 11:00 Uhr</h3>
+<div class="suggest_location_panel">
+<form method="post">
+<input type="hidden" name="loc" value="60" />
+<input type="hidden" name="gps_lat" value="999" />
+<input type="hidden" name="gps_long" value="999" />
+<dl class="grid suggest_location_tbl">
+<dt>Name</dt><dd class="cnw_skip_translation">Bürgerbüro Altstadt (barrierefrei)</dd>
+<dt>Anschrift</dt><dd class="cnw_skip_translation">Prager Str. 12, 01069 Dresden</dd>
+<dt>Entfernung</dt><dd class="sugg_loc_distance"></dd>
+<dt>Nächster Termin</dt><dd>ab 14.07.2026, 11:00 Uhr</dd>
+<dt>Information</dt><dd><p>
+	Vollst&auml;ndig barrierefreie Einrichtung</p>
+<div>
+	&nbsp;</div></dd>
+</dl>
+<input type="submit" name="select_location" value="Weiter mit 10" class="btn btn-primary onehundred pull-right" />
+</form>
+</div>
+<h3 title="Bürgerbüro Leuben, Termine ab 14.07.2026, 11:45 Uhr"><b>11: </b><span class="cnw_skip_translation">Bürgerbüro Leuben</span>, Termine ab 14.07.2026, 11:45 Uhr</h3>
+<div class="suggest_location_panel">
+<form method="post">
+<input type="hidden" name="loc" value="64" />
+<input type="hidden" name="gps_lat" value="51.01042" />
+<input type="hidden" name="gps_long" value="13.825651" />
+<dl class="grid suggest_location_tbl">
+<dt>Name</dt><dd class="cnw_skip_translation">Bürgerbüro Leuben</dd>
+<dt>Anschrift</dt><dd class="cnw_skip_translation">Hertzstraße 23, 01257 Dresden</dd>
+<dt>Entfernung</dt><dd class="sugg_loc_distance"></dd>
+<dt>Nächster Termin</dt><dd>ab 14.07.2026, 11:45 Uhr</dd>
+<dt>Information</dt><dd><p>
+	Einrichtung ist f&uuml;r Menschen im Rollstuhl nicht oder nur mit gr&ouml;&szlig;eren Erschwernissen zug&auml;nglich</p></dd>
+</dl>
+<input type="submit" name="select_location" value="Weiter mit 11" class="btn btn-primary onehundred pull-right" />
+</form>
+</div>
+<h3 title="Meldestelle Cossebaude (barrierefrei), Termine ab 14.07.2026, 13:15 Uhr"><b>12: </b><span class="cnw_skip_translation">Meldestelle Cossebaude (barrierefrei)</span>, Termine ab 14.07.2026, 13:15 Uhr</h3>
+<div class="suggest_location_panel">
+<form method="post">
+<input type="hidden" name="loc" value="70" />
+<input type="hidden" name="gps_lat" value="51.088406" />
+<input type="hidden" name="gps_long" value="13.630148" />
+<dl class="grid suggest_location_tbl">
+<dt>Name</dt><dd class="cnw_skip_translation">Meldestelle Cossebaude (barrierefrei)</dd>
+<dt>Anschrift</dt><dd class="cnw_skip_translation">Dresdner Strasse 3, 01156 Dresden</dd>
+<dt>Entfernung</dt><dd class="sugg_loc_distance"></dd>
+<dt>Nächster Termin</dt><dd>ab 14.07.2026, 13:15 Uhr</dd>
+<dt>Information</dt><dd><p>
+	Vollst&auml;ndig barrierefreie Einrichtung</p></dd>
+</dl>
+<input type="submit" name="select_location" value="Weiter mit 12" class="btn btn-primary onehundred pull-right" />
+</form>
+</div>
+<h3 title="Meldestelle Schönfeld-Weißig (barrierefrei), Termine ab 15.07.2026, 09:30 Uhr"><b>13: </b><span class="cnw_skip_translation">Meldestelle Schönfeld-Weißig (barrierefrei)</span>, Termine ab 15.07.2026, 09:30 Uhr</h3>
+<div class="suggest_location_panel">
+<form method="post">
+<input type="hidden" name="loc" value="72" />
+<input type="hidden" name="gps_lat" value="51.061775" />
+<input type="hidden" name="gps_long" value="13.885397" />
+<dl class="grid suggest_location_tbl">
+<dt>Name</dt><dd class="cnw_skip_translation">Meldestelle Schönfeld-Weißig (barrierefrei)</dd>
+<dt>Anschrift</dt><dd class="cnw_skip_translation">Bautzner Landstraße 291, 01328 Dresden</dd>
+<dt>Entfernung</dt><dd class="sugg_loc_distance"></dd>
+<dt>Nächster Termin</dt><dd>ab 15.07.2026, 09:30 Uhr</dd>
+<dt>Information</dt><dd><p>
+	Vollst&auml;ndig barrierefreie Einrichtung</p></dd>
+</dl>
+<input type="submit" name="select_location" value="Weiter mit 13" class="btn btn-primary onehundred pull-right" />
+</form>
+</div>
+<h3 title="Bürgerbüro Plauen (Teilweise barrierefrei), Termine ab 20.07.2026, 09:00 Uhr"><b>14: </b><span class="cnw_skip_translation">Bürgerbüro Plauen (Teilweise barrierefrei)</span>, Termine ab 20.07.2026, 09:00 Uhr</h3>
+<div class="suggest_location_panel">
+<form method="post">
+<input type="hidden" name="loc" value="67" />
+<input type="hidden" name="gps_lat" value="51.029156" />
+<input type="hidden" name="gps_long" value="13.707531" />
+<dl class="grid suggest_location_tbl">
+<dt>Name</dt><dd class="cnw_skip_translation">Bürgerbüro Plauen (Teilweise barrierefrei)</dd>
+<dt>Anschrift</dt><dd class="cnw_skip_translation">Nöthnitzer Straße 2, 01187 Dresden</dd>
+<dt>Entfernung</dt><dd class="sugg_loc_distance"></dd>
+<dt>Nächster Termin</dt><dd>ab 20.07.2026, 09:00 Uhr</dd>
+<dt>Information</dt><dd><p>
+	Teilweise barrierefreie Einrichtung</p></dd>
+</dl>
+<input type="submit" name="select_location" value="Weiter mit 14" class="btn btn-primary onehundred pull-right" />
+</form>
+</div>
+</div>
+<div style="margin-top: 20px; display: inline-block; width: 100%;">
+<input class="sel_button btn btn-primary pull-left fifty " type="button"  onClick="historyGoBack('select2?md=2');" title="Zurück zu den Anliegen" id="zurueck" value="Zurück zu den Anliegen">
+</div>
+</div>
+
+            <footer id="footer" class="tvweb_form">
+                <nav id="footer-nav" class="nav navHelp" aria-labelledby="footernavlabel">
+                     <div id="footer_dialog" class="modal fade" tabindex="-1" role="dialog" aria-label="Hinweisfenster"><div class="modal-dialog" role="document"><div class="modal-content"><div class="modal-header"><button type="button" class="close" id="close_btn_X" data-dismiss="modal" aria-label="Hinweisfenster schließen" title="Hinweisfenster schließen" autofocus><span aria-hidden="true">&times;</span></button><h1 class="modal-title">Titel</h1></div><div class="modal-body"><div id="modal_help"><ol style="padding-left: 15px;">
+    <li><h2 class="h3like">Auswahl der Behörde</h2>
+        <p>Zunächst wählen Sie bitte die gewünschte Behörde aus den angebotenen Behörden aus.</p></li>
+    <li><h2 class="h3like">Auswahl des Anliegens</h2>
+        <p>Anschließend erhalten Sie die zur Behörde angebotenen Anliegen angezeigt, wählen Sie entsprechend aus.</p>
+    </li>
+    <li><h2 class="h3like">Terminauswahl</h2>
+        <p>Anschließend wird ein Kalender eingeblendet, aus dem die freien Zeiten hervorgehen. Rot gekennzeichnete
+            Bereiche bedeuten, dass zu diesen Zeiten keine Termin vergeben werden können. Markieren Sie dann bitte ihren
+            Terminwunsch mit einem Mausklick im Kalender. Der Bereich wird dann grün dargestellt. Die Angaben zum
+            Terminwunsch werden unterhalb der Überschrift textlich angezeigt.<br> Je nach Konfiguration kann es auch
+            sein, dass anstatt des Kalenders, eine Seite mit Terminvorschlägen angezeigt wird. Die Vorschläge lassen
+            sich nach Datum und Wochentag filtern. Bei Auswahl eines Termins werden Sie direkt auf die nächste Seite
+            weitergeleitet.</p></li>
+    <li><h2 class="h3like">Persönliche Daten</h2>
+        <p>Es erscheint die Eingabemaske für ihre persönlichen Daten. Alle mit einem Sternchen (*) gekennzeichneten
+            Felder sind Pflichtfelder und müssen ausgefüllt werden. Es besteht die Möglichkeit für spätere Anfragen die
+            persönlichen Daten auf Ihrem PC zu speichern, eine erneute Angabe dieser Daten bei zukünftigen Anfragen ist
+            dann nicht mehr erforderlich, abgesehen von evtl. Änderungen die dann erfolgen können wenn die neue Anfrage
+            erzeugt wird. Setzen Sie dazu bitte einen Haken in das Feld Persönliche Daten für zukünftige Anfragen
+            speichern. Bestätigen Sie die Anfrage, sofern nötig, nach der Eingabe des Sicherheitscodes, mit einem Klick
+            auf 'Weiter'.</p></li>
+    <li><h2 class="h3like">Terminübersicht</h2>
+        <p>Abschließend erhalten Sie eine Übersicht über ihren ausgewählten Termin und können einen weiteren Termin
+            reservieren.</p></li>
+    <li><h2 class="h3like">Bestätigungsmail</h2>
+        <p>Sie erhalten anschließend eine E-Mail in der Sie einen Bestätigungslink anklicken müssen. Erst nach der
+            Bestätigung wird Ihr Termin an die Behörde übertragen.</p></li>
+    <li><h2 class="h3like">Rückmeldung Sachbearbeiter</h2>
+        <p>Ihre Anfrage wird dann in der Behörde geprüft und Sie erhalten eine weitere E-Mail, diesmal direkt vom
+            Sachbearbeiter. Diese Mail enhält dann auch die Angaben zu ggf. beizubringenden Unterlagen.</p></li>
+</ol></div><div id="modal_imprint"><h1>
+    Dies ist die Roh-Version aus dem Auslieferungszustand des Herstellers.<br>
+    Sollten Sie diesen Inhalt in einer Produktivumgebung finden, weisen Sie bitte die Behörde darauf hin oder kontaktieren Sie den Hersteller unter support@kommunix.de, dann leitet dieser den Hinweis weiter.
+</h1>
+
+<br>
+
+<h2> Impressum Online-Terminreservierung </h2>
+    (TEVIS Termin-Verwaltungs- und Informationssystem) <br>
+
+
+    <p><br>
+        <b>BEISPIELSTADT</b>
+    </p>
+
+    <p><b>KONTAKT</b><br>
+        Bei Fragen können Sie uns gerne eine E-Mail zusenden.<br>
+        Unsere Adresse lautet:<br>
+        Beispielstadt<br>
+        Beispielstraße 123<br>
+        12345 Beispielstadt<br>
+        <br>
+        Telefon: 123456<br>
+        E-Mail: info@beipsielstadt.de<br>
+    </p>
+
+    <h3>Unterauftragnehmer Fachanwendung TEVIS:</h3>
+
+    <p><b>Kommunix GmbH</b><br>
+        Software für Kommunen<br>
+        Friedrich-Ebert-Straße 74<br>
+        59425 Unna	<br>
+        (Softwarehersteller, Fernwartung)
+    </p>
+    <p><b>HSH</b><br>
+        Software und Hardware Vertriebs GmbH<br>
+        Rudolf-Diesel-Straße 2<br>
+        16356 Ahrensfelde	<br>
+        (Anbieter der Softwareplattform VOIS, Fernwartung)
+    </p></div><div id="modal_privacy"><h1>
+    Dies ist die Roh-Version aus dem Auslieferungszustand des Herstellers.<br>
+    Sollten Sie diesen Inhalt in einer Produktivumgebung finden, weisen Sie bitte die Behörde darauf hin oder kontaktieren Sie den Hersteller unter support@kommunix.de, dann leitet dieser den Hinweis weiter.
+</h1>
+
+<br>
+
+<h2>Allgemeines</h2>
+<p>
+    <b>KUNDENBEZEICHNUNG</b> bietet eine Online-Terminreservierung für Besucher.
+    Der Besucher – nachstehend Nutzer genannt - kann über einen Online-Kalender einen Termin reservieren bzw. eine Buchungsanfrage an die zuständige Behörde stellen.
+    Die Behörde verpflichtet sich dabei, im Rahmen der Termin-Reservierung durch den Nutzer die gesetzlichen Datenschutzbestimmungen der DSGVO (Datenschutzgrundverordnung) einzuhalten.
+</p>
+<p>
+    Bei Nutzung der Online-Terminvergabe werden personenbezogene Daten der Nutzer erhoben und verarbeitet, soweit dies zur Durchführung des Angebots erforderlich ist.
+    Personenbezogene Daten sind Daten, durch die die Identität einer Person erkennbar wird.
+    Dies kann u.a. über Namen, Anschrift, Telefonnummer und E-Mailadresse erfolgen.
+</p>
+
+Für die im Folgenden dargestellte Datenverarbeitung verantwortlich ist:
+<h3>Verantwortlichkeit für die Datenverarbeitung</h3>
+KUNDENDATEN
+
+<h3>Kontaktdaten der Datenschutzbeauftragten</h3>
+KUNDENDATEN
+
+<!-- ### -->
+
+<h2>Rechtsgrundlage der Datenverarbeitung</h2>
+<p>
+    Die Verarbeitung der personenbezogenen Daten erfolgt gemäß der EU-Datenschutzgrundverordnung (nachfolgend DSGVO),
+    insbesondere auf Basis der Art. 5 (1), 6 (1) und 25 (2) DSGVO.
+</p>
+
+<!-- ### -->
+
+<h2>Zwecke der Datenverarbeitung</h2>
+<p>
+    Der für die Datenverarbeitung Verantwortliche erhebt ausschließlich zum Zweck der Terminbuchung und –abwicklung folgende personenbezogenen Daten von den Nutzern:
+</p>
+<ul>
+    <li>Name</li>
+    <li>Vorname</li>
+    <li>Kontaktdaten (ggf. gültige E-Mailadresse, Telefonnummer)</li>
+    <li>Anliegen des Termins</li>
+    <li>bei Bedarf Adresse</li>
+    <li>bei Bedarf Geburtsdatum</li>
+</ul>
+
+<!-- ### -->
+
+<h2>Speicherdauer / Datenlöschung</h2>
+<p>
+    Die Speicherung der erhobenen personenbezogenen Daten beträgt 24 Stunden.
+    Die Daten werden nach Ablauf des vereinbarten Termins gelöscht.
+</p>
+
+<!-- ### -->
+
+<h2>Datensicherheit</h2>
+<p>
+    s. nachfolgend Punkt „Internetauftritt“
+</p>
+
+<!-- ### -->
+
+<h2>Datenübermittlung an Empfänger</h2>
+<p>
+    Die erhobenen personenbezogenen Daten werden zum Zwecke der Terminbuchung und –abwicklung an die jeweils zuständige Dienststelle der FHB weitergeleitet.
+</p>
+
+<!-- ### -->
+
+<h2>Datenschutzrechte</h2>
+<h3>1. Auskunftsrecht (Art. 15 DSGVO):</h3>
+<p>
+    Sie haben das Recht eine Bestätigung darüber zu verlangen, ob sie betreffende personenbezogene Daten verarbeitet werden.
+    Ist dies der Fall, so haben Sie ein Recht auf Auskunft über diese personenbezogenen Daten und auf die in Art. 15 DSGVO im einzelnen aufgeführten Informationen.
+</p>
+
+<h3>2. Recht auf Berichtigung und Löschung (Art. 16 und 17 DSGVO):</h3>
+<p>
+    Sie haben das Recht, unverzüglich die Berichtigung sie betreffender unrichtiger personenbezogener Daten und ggf. die Vervollständigung unvollständiger personenbezogener Daten zu verlangen.
+    Sie haben zudem das Recht, zu verlangen, dass sie betreffende personenbezogene Daten unverzüglich gelöscht werden,
+    sofern einer der in Art. 17 DSGVO im einzelnen aufgeführten Gründe zutrifft, z. B. wenn die Daten für die verfolgten Zwecke nicht mehr benötigt werden.
+</p>
+
+<h3>3. Recht auf Einschränkung der Verarbeitung (Art. 18 DSGVO):</h3>
+<p>
+    Sie haben das Recht, die Einschränkung der Verarbeitung zu verlangen, wenn eine der in Art. 18 DSGVO aufgeführten Voraussetzungen gegeben ist,
+    z. B. wenn Sie Widerspruch gegen die Verarbeitung eingelegt haben, für die Dauer einer etwaigen Prüfung.
+</p>
+
+<h3>4. Recht auf Datenübertragbarkeit (Art. 20 DSGVO):</h3>
+<p>
+    In bestimmten Fällen, die in Art. 20 DSGVO im Einzelnen aufgeführt werden, haben Sie das Recht,
+    die sie betreffenden personenbezogenen Daten in einem strukturierten,
+    gängigen und maschinenlesbaren Format zu erhalten bzw. die Übermittlung dieser Daten an einen Dritten zu verlangen.
+</p>
+
+<h3>5. Widerspruchsrecht (Art. 21 DSGVO):</h3>
+<p>
+    Werden Daten auf Grundlage von Art. 6 Abs. 1 lit. f erhoben (Datenverarbeitung zur Wahrung berechtigter Interessen),
+    steht Ihnen das Recht zu, aus Gründen, die sich aus Ihrer besonderen Situation ergeben, jederzeit gegen die Verarbeitung Widerspruch einzulegen.
+    Wir verarbeiten die personenbezogenen Daten dann nicht mehr, es sei denn, es liegen nachweisbar zwingende schutzwürdige Gründe für die Verarbeitung vor,
+    die die Interessen, Rechte und Freiheiten der betroffenen Person überwiegen, oder die Verarbeitung dient der Geltendmachung, Ausübung oder Verteidigung von Rechtsansprüchen.
+</p>
+
+<h3>6. Beschwerderecht bei einer Aufsichtsbehörde</h3>
+<p>
+    Sie haben gem. Art. 77 DSGVO das Recht auf Beschwerde bei einer Aufsichtsbehörde, wenn Sie der Ansicht sind,
+    dass die Verarbeitung der Sie betreffenden Daten gegen datenschutzrechtliche Bestimmungen verstößt.
+    Das Beschwerderecht kann insbesondere bei einer Aufsichtsbehörde in dem Mitgliedstaat Ihres Aufenthaltsorts, Ihres Arbeitsplatzes oder des Orts des mutmaßlichen Verstoßes geltend gemacht werden.
+</p>
+
+<!-- ### -->
+
+<h2>Kontaktdaten der zuständigen Aufsichtsbehörde:</h2>
+KUNDENDATEN
+
+<!-- ### -->
+
+<h2>Nutzung der Onlineterminvergabe durch Nutzer</h2>
+<p>
+    Die Nutzung der Onlineterminvergabe erfolgt durch die Nutzer auf freiwilliger Basis durch Erteilen seiner Zustimmung.
+    Hierzu wird ein deutlich gekennzeichnetes Zustimmungsfeld angeklickt.
+</p>
+<p>
+    Die Hinweise zur Einwilligungserklärung sind von dem Nutzer vor Erteilung seiner Zustimmung deutlich dargestellt.
+</p>
+<p>
+    <i>s. Einwilligungserklärung Datenschutz (ggf. Link setzen zur Einwilligungserklärung)</i>
+</p>
+
+<!-- ### -->
+
+<h2>Widerrufsrecht:</h2>
+<p>
+    Der Nutzer kann die zur Verarbeitung erklärte Einwilligung jederzeit mit Wirkung für die Zukunft widerrufen und sich hierzu an den Verantwortlichen wenden.
+    Durch den Widerruf wird die Rechtmäßigkeit der bis zum Widerruf erfolgten Verarbeitung nicht berührt.
+</p>
+
+<!-- ### -->
+
+<h2>Hinweis zu weiteren Möglichkeiten einer Terminvergabe:</h2>
+<p>
+    Sollten Sie eine Terminvergabe wünschen, jedoch nicht das Online-Portal nutzen wollen, so stehen Ihnen folgende Alternativen zur Verfügung:
+</p>
+<ul>
+    <li>telefonisch oder</li>
+    <li>schriftlich (direkt bei der zuständigen Dienststelle)</li>
+</ul>
+
+<!-- ### -->
+
+<hr/>
+
+<!-- ### -->
+
+<h2>Datenschutzhinweise zum Internetauftritt</h2>
+<h3>Nutzungsdaten</h3>
+<p>
+    Wenn Sie unsere Internet-Seiten besuchen, speichert der Webserver standardmäßig
+</p>
+<ul>
+    <li>den Domänennamen (DNS-Namen) beziehungsweise die IP-Adresse Ihres Rechners</li>
+    <li>den Browser</li>
+    <li>das Protokoll und das Betriebssystem, das Sie verwenden</li>
+    <li>die Webseite, von der aus Sie uns besuchen</li>
+    <li>die Webseite, die Sie bei uns besuchen</li>
+    <li>den Fehlercode der Anfrage</li>
+    <li>die übertragene Datenmenge</li>
+    <li>Datum und die Uhrzeit des Besuches</li>
+</ul>
+<p>
+    Ihre IP-Adresse wird bei diesem Vorgang umgehend anonymisiert, so dass Sie als Nutzer für uns anonym bleiben.
+</p>
+<p>
+    Die erhobenen Daten werden von uns genutzt, um den Internetauftritt möglichst benutzerfreundlich für Sie gestalten zu können.
+    Selbstverständlich werden die erzeugten Informationen über Ihre Benutzung dieser Webseite nicht an Dritte weitergegeben.
+</p>
+
+<h3>Datensicherheit</h3>
+<p>
+    Um Ihre Daten vor unerwünschten Zugriffen möglichst umfassend zu schützen, treffen wir technische und organisatorische Maßnahmen.
+</p>
+<p>
+    Wir setzen auf unseren Seiten ein Verschlüsselungsverfahren ein. Ihre Angaben werden von Ihrem Rechner zu unserem Server und umgekehrt über das Internet mittels einer TLS-Verschlüsselung übertragen. Sie erkennen dies daran, dass in der Statusleiste Ihres Browsers das Schloss-Symbol geschlossen ist und die Adresszeile mit https:// beginnt.
+</p>
+
+<h3>Auftragsverarbeitung</h3>
+<p>
+    Im Rahmen des Betriebs dieser Webseiten und der damit zusammenhängenden Prozesse können uns weitere Dienstleister unterstützen.
+    Diese Dienstleister sind uns gegenüber streng weisungsgebunden und entsprechend Artikel 28 Datenschutzgrundverordnung vertraglich verpflichtet.
+</p>
+
+<h3>Gilt die Datenschutzerklärung auch für Webseiten anderer Anbieter?</h3>
+<p>
+    Unser Online-Angebot enthält Links zu anderen Websites.
+    Wir übernehmen keine Verantwortung für die Inhalte von Websites, die über Links erreicht werden können.
+    Die Links werden bei Aufnahme nur kursorisch angesehen und bewertet. Eine kontinuierliche Prüfung der Inhalte ist weder beabsichtigt noch möglich.
+    Wir distanzieren uns ausdrücklich von allen Inhalten, die möglicherweise straf- oder haftungsrechtlich relevant sind oder gegen die guten Sitten verstoßen.
+</p>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+</div><div id="modal_accessibility"><h1>
+    Dies ist die Roh-Version aus dem Auslieferungszustand des Herstellers.<br>
+    Sollten Sie diesen Inhalt in einer Produktivumgebung finden, weisen Sie bitte die Behörde darauf hin oder kontaktieren Sie den Hersteller unter support@kommunix.de, dann leitet dieser den Hinweis weiter.
+</h1>
+
+<br>
+
+<h2>Erklärung zur Barrierefreiheit</h2>
+<p>
+    [Die #Name der Behörde# ist / Wir sind bemüht], [ihre/unsere]  Websites entsprechend der Richtlinie (EU) 2016/2102 des Europäischen Parlaments und des Rates barrierefrei zugänglich zu machen.
+</p>
+
+<p>
+    Diese Erklärung zur Barrierefreiheit gilt für die Seiten der Terminverwaltung #URL#.
+</p>
+
+<h3>Stand der Vereinbarkeit mit den Anforderungen</h3>
+
+<p>Die Terminverwaltungs-Webseite ist mit den technischen Anforderungen gemäß der Barrierefreie-Informationstechnik-Verordnung [#Bundesland# und dem Behindertengleichstellungsgesetz #Bundesland#]  derzeit #teilweise/vollständig#  vereinbar.</p>
+
+<h3>Nicht barrierefreie Inhalte</h3>
+Die nachstehend aufgeführten Inhalte sind aus folgenden Gründen nicht barrierefrei:
+<ul>
+    <li>Aufgrund der hohen Anzahl bereitgestellter PDF-Dokumente, die vor dem 23.09.2018 erstellt wurden, können diese bislang nicht in ein barrierefreies Format überführt werden.Daher sind die in dem Auftritt eingebundene PDF-Dokumente nicht durchgängig barrierefrei.</li>
+    <li>Kriterium „Alternativtexte für Grafiken und Objekte“</li>
+    <li>Kriterium „Aussagekräftige Linktexte“</li>
+    <li>Kriterium „Kontraste von Grafiken und grafischen Bedienelementen ausreichend“</li>
+    <li>Kriterium „Aktuelle Position des Fokus deutlich“</li>
+</ul>
+
+<h3>Erstellung dieser Erklärung zur Barrierefreiheit</h3>
+
+<p>Diese Erklärung wurde am #Datum# erstellt und zuletzt am #Datum# aktualisiert.</p>
+
+<p>
+    Die Entwicklerin der Webseiten der Terminverwaltung, die Firma Kommunix GmbH aus Unna, hat die Webseiten der Terminverwaltung im #Monat# von Accesssibility Consulting Marc Haunschild gemäß BITV / EN 301 541 prüfen lassen und das BIK-Prüfzeichen „BITV-konform“ für die Version #Version# erhalten.
+    Der Prüfbericht ist abrufbar unter #URL Prüfbericht#.
+    Die oben aufgeführten Einschränkungen in der Barrierefreiheit resultieren durch Anpassungen und Konfigurationen durch [uns/#Name der Behörde#].
+</p>
+
+<h3>Feedback und Kontaktangaben</h3>
+
+<p>
+    Sie können uns Mängel bei der Einhaltung der Anforderungen an die Barrierefreiheit mitteilen und Informationen zu Inhalten anfordern, die von der Richtlinie ausgenommen sind.
+    Kontakt:<br>
+    #Adresse, Mail#
+</p>
+
+<p>
+    Beachten Sie, dass mit dem Absenden einer E-Mail an die oben genannte Adresse die von Ihnen angegebenen personenbezogenen Daten übermittelt und zur Beantwortung der Anfrage verwendet werden. Berücksichtigen Sie hierzu bitte auch die Datenschutzhinweise:<br>
+    #Link zum Datenschutz#
+</p>
+
+<h3>Durchsetzungsverfahren/Schlichtungsverfahren</h3>
+
+<p>
+    #Frage: Adressen bei anderen Bundesländern?#
+</p>
+
+<p>
+    Sollten Sie auf Mitteilungen oder Anfragen zur barrierefreien Informationstechnik dieses Internetangebots keine zufriedenstellende Antwort erhalten, können Sie die Ombudsstelle für barrierefreie Informationstechnik des Landes #Bundesland# einschalten.
+    Die Ombudsstelle ist der Beauftragten für die Belange der Menschen mit Behinderung nach § 11 des Behindertengleichstellungsgesetzes #Bundesland# zugeordnet und in #Paragraphen der BITV# der BITV #Bundesland# gesetzlich verankert.
+    Unter Einbeziehung aller Beteiligten versucht die Ombudsstelle, die Umstände der fehlenden Barrierefreiheit zu ermitteln, damit die Trägerin oder der Träger diese beheben kann.
+    Dabei geht es nicht darum, Gewinnerinnen und Gewinner oder Verliererinnen und Verlierer zu finden.
+    Vielmehr ist es das Ziel, mithilfe der Schlichtungsstelle gemeinsam und außergerichtlich eine Lösung für ein Problem zu finden.
+</p>
+
+<p>
+    Das Schlichtungsverfahren ist kostenlos. Sie brauchen auch keinen Rechtsbeistand.
+</p>
+
+<p>
+    Die Kontaktdaten der Ombudsstelle lauten:
+</p>
+
+<p>
+    Ombudsstelle für barrierefreie Informationstechnik des Landes #Bundesland#<br>
+    #zuständige Person#<br>
+    #Adresse#<br>
+    #Telefon#
+</p>
+
+<p>Weitere Informationen zur Ombudsstelle für barrierefreie Informationstechnik #Bundesland# finden Sie hier: <a target="_blank" href="#Link zur Ombudsstelle für barrierefreie Informationstechnik#">#Link zur Ombudsstelle für barrierefreie Informationstechnik#</a></p>
+<br>
+<p>
+    BITV-Test Prüfbericht der unveränderten Rohversion aus dem Auslieferungszustand:
+</p>
+
+<a href="https://report.bitvtest.de/691ac4fa-85b1-4391-9eef-20f2b0550aa2.html" title="Zum BITV-Test Prüfbericht. Link öffnet in neuem Fenster." target="_blank">
+    <img src="https://www.bitvtest.de/fileadmin/user_upload/bik-bitv-konform-h44px.svg" alt="BIK - BITV-konform (geprüfte Seiten), zum Prüfbericht" width="135" height="44" />
+</a>
+</div><div id="modal_licenses">Diese Software enthält kopierte und modifizierte Inhalte von <a href='https://www.w3.org/WAI/ARIA/apg/patterns/combobox/examples/combobox-autocomplete-both/' target="_blank">Editable Combobox With Both List and Inline Autocomplete Example</a>.<br/>
+<br/>
+Copyright C 2024 World Wide Web Consortium. <a href='https://www.w3.org/copyright/software-license-2023/' target="_blank">https://www.w3.org/copyright/software-license-2023/</a></div><div id="modal_session"><p>Ihre Sitzung läuft in einer Minute ab.</p><p>Für eine Verlängerung schließen Sie bitte dieses Fenster in den nächsten 60 Sekunden.</p></div></div><div class="modal-footer"><button type="button" id="close_btn" class="sel_button btn btn-primary fifty btn-ok" data-dismiss="modal">Schliessen</button></div></div></div></div>
+                    <ul id="footer_links">
+                        <!--##USAGE_FEEDBACK_URL##-->
+                        <!--##NEW_RESERVATION_URL##-->
+                        <!--##CONWORD_TRANSLATE_INFO##-->
+                        <!--##CUSTOM_FOOTER_LINKS##-->
+                     </ul>
+                    <p id="link-target-text" class="visuallyhidden"> Öffnet im Dialogfenster.</p>
+                </nav>
+
+                <br/><input type="hidden" id="session_reset_lifetime" value="1440" /><input type="hidden" id="session_warning_str" value="Warnung" /><input type="hidden" id="infofenster_str" value="Infofenster: " /><div id="session_reset_wrap_wrap" role="timer" tabindex="0"><p id="session_reset_wrap">Ihre Sitzung läuft aus in <span id="session_reset_input">0</span> Minuten</p></div><nav id="inhalt-nav" aria-label="Sprunglink" tabindex="-1" style="margin-top:-10px"><p><a class="unsichtbar" href="#inhalt">Hauptregion der Seite anspringen</a></p></nav>
+            </footer>
+        </main>
+        <footer class="page_footer">
+                <div class="page">
+                    <div class="row">
+                        <div class="col col1 footer_logo_container">
+                            <img class="footer_logo" alt="Logo: Dresden" src="styles/web/basis_DD/images/logo_footer.svg"/>
+                        </div>
+                        <div class="col col2">
+                            <nav class="meta_nav" aria-label="service links">
+                                <ul>
+                                    <li><a href="https://www.dresden.de/de/sonstiges/impressum.php" target="_blank">Impressum</a></li>
+                                    <li><a href="https://www.dresden.de/de/sonstiges/datenschutz.php" target="_blank">Datenschutz</a></li>
+                                </ul>
+                            </nav>
+                            <p class="site_copyright">
+                                <strong>&copy; Landeshauptstadt Dresden</strong>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </footer>
+    </body>
+</html>

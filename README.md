@@ -4,9 +4,13 @@ Free email notifications for free Amt appointments in German cities.
 
 **Live: [buergerwecker.de](https://buergerwecker.de)**
 
-**v1 covers Leipzig:** the Bürgerbüros (e.g. Wohnsitzanmeldung, Ausweise) and
-the Ausländerbehörde (residence-document pickup). Support for more cities may
-follow.
+**Covered cities:**
+
+- **Leipzig** — Bürgerbüros (e.g. Wohnsitzanmeldung, Ausweise) and the
+  Ausländerbehörde (residence-document pickup).
+- **Dresden** — Bürgerbüros & Meldestellen (earliest free slot per office).
+
+Support for more cities may follow.
 
 ## What this does
 
