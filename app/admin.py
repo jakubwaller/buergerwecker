@@ -58,8 +58,14 @@ def render_summary_text(s: dict, *, now: datetime) -> str:
            f"  Signups                24h {s['signups_last_24h']} · 7d {s['signups_last_7d']}",
            f"  Digests sent (7d)      {s['digests_sent_last_7d']}",
            f"  Emails sent (total)    {s['emails_sent_total']}",
-           f"  Delivery (7d)          {prov_str}",
-           f"  Slots cached           {s['slots_cached']}",
+           f"  Delivery (7d)          {prov_str}"]
+    for p, u in sorted((s.get("email_usage") or {}).items()):
+        month = (f"{u['month']}/{u['month_quota']}" if u.get("month_quota")
+                 else str(u.get("month", 0)))
+        today = (f"{u['today']}/{u['day_quota']}" if u.get("day_quota")
+                 else str(u.get("today", 0)))
+        out.append(f"  Quota {p:<17}month {month} · today {today}")
+    out += [f"  Slots cached           {s['slots_cached']}",
            "",
            "NOTIFICATIONS (appointment slots delivered to subscribers)",
            f"  Subscribers notified   24h {s.get('notifications_24h', 0)}"
@@ -114,7 +120,41 @@ def render_summary_text(s: dict, *, now: datetime) -> str:
     return "\n".join(out)
 
 
-def stats(conn: sqlite3.Connection) -> dict:
+def _email_usage(conn: sqlite3.Connection, cfg) -> dict:
+    """Month-to-date + today send counts per provider, with configured caps.
+
+    Reads the durable email_send_counts table (survives the 14-day
+    sent_idempotency prune), so the admin page answers "how far into the
+    free-tier quota are we?" without logging into the provider dashboards.
+    Days/months are UTC — an approximation of each provider's own reset cycle.
+    """
+    caps = {
+        "mailjet": {"month_quota": getattr(cfg, "mailjet_monthly_quota", None),
+                    "day_quota":   getattr(cfg, "mailjet_daily_quota", None)},
+        "resend":  {"month_quota": getattr(cfg, "resend_monthly_quota", None),
+                    "day_quota":   getattr(cfg, "resend_daily_quota", None)},
+    }
+    usage = {p: {"month": 0, "today": 0, **caps[p]} for p in caps}
+    try:
+        rows = conn.execute(
+            "SELECT provider, "
+            "  SUM(n) AS month, "
+            "  SUM(CASE WHEN day = date('now') THEN n ELSE 0 END) AS today "
+            "FROM email_send_counts "
+            "WHERE day >= date('now', 'start of month') "
+            "GROUP BY provider"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return usage  # pre-migration DB; counters not available yet
+    for r in rows:
+        u = usage.setdefault(r["provider"],
+                             {"month_quota": None, "day_quota": None})
+        u["month"] = r["month"]
+        u["today"] = r["today"]
+    return usage
+
+
+def stats(conn: sqlite3.Connection, cfg=None) -> dict:
     def scalar(q, *args):
         row = conn.execute(q, args).fetchone()
         return row[0] if row else 0
@@ -274,6 +314,7 @@ def stats(conn: sqlite3.Connection) -> dict:
                    "AND last_notified_at IS NULL"),
         "last_notification": last_notification,
         "emails_by_provider_7d": provider_7d,
+        "email_usage": _email_usage(conn, cfg),
         "last_failure_alert_at": meta_val("last_failure_alert_at"),
         "last_housekeeping_at": meta_val("last_housekeeping_at"),
         "last_backup_at":       meta_val("last_backup_at"),
