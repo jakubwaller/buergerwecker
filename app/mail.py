@@ -81,6 +81,17 @@ def _call_resend(to: str, subject: str, body: str,
         timeout=30,
     )
 
+def _record_send_count(conn: sqlite3.Connection, provider: str, n: int = 1) -> None:
+    """Bump the durable per-day counter behind the admin quota view. Days are
+    UTC (matching sent_at's CURRENT_TIMESTAMP), an approximation of the
+    providers' own daily/monthly reset boundaries."""
+    conn.execute(
+        "INSERT INTO email_send_counts (provider, day, n) "
+        "VALUES (?, date('now'), ?) "
+        "ON CONFLICT (provider, day) DO UPDATE SET n = n + excluded.n",
+        (provider, n),
+    )
+
 def send(conn: sqlite3.Connection, to: str, subject: str, body: str,
          *, idem_key: str, unsub_url: str | None = None) -> None:
     """Send `body` to `to`. Idempotent on `idem_key`.
@@ -116,6 +127,7 @@ def send(conn: sqlite3.Connection, to: str, subject: str, body: str,
         "UPDATE sent_idempotency SET provider=? WHERE idem_key=?",
         (provider, idem_key),
     )
+    _record_send_count(conn, provider)
 
 
 # --------------------------------------------------------------------------
@@ -262,6 +274,7 @@ def send_batch(conn: sqlite3.Connection, items: list[Outgoing], cfg) -> BatchRes
                     "WHERE idem_key=?",
                     [(name, c.idem_key) for c in chunk],
                 )
+                _record_send_count(conn, name, take)
             for c in chunk:
                 result.delivered.add(c.idem_key)
             result.sent_by_provider[name] = result.sent_by_provider.get(name, 0) + take

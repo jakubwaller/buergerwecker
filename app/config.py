@@ -9,8 +9,10 @@ class Config:
     mailjet_from_email: str
     mailjet_from_name: str
     mailjet_daily_quota: int
+    mailjet_monthly_quota: int
     resend_api_key: str
     resend_daily_quota: int
+    resend_monthly_quota: int
     mailjet_hourly_quota: int
     quota_alert_threshold_pct: int
     email_provider_order: tuple
@@ -56,6 +58,10 @@ def load_config() -> Config:
         # match Resend's free tier (100/day) and the current Mailjet allowance
         # (10/hour). Raise these after upgrading to a paid plan.
         resend_daily_quota=int(os.environ.get("RESEND_DAILY_QUOTA", "100")),
+        # Monthly caps are display-only (admin quota view): free tiers allow
+        # Mailjet 6000/mo and Resend 3000/mo.
+        mailjet_monthly_quota=int(os.environ.get("MAILJET_MONTHLY_QUOTA", "6000")),
+        resend_monthly_quota=int(os.environ.get("RESEND_MONTHLY_QUOTA", "3000")),
         mailjet_hourly_quota=int(os.environ.get("MAILJET_HOURLY_QUOTA", "10")),
         quota_alert_threshold_pct=int(os.environ.get("QUOTA_ALERT_THRESHOLD_PCT", "80")),
         # Order in which providers are tried for notification digests. Default

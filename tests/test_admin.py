@@ -351,3 +351,57 @@ def test_admin_aggregates_upstream_load_per_host_and_labels_tenants(client):
     body = render_summary_text(s, now=datetime.utcnow())
     assert "UPSTREAM HOSTS" in body
     assert "38 today" in body
+
+
+# ---------- email quota view (durable per-day counters) ----------
+
+def test_stats_email_usage_windows_and_caps(tmp_path):
+    from types import SimpleNamespace
+    conn = connect(str(tmp_path / "u.db")); init_schema(conn)
+    conn.execute("INSERT INTO email_send_counts (provider, day, n) "
+                 "VALUES ('mailjet', date('now'), 3)")
+    # A day from a long-gone month must not count toward month-to-date.
+    conn.execute("INSERT INTO email_send_counts (provider, day, n) "
+                 "VALUES ('mailjet', '2000-01-15', 99)")
+    cfg = SimpleNamespace(mailjet_monthly_quota=6000, mailjet_daily_quota=200,
+                          resend_monthly_quota=3000, resend_daily_quota=100)
+    u = stats(conn, cfg)["email_usage"]
+    assert u["mailjet"] == {"month": 3, "today": 3,
+                            "month_quota": 6000, "day_quota": 200}
+    # Resend has sent nothing yet but still shows up with its caps.
+    assert u["resend"] == {"month": 0, "today": 0,
+                           "month_quota": 3000, "day_quota": 100}
+
+def test_init_schema_backfills_counters_once(tmp_path):
+    conn = connect(str(tmp_path / "b.db")); init_schema(conn)
+    for k, p in (("k1", "mailjet"), ("k2", "mailjet"), ("k3", "resend"),
+                 ("k4", "pending")):
+        conn.execute("INSERT INTO sent_idempotency (idem_key, provider) "
+                     "VALUES (?, ?)", (k, p))
+    conn.execute("DELETE FROM email_send_counts")  # simulate pre-feature DB
+    init_schema(conn)                              # first init after upgrade
+    u = stats(conn)["email_usage"]
+    assert u["mailjet"]["today"] == 2
+    assert u["resend"]["today"] == 1
+    assert "pending" not in u
+    init_schema(conn)                              # re-run must not double-count
+    assert stats(conn)["email_usage"]["mailjet"]["today"] == 2
+
+def test_admin_renders_email_quota_section(client):
+    conn = connect(os.environ["DB_PATH"])
+    conn.execute("INSERT INTO email_send_counts (provider, day, n) "
+                 "VALUES ('mailjet', date('now'), 483)")
+    html = client.get("/admin?token=admin-tok").data.decode()
+    assert "Email quota" in html
+    assert "483 / 6000" in html          # MAILJET_MONTHLY_QUOTA default
+    assert "0 / 3000" in html            # RESEND_MONTHLY_QUOTA default
+
+def test_summary_email_quota_lines():
+    text = render_summary_text(_summary_stats(email_usage={
+        "mailjet": {"month": 483, "today": 12, "month_quota": 6000, "day_quota": 200},
+        "resend":  {"month": 1, "today": 0, "month_quota": 3000, "day_quota": 100},
+    }), now=NOW)
+    mj = _line(text, "Quota mailjet")
+    assert "month 483/6000" in mj and "today 12/200" in mj
+    re_ = _line(text, "Quota resend")
+    assert "month 1/3000" in re_ and "today 0/100" in re_

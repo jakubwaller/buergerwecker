@@ -41,6 +41,13 @@ CREATE TABLE IF NOT EXISTS sent_idempotency (
 );
 CREATE INDEX IF NOT EXISTS idx_sent_idem_at ON sent_idempotency(sent_at);
 
+CREATE TABLE IF NOT EXISTS email_send_counts (
+  provider TEXT NOT NULL,
+  day      TEXT NOT NULL,
+  n        INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (provider, day)
+);
+
 CREATE TABLE IF NOT EXISTS meta (
   key        TEXT PRIMARY KEY,
   value      TEXT NOT NULL,
@@ -134,6 +141,20 @@ def init_schema(conn: sqlite3.Connection) -> None:
     _add_missing_columns(conn, "subscriptions", {
         "confirmation_sent_at": "TIMESTAMP",
     })
+    # Durable per-day send counters power the admin page's provider-quota view.
+    # sent_idempotency only lives 14 days (housekeeping prune), so month-to-date
+    # can't be derived from it — seed the counters once from whatever history is
+    # still there. INSERT OR IGNORE keeps the concurrent poller+web init race
+    # harmless (first writer wins, second is a no-op).
+    empty = conn.execute(
+        "SELECT NOT EXISTS (SELECT 1 FROM email_send_counts)"
+    ).fetchone()[0]
+    if empty:
+        conn.execute(
+            "INSERT OR IGNORE INTO email_send_counts (provider, day, n) "
+            "SELECT provider, date(sent_at), COUNT(*) FROM sent_idempotency "
+            "WHERE provider != 'pending' GROUP BY provider, date(sent_at)"
+        )
     conn.execute(
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?) "
         "ON CONFLICT (key) DO UPDATE SET value=excluded.value, "

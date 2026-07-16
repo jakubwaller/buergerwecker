@@ -189,3 +189,17 @@ def test_quota_alert_silent_when_healthy(db):
     with patch("app.mail.send") as snd:
         maybe_quota_alert(db, _cfg(resend_daily_quota=100), deferred=0)
     snd.assert_not_called()
+
+
+def test_batch_bumps_daily_counters_per_provider(db, resend_on):
+    # Mailjet's hourly quota (10) takes the first ten; the rest overflow to Resend.
+    with patch("app.mail._call_mailjet_batch", return_value=True), \
+         patch("app.mail._call_resend_batch", return_value=True):
+        send_batch(db, _items(13), _cfg())
+    def day_count(p):
+        row = db.execute(
+            "SELECT n FROM email_send_counts WHERE provider=? AND day=date('now')",
+            (p,)).fetchone()
+        return row["n"] if row else 0
+    assert day_count("mailjet") == 10
+    assert day_count("resend") == 3
