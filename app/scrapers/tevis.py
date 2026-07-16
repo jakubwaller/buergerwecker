@@ -13,9 +13,11 @@ display.json note explains this on the sign-up page.
 
 The office list renders only for a session that has visited the Anliegen page
 (`/select2?md=…`) first; a cookie-less request gets a generic help page. The
-poller hands each cycle a fresh session, so poll() bootstraps the cookie once
-per session and retries once if the office list is missing (expired session —
-TEVIS idles out after ~20 minutes).
+poller reuses ONE long-lived session for the whole process (see poller.main),
+so poll() bootstraps the cookie once per (base, md) and leans on the retry
+path for expiry: when the office list is missing (TEVIS idles sessions out
+after ~20 minutes), it drops the stale cookie, re-bootstraps, and refetches
+once.
 """
 from __future__ import annotations
 import re
@@ -78,8 +80,10 @@ def _bootstrap_session(http: requests.Session, base: str, md: str) -> None:
     """Visit the Anliegen page so TEVIS issues the session cookie.
 
     Tracked per session object (not module-global like smartcjm's wsid):
-    TEVIS state lives in the cookie jar, and the poller creates a fresh
-    session every cycle, so a module-level TTL would go stale immediately.
+    TEVIS state lives in the cookie jar, so the flag must live and die with
+    the session object that holds it. The poller's session spans the whole
+    process, so this flag can outlive the ~20-minute server-side idle-out —
+    poll()'s retry path covers that case.
     """
     ready: set = getattr(http, "_tevis_ready", None) or set()
     if (base, md) in ready:
@@ -121,9 +125,13 @@ def poll(plan: PollPlan, http: requests.Session) -> list[Slot]:
     _bootstrap_session(http, base, md)
     html = _fetch_location_page(http, base, scfg, plan)
     if not _has_office_list(html):
-        # Session expired between requests — re-acquire the cookie and retry
-        # once. A service with genuinely zero free slots still renders the
-        # office forms, so this does not loop on empty results.
+        # Session expired — drop the stale cookie and retry once. The cookie
+        # must go first: TEVIS may not mint a new session for a request that
+        # presents a dead session id, which would make the re-bootstrap a
+        # no-op and every poll return [] until process restart. A service with
+        # genuinely zero free slots still renders the office forms, so this
+        # does not loop on empty results.
+        http.cookies.clear()
         http._tevis_ready = set()
         _bootstrap_session(http, base, md)
         html = _fetch_location_page(http, base, scfg, plan)
