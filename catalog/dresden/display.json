@@ -1,4 +1,8 @@
 {
+  "city_name": {
+    "de": "Dresden",
+    "en": "Dresden"
+  },
   "label": {
     "de": "Dresden: Bürgerbüros & Meldestellen",
     "en": "Dresden: citizens' offices (Bürgerbüros)"

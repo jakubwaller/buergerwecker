@@ -65,12 +65,14 @@
 
   <p class="disclaimer">
     {% if lang == 'en' %}
-      This website is not officially affiliated with the City of Leipzig or
-      its authorities. We are an independent service that only informs
+      This website is not officially affiliated with
+      {% if city_name %}the City of {{ city_name }}{% else %}the city{% endif %}
+      or its authorities. We are an independent service that only informs
       about available appointments.
     {% else %}
-      Diese Website ist nicht offiziell mit der Stadt Leipzig oder ihren
-      Behörden verbunden. Wir sind ein unabhängiger Dienst, der
+      Diese Website ist nicht offiziell mit der
+      {% if city_name %}Stadt {{ city_name }}{% else %}Stadt{% endif %} oder
+      ihren Behörden verbunden. Wir sind ein unabhängiger Dienst, der
       ausschließlich über verfügbare Termine informiert.
     {% endif %}
   </p>
