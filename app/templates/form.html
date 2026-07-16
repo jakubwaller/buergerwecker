@@ -56,11 +56,11 @@
   </h1>
 
   {% if other_cities %}
-    <p class="city-switch">
+    <ul class="city-switch">
       {% for label, url in other_cities %}
-        <a href="{{ url }}">→ {{ label }}</a>{% if not loop.last %} · {% endif %}
+        <li><a href="{{ url }}">→ {{ label }}</a></li>
       {% endfor %}
-    </p>
+    </ul>
   {% endif %}
 
   <p class="disclaimer">
