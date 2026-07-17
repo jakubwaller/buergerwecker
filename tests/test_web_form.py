@@ -149,7 +149,7 @@ def test_abh_tenant_form_renders_with_own_copy_and_cross_links(client):
     heading, the Termin-Code note, its service, and a cross-link back to the
     Bürgerbüro tenant (and vice versa)."""
     abh = client.get("/?city=leipzig-abh").data.decode()
-    assert "Abhol-Termine bei der Ausländerbehörde" in abh
+    assert "Abhol-Termine bei der Leipziger Ausländerbehörde" in abh
     assert "Termin-Code" in abh
     assert "Ausgabe  Aufenthaltsdokument" in abh
     assert 'city=leipzig' in abh                      # link back
