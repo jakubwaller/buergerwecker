@@ -49,7 +49,7 @@ def test_deferred_confirmation_is_kept_then_delivered_by_retry(db):
     # All quota exhausted → the immediate send defers.
     with patch("app.mail._call_mailjet_batch", return_value=True), \
          patch("app.mail._call_resend_batch", return_value=True):
-        delivered = send_confirmation_now(db, sid, "a@x.com", "de",
+        delivered = send_confirmation_now(db, sid, "a@x.com", "de", "leipzig",
                                           _cfg(mailjet_hourly_quota=0,
                                                mailjet_daily_quota=0,
                                                resend_daily_quota=0))
@@ -68,7 +68,7 @@ def test_deferred_confirmation_is_kept_then_delivered_by_retry(db):
 def test_retry_is_idempotent_once_delivered(db):
     sid = _sub(db)
     with patch("app.mail._call_mailjet_batch", return_value=True):
-        assert send_confirmation_now(db, sid, "a@x.com", "de", _cfg()) is True
+        assert send_confirmation_now(db, sid, "a@x.com", "de", "leipzig", _cfg()) is True
     # A second retry pass must not re-send an already-confirmed-sent sign-up.
     with patch("app.mail._call_mailjet_batch", return_value=True) as mb:
         send_pending_confirmations(db, _cfg())

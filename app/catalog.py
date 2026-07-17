@@ -107,6 +107,15 @@ def load_catalog(city: str) -> Catalog:
                    display=display)
 
 
+def city_display_name(city: str, lang: str) -> str | None:
+    """Localized city_name from the tenant's display.json; None if unset or the
+    catalog can't be loaded. Email paths must never fail on a missing catalog."""
+    try:
+        return load_catalog(city).display_text("city_name", lang)
+    except Exception:
+        return None
+
+
 def booking_start_url(scfg: dict, lang: str = "de") -> str:
     """Entry URL of the city's booking flow, per vendor.
 
