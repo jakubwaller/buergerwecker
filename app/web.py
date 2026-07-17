@@ -8,7 +8,7 @@ from flask import Flask, request, render_template, redirect
 from app.config import load_config
 from app.db import connect, transaction
 from app.catalog import (load_catalog, available_cities, booking_start_url,
-                         CatalogError)
+                         city_display_name, CatalogError)
 from app.models import Filter
 from app.repo import insert_pending, active_subscriptions, confirm, soft_delete
 from app.ratelimit import GLOBAL_IP_LIMITER, email_rate_limit_ok
@@ -135,18 +135,19 @@ def _parse_max_days(raw: str | None) -> int | None:
     return None
 
 
-def _send_confirmation_email(conn, sub_id: int, email: str, lang: str, cfg) -> bool:
+def _send_confirmation_email(conn, sub_id: int, email: str, lang: str,
+                             city: str, cfg) -> bool:
     """Try to send the confirmation now. Returns True if delivered, False if
     deferred (quota exhausted) — the sign-up stays pending and the poller's
     retry pass sends it later (e.g. next day once quota resets)."""
     from app.confirmations import send_confirmation_now
-    return send_confirmation_now(conn, sub_id, email, lang, cfg)
+    return send_confirmation_now(conn, sub_id, email, lang, city, cfg)
 
 
 def _send_manage_link_email(conn, sub_id: int, cfg) -> None:
     """Sends a separate email with the /manage link - NEVER in digests."""
     row = conn.execute(
-        "SELECT email, language FROM subscriptions WHERE id=?",
+        "SELECT email, language, city FROM subscriptions WHERE id=?",
         (sub_id,),
     ).fetchone()
     if not row:
@@ -155,14 +156,16 @@ def _send_manage_link_email(conn, sub_id: int, cfg) -> None:
                primary=cfg.token_secret_primary,
                previous=cfg.token_secret_previous)
     url = f"{cfg.public_base_url}/manage/{tok}"
+    city_name = city_display_name(row["city"], row["language"])
+    suffix = f" ({city_name})" if city_name else ""
     if row["language"] == "de":
         body = (f"Dein Verwaltungs-Link: {url}\nMit diesem Link kannst du deine "
                 f"Einstellungen jederzeit ändern oder dich abmelden.")
-        subj = "Verwaltungs-Link"
+        subj = f"Verwaltungs-Link{suffix}"
     else:
         body = (f"Your management link: {url}\nUse it any time to change your "
                 f"settings or unsubscribe.")
-        subj = "Management link"
+        subj = f"Management link{suffix}"
     key = _idem_key(sub_id, [], f"manage-link-{sub_id}")
     mail_send(conn, row["email"], subj, body, idem_key=key)
 
@@ -322,7 +325,8 @@ def create_app() -> Flask:
         # registration is never lost. Only the message differs: "check your
         # inbox" vs "it may arrive tomorrow". No soft-delete, no lockout.
         try:
-            delivered = _send_confirmation_email(conn, sub_id, email, lang, cfg)
+            delivered = _send_confirmation_email(conn, sub_id, email, lang,
+                                                 city, cfg)
         except Exception:
             log.exception("confirmation email errored for sub %s; will retry", sub_id)
             delivered = False

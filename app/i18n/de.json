@@ -1,5 +1,7 @@
 {
   "digest.subject": "Neue Termine verfügbar",
+  "digest.subject_city": "Neue Termine in {city} verfügbar",
+  "digest.selection_city_label": "Stadt",
   "digest.greeting": "Hallo,",
   "digest.intro": "Es wurden neue passende Termine gefunden:",
   "digest.selection_heading": "Deine Auswahl",

@@ -59,12 +59,16 @@ def render_digest_text(sub: Subscription, slots: list[Slot], *,
         locations = t(lang, "digest.all_locations")
     else:
         locations = ", ".join(loc_label(u) for u in f.locations)
+    city_name = catalog.display_text("city_name", lang) if catalog else None
+    city_lbl = t(lang, "digest.selection_city_label") if city_name else ""
     svc_lbl = t(lang, "digest.selection_service_label")
     loc_lbl = t(lang, "digest.selection_locations_label")
     win_lbl = t(lang, "digest.selection_window_label") if f.max_days_ahead else ""
-    labels = [l for l in (svc_lbl, loc_lbl, win_lbl) if l]
+    labels = [l for l in (city_lbl, svc_lbl, loc_lbl, win_lbl) if l]
     pad = max(len(l) for l in labels) + 1  # width of the longest "label:"
     lines.append(t(lang, "digest.selection_heading"))
+    if city_name:
+        lines.append(f"  {(city_lbl + ':').ljust(pad)} {city_name}")
     lines.append(f"  {(svc_lbl + ':').ljust(pad)} {services}")
     lines.append(f"  {(loc_lbl + ':').ljust(pad)} {locations}")
     if f.max_days_ahead:
@@ -164,7 +168,10 @@ def send_digest(*, conn: sqlite3.Connection, subscription: Subscription,
                               unsubscribe_url=unsub_url,
                               public_base_url=cfg.public_base_url,
                               kofi_url=cfg.kofi_url)
-    subj = t(subscription.language, "digest.subject")
+    from app.catalog import city_display_name
+    city_name = city_display_name(subscription.city, subscription.language)
+    subj = (t(subscription.language, "digest.subject_city", city=city_name)
+            if city_name else t(subscription.language, "digest.subject"))
     key = _idem_key(subscription.id,
                     [s.hash() for s in matched_slots],
                     cycle_id)

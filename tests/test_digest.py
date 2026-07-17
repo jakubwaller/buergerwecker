@@ -247,3 +247,41 @@ def test_digest_no_summary_line_when_under_cap():
     assert "weitere passende Termine" not in text
     assert len(_slot_lines(text)) == MAX_SLOTS_PER_DIGEST
     assert text.count("/go/") == 1                   # just the city booking link
+
+
+# ---------- city naming (multi-tenant disambiguation) ----------
+
+def _cat_with_city():
+    import dataclasses
+    return dataclasses.replace(
+        _cat(), display={"city_name": {"de": "Leipzig", "en": "Leipzig"}})
+
+
+def test_selection_header_names_city():
+    slots = [Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")]
+    de = _render(_sub("de"), slots, catalog=_cat_with_city())
+    en = _render(_sub("en"), slots, catalog=_cat_with_city())
+    assert re.search(r"^  Stadt: +Leipzig$", de, re.M)
+    assert re.search(r"^  City: +Leipzig$", en, re.M)
+
+
+def test_selection_header_omits_city_without_display_name():
+    slots = [Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")]
+    text = _render(_sub("de"), slots, catalog=_cat())
+    assert "Stadt:" not in text
+
+
+def test_digest_subject_names_city():
+    # send_digest resolves the real per-city catalog; leipzig's display.json
+    # carries city_name, so the subject must name the city.
+    from app.digest import send_digest
+    from types import SimpleNamespace
+    conn = connect(":memory:")
+    init_schema(conn)
+    cfg = SimpleNamespace(token_secret_primary="x" * 32, token_secret_previous="",
+                          public_base_url="https://x", kofi_url="https://ko-fi.com/me")
+    sink = []
+    send_digest(conn=conn, subscription=_sub("de"),
+                matched_slots=[Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")],
+                cycle_id="c1", cfg=cfg, sink=sink)
+    assert sink[0].item.subject == "Neue Termine in Leipzig verfügbar"
