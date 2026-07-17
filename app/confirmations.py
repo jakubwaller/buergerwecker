@@ -13,15 +13,24 @@ from app.repo import set_confirmation_sent, pending_confirmations
 from app.tokens import sign
 
 
-def build_confirmation(sub_id: int, email: str, lang: str, cfg) -> Outgoing:
+def build_confirmation(sub_id: int, email: str, lang: str, city: str,
+                       cfg) -> Outgoing:
+    from app.catalog import city_display_name
     tok = sign(sub_id, "confirm",
                primary=cfg.token_secret_primary,
                previous=cfg.token_secret_previous)
     url = f"{cfg.public_base_url}/confirm/{tok}"
+    city_name = city_display_name(city, lang)
     if lang == "en":
-        subject, body = "Confirmation needed", f"Please confirm your subscription: {url}"
+        subject = (f"Confirmation needed ({city_name})" if city_name
+                   else "Confirmation needed")
+        body = (f"Please confirm your subscription for {city_name}: {url}"
+                if city_name else f"Please confirm your subscription: {url}")
     else:
-        subject, body = "Bestätigung benötigt", f"Bitte bestätige dein Abonnement: {url}"
+        subject = (f"Bestätigung benötigt ({city_name})" if city_name
+                   else "Bestätigung benötigt")
+        body = (f"Bitte bestätige dein Abonnement für {city_name}: {url}"
+                if city_name else f"Bitte bestätige dein Abonnement: {url}")
     # Stable per-subscription key: a deferred send and its later retry share it,
     # so the idempotency layer never double-sends a confirmation.
     return Outgoing(to=email, subject=subject, body=body,
@@ -29,11 +38,11 @@ def build_confirmation(sub_id: int, email: str, lang: str, cfg) -> Outgoing:
 
 
 def send_confirmation_now(conn: sqlite3.Connection, sub_id: int, email: str,
-                          lang: str, cfg) -> bool:
+                          lang: str, city: str, cfg) -> bool:
     """Try to send this sign-up's confirmation immediately. Returns True if it
     went out, False if it was deferred (quota exhausted) — in which case the
     pending row stays put and `send_pending_confirmations` retries it later."""
-    item = build_confirmation(sub_id, email, lang, cfg)
+    item = build_confirmation(sub_id, email, lang, city, cfg)
     result = send_batch(conn, [item], cfg)
     if item.idem_key in result.delivered:
         set_confirmation_sent(conn, sub_id)
@@ -48,10 +57,10 @@ def send_pending_confirmations(conn: sqlite3.Connection, cfg, *,
     pending = pending_confirmations(conn, max_age_days=max_age_days)
     if not pending:
         return
-    items = [build_confirmation(sub_id, email, lang, cfg)
-             for (sub_id, email, lang) in pending]
+    items = [build_confirmation(sub_id, email, lang, city, cfg)
+             for (sub_id, email, lang, city) in pending]
     key_to_sub = {item.idem_key: sub_id
-                  for item, (sub_id, _e, _l) in zip(items, pending)}
+                  for item, (sub_id, _e, _l, _c) in zip(items, pending)}
     result = send_batch(conn, items, cfg)
     for idem_key in result.delivered:
         set_confirmation_sent(conn, key_to_sub[idem_key])
