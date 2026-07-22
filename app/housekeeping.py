@@ -22,6 +22,7 @@ def run_once(conn: sqlite3.Connection) -> None:
     _prune_seen_slots(conn)
     _prune_idempotency(conn)
     _prune_slots_cache(conn)
+    _prune_availability(conn)
     _check_parser_canary(conn, cfg)
     _check_backup_health(conn, cfg)
     _sync_catalogs(conn, cfg)
@@ -127,6 +128,11 @@ def _prune_idempotency(conn):
 def _prune_slots_cache(conn):
     # Slots are short-lived in the upstream system; 14 days is generous.
     conn.execute("DELETE FROM slots_cache WHERE cached_at < datetime('now','-14 days')")
+
+def _prune_availability(conn):
+    # Analytics history; the admin page only ever looks back a few weeks.
+    from app.analytics import prune_availability
+    prune_availability(conn)
 
 def _check_parser_canary(conn, cfg):
     """Email developer if any city has been all-zero for > threshold during business hours."""

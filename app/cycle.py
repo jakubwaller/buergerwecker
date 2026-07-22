@@ -8,6 +8,7 @@ from app.repo import active_subscriptions, has_seen_slot
 from app.scrapers import get_scraper
 from app.http_session import CountingSession
 from app.models import Slot
+from app.analytics import record_availability
 
 # Imported here so tests can monkey-patch it.
 from app.digest import send_digest, flush_digests  # noqa: E402
@@ -142,6 +143,23 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
                 "WHERE city = ?",
                 (today, pd, today, rd, pd, rd, today, city),
             )
+    # Availability analytics: a thinned-out time series of how many free slots
+    # each tenant/type/office is showing. Deduped by slot hash first — the same
+    # slot can surface from two resources or two overlapping plans, and counting
+    # it twice would inflate the series. Best-effort; never blocks delivery.
+    slots_by_city: dict[str, list[Slot]] = {c: [] for c in cities_polled}
+    seen_hashes: dict[str, set[str]] = {c: set() for c in cities_polled}
+    for p in plans:
+        if p.city not in slots_by_city:
+            continue
+        for slot in slots_by_plan.get(p.key(), []):
+            h = slot.hash()
+            if h in seen_hashes[p.city]:
+                continue
+            seen_hashes[p.city].add(h)
+            slots_by_city[p.city].append(slot)
+    record_availability(conn, slots_by_city)
+
     now = datetime.utcnow()
     rate_cutoff = now - timedelta(minutes=rate_limit_minutes)
     # Fairness: serve longest-waiting subscribers first (never-notified, then
