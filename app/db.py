@@ -3,7 +3,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS subscriptions (
@@ -73,6 +73,19 @@ CREATE TABLE IF NOT EXISTS slots_cache (
   cached_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_slots_cache_at ON slots_cache(cached_at);
+
+-- Periodic sample of free-slot counts per tenant/appointment type/office.
+-- Written by the polling cycle (throttled, see app.analytics), pruned by
+-- housekeeping. Purely observational: nothing in the notification path reads it.
+CREATE TABLE IF NOT EXISTS availability_samples (
+  sampled_at    TIMESTAMP NOT NULL,
+  city          TEXT NOT NULL,
+  service_uuid  TEXT NOT NULL,
+  location_uuid TEXT NOT NULL,
+  n_slots       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_avail_city_at
+  ON availability_samples(city, sampled_at);
 """
 
 def connect(db_path: str) -> sqlite3.Connection:

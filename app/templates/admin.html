@@ -56,6 +56,10 @@
   time.ts.stale { color: #dc2626; font-weight: 600; }
   .quota-hot { color: #dc2626; font-weight: 600; }
   .adm-muted { color: var(--text-muted); }
+  .adm-wide { display: block; overflow-x: auto; white-space: nowrap; }
+  .adm-wide td { padding-right: 1.1rem; }
+  .adm-wide td.k { white-space: normal; min-width: 14rem; }
+  .adm-head td { font-size: 0.8rem; color: var(--text-muted); border-top: none !important; }
 </style>
 {% endblock %}
 
@@ -158,6 +162,64 @@
     </table>
   </section>
   {% endif %}
+
+  <section class="adm-section">
+    <h2>Availability <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· free slots per office &amp; type, sampled every ~15 min · last 7 days</span></h2>
+    {% if s.availability %}
+      <table class="adm-table adm-wide">
+        <tr class="adm-head">
+          <td class="k">City · type · office</td>
+          <td class="v">Avg free</td><td class="v">Max</td>
+          <td class="v">Empty</td><td class="v">Samples</td>
+        </tr>
+        {% for r in s.availability %}
+          <tr>
+            <td class="k">{{ r.city_label }} · {{ r.service }}<br><span class="adm-muted">{{ r.location }}</span></td>
+            <td class="v">{{ r.avg_slots }}</td>
+            <td class="v">{{ r.max_slots }}</td>
+            <td class="v"{% if r.zero_rate >= 80 %} style="color:#dc2626;font-weight:600"{% endif %}>{{ r.zero_rate }}%</td>
+            <td class="v adm-muted">{{ r.samples }}</td>
+          </tr>
+        {% endfor %}
+      </table>
+      {% if s.availability_daily %}
+        <h3 style="margin-top:1.2rem;font-size:1rem;">Daily mean total free slots per city</h3>
+        <table class="adm-table">
+          {% for city, rows in s.availability_daily|groupby('city') %}
+            <tr>
+              <td class="k">{{ s.city_labels.get(city, city) }}</td>
+              <td class="v">{% for r in rows %}{{ r.day[5:] }} <strong>{{ r.avg_total }}</strong>{% if not loop.last %} · {% endif %}{% endfor %}</td>
+            </tr>
+          {% endfor %}
+        </table>
+      {% endif %}
+    {% else %}
+      <p class="adm-muted">No samples yet — the first one lands within ~15 minutes of the next poll.</p>
+    {% endif %}
+  </section>
+
+  <section class="adm-section">
+    <h2>Usage <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· signups per UTC day, last 30 days</span></h2>
+    {% if s.usage_daily %}
+      <table class="adm-table adm-wide">
+        <tr class="adm-head">
+          <td class="k">Day</td><td class="v">Signups</td>
+          <td class="v">Confirmed</td><td class="v">Cancelled</td><td class="v">By city</td>
+        </tr>
+        {% for d in s.usage_daily %}
+          <tr>
+            <td class="k">{{ d.day }}</td>
+            <td class="v">{{ d.signups }}</td>
+            <td class="v">{{ d.confirmed }}</td>
+            <td class="v">{{ d.deleted }}</td>
+            <td class="v adm-muted">{% for c, n in d.by_city|dictsort %}{{ s.city_labels.get(c, c) }} {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</td>
+          </tr>
+        {% endfor %}
+      </table>
+    {% else %}
+      <p class="adm-muted">No signups in the last 30 days.</p>
+    {% endif %}
+  </section>
 
   <section class="adm-section">
     <h2>System</h2>

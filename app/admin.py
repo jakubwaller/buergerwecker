@@ -2,6 +2,8 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime
 
+from app.analytics import availability_daily, availability_summary, usage_daily
+
 
 def _humanize_age(iso: str | None, now: datetime) -> str:
     """Return a ' (3h ago)' suffix for an ISO timestamp; '' if missing/unparsable.
@@ -112,6 +114,23 @@ def render_summary_text(s: dict, *, now: datetime) -> str:
             out.append(f"    Polls         {agg.get('polls_today', 0)} today "
                        f"· {agg.get('polls_total', 0)} total")
             out.append(f"    Tenants       {', '.join(agg.get('tenants', []))}")
+    avail = s.get("availability") or []
+    if avail:
+        out += ["", "AVAILABILITY (avg free slots per sample, 7d · empty% = samples with none)"]
+        for r in avail[:15]:
+            out.append(f"  {r['city_label']} · {r['service']} · {r['location']}")
+            out.append(f"    avg {r['avg_slots']} · max {r['max_slots']} "
+                       f"· empty {r['zero_rate']}% · n={r['samples']}")
+        if len(avail) > 15:
+            out.append(f"  … {len(avail) - 15} more rows on /admin")
+    usage = s.get("usage_daily") or []
+    if usage:
+        out += ["", "USAGE (signups per UTC day, last 7 shown)"]
+        for d in usage[:7]:
+            cities = " · ".join(f"{c} {n}" for c, n in sorted(d["by_city"].items()))
+            out.append(f"  {d['day']}  signups {d['signups']} · confirmed "
+                       f"{d['confirmed']} · cancelled {d['deleted']}"
+                       + (f"  ({cities})" if cities else ""))
     out += ["",
             "SYSTEM",
             f"  Last housekeeping  {_ts(s.get('last_housekeeping_at'), now, missing='never')}",
@@ -318,4 +337,33 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         "last_failure_alert_at": meta_val("last_failure_alert_at"),
         "last_housekeeping_at": meta_val("last_housekeeping_at"),
         "last_backup_at":       meta_val("last_backup_at"),
+        "availability": _availability(conn, city_labels),
+        "availability_daily": availability_daily(conn),
+        "usage_daily": usage_daily(conn),
     }
+
+
+def _availability(conn: sqlite3.Connection, city_labels: dict) -> list[dict]:
+    """Availability summary rows with catalog labels resolved for display.
+
+    Unknown uuids (a service the city has since retired) keep their uuid — the
+    history is still worth seeing, and dropping rows would silently understate
+    past scarcity.
+    """
+    from app.catalog import load_catalog
+    rows = availability_summary(conn)
+    cats: dict[str, object] = {}
+    for r in rows:
+        city = r["city"]
+        if city not in cats:
+            try:
+                cats[city] = load_catalog(city)
+            except Exception:
+                cats[city] = None
+        cat = cats[city]
+        r["city_label"] = city_labels.get(city, city)
+        r["service"] = (cat.appointment_type_label(r["service_uuid"], "en")
+                        if cat else r["service_uuid"])
+        r["location"] = (cat.location_label(r["location_uuid"], "en")
+                         if cat else r["location_uuid"])
+    return rows
