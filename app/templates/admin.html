@@ -60,6 +60,55 @@
   .adm-wide td { padding-right: 1.1rem; }
   .adm-wide td.k { white-space: normal; min-width: 14rem; }
   .adm-head td { font-size: 0.8rem; color: var(--text-muted); border-top: none !important; }
+
+  /* --- charts (dependency-free, theme-aware) --- */
+  .mini-stats { display: flex; flex-wrap: wrap; gap: 1.3rem; margin: 0.2rem 0 1.1rem; }
+  .mini-stats .ms-num { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .mini-stats .ms-lbl { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.1rem; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 0.35rem 1rem; font-size: 0.78rem; color: var(--text-muted); margin: 0.55rem 0 0; }
+  .legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+  .swatch { width: 0.7rem; height: 0.7rem; border-radius: 3px; flex: none; display: inline-block; }
+
+  /* Column (time-series) bar chart */
+  .bars { display: flex; align-items: flex-end; gap: 2px; height: 132px; margin-top: 0.3rem; }
+  .bar-col { flex: 1 1 0; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; }
+  .bar-col .bar {
+    width: 100%; min-height: 2px;
+    background: color-mix(in srgb, var(--accent) 26%, transparent);
+    border-radius: 3px 3px 0 0; overflow: hidden;
+    display: flex; flex-direction: column; justify-content: flex-end;
+    transition: filter 0.1s;
+  }
+  .bar-col .bar-fill { width: 100%; background: var(--accent); }
+  .bar-col:hover .bar { filter: brightness(1.12); }
+  .bar-col .bar.empty { background: var(--border); min-height: 2px; border-radius: 999px; }
+  .bar-axis { display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--text-muted); margin-top: 0.35rem; }
+
+  /* Horizontal magnitude bars (availability per office) */
+  .hbars { margin-top: 0.4rem; }
+  .hbar-row { padding: 0.55rem 0; border-top: 1px solid var(--border); }
+  .hbar-row:first-child { border-top: none; }
+  .hbar-lbl { font-size: 0.875rem; margin-bottom: 0.35rem; }
+  .hbar-lbl .sub { color: var(--text-muted); font-size: 0.8rem; }
+  .hbar-track { display: flex; align-items: center; gap: 0.6rem; }
+  .hbar-bg { position: relative; flex: 1 1 auto; height: 0.7rem; background: var(--border); border-radius: 999px; overflow: hidden; }
+  .hbar-fill { position: absolute; inset: 0 auto 0 0; border-radius: 999px; background: var(--accent); min-width: 2px; }
+  .hbar-fill.scarce { background: #d97706; }
+  .hbar-fill.empty { background: #dc2626; }
+  .hbar-val { font-size: 0.8rem; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--text-muted); flex: none; }
+  .hbar-val strong { color: var(--text); font-weight: 600; }
+
+  /* Sparkline rows (per-city daily trend) */
+  .spark-row { display: grid; grid-template-columns: minmax(5.5rem, auto) 1fr auto; align-items: center; gap: 0.7rem; padding: 0.4rem 0; border-top: 1px solid var(--border); }
+  .spark-row:first-child { border-top: none; }
+  .spark-city { font-size: 0.875rem; font-weight: 500; }
+  .spark { display: flex; align-items: flex-end; gap: 1.5px; height: 34px; }
+  .spark i { flex: 1 1 0; min-width: 0; min-height: 2px; background: color-mix(in srgb, var(--accent) 55%, transparent); border-radius: 2px 2px 0 0; }
+  .spark i.last { background: var(--accent); }
+  .spark i.zero { background: var(--border); min-height: 2px; border-radius: 999px; }
+  .spark-now { font-size: 0.85rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .spark-now strong { font-weight: 600; }
 </style>
 {% endblock %}
 
@@ -166,32 +215,46 @@
   <section class="adm-section">
     <h2>Availability <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· free slots per office &amp; type, sampled every ~15 min · last 7 days</span></h2>
     {% if s.availability %}
-      <table class="adm-table adm-wide">
-        <tr class="adm-head">
-          <td class="k">City · type · office</td>
-          <td class="v">Avg free</td><td class="v">Max</td>
-          <td class="v">Empty</td><td class="v">Samples</td>
-        </tr>
+      {# Bar length = avg free slots (scaled to the busiest office); colour flags
+         scarcity by empty-sample rate. Longer & bluer = more availability. #}
+      {% set avmax = (s.availability|map(attribute='avg_slots')|max) or 1 %}
+      <div class="hbars">
         {% for r in s.availability %}
-          <tr>
-            <td class="k">{{ r.city_label }} · {{ r.service }}<br><span class="adm-muted">{{ r.location }}</span></td>
-            <td class="v">{{ r.avg_slots }}</td>
-            <td class="v">{{ r.max_slots }}</td>
-            <td class="v"{% if r.zero_rate >= 80 %} style="color:#dc2626;font-weight:600"{% endif %}>{{ r.zero_rate }}%</td>
-            <td class="v adm-muted">{{ r.samples }}</td>
-          </tr>
+          <div class="hbar-row">
+            <div class="hbar-lbl">{{ r.city_label }} · {{ r.service }}<br><span class="sub">{{ r.location }}</span></div>
+            <div class="hbar-track" title="avg {{ r.avg_slots }} · max {{ r.max_slots }} · empty {{ r.zero_rate }}% · {{ r.samples }} samples">
+              <div class="hbar-bg">
+                <div class="hbar-fill{% if r.zero_rate >= 80 %} empty{% elif r.zero_rate >= 40 %} scarce{% endif %}"
+                     style="width: {{ (2 + 98 * r.avg_slots / avmax)|round(1) }}%"></div>
+              </div>
+              <div class="hbar-val"><strong>{{ r.avg_slots }}</strong> avg · max {{ r.max_slots }} ·
+                <span{% if r.zero_rate >= 80 %} style="color:#dc2626;font-weight:600"{% elif r.zero_rate >= 40 %} style="color:#d97706;font-weight:600"{% endif %}>{{ r.zero_rate }}% empty</span></div>
+            </div>
+          </div>
         {% endfor %}
-      </table>
+      </div>
+      <div class="legend">
+        <span><span class="swatch" style="background:var(--accent)"></span>Plentiful</span>
+        <span><span class="swatch" style="background:#d97706"></span>Scarce (≥40% empty)</span>
+        <span><span class="swatch" style="background:#dc2626"></span>Mostly empty (≥80%)</span>
+      </div>
       {% if s.availability_daily %}
-        <h3 style="margin-top:1.2rem;font-size:1rem;">Daily mean total free slots per city</h3>
-        <table class="adm-table">
-          {% for city, rows in s.availability_daily|groupby('city') %}
-            <tr>
-              <td class="k">{{ s.city_labels.get(city, city) }}</td>
-              <td class="v">{% for r in rows %}{{ r.day[5:] }} <strong>{{ r.avg_total }}</strong>{% if not loop.last %} · {% endif %}{% endfor %}</td>
-            </tr>
-          {% endfor %}
-        </table>
+        <h3 style="margin-top:1.4rem;font-size:1rem;">Daily mean free slots per city <span class="adm-muted" style="font-weight:400;">· last 14 days</span></h3>
+        {% for city, rows in s.availability_daily|groupby('city') %}
+          {% set dmax = (rows|map(attribute='avg_total')|max) or 1 %}
+          <div class="spark-row">
+            <div class="spark-city">{{ s.city_labels.get(city, city) }}</div>
+            <div class="spark">
+              {% for r in rows %}
+                <i class="{% if r.avg_total == 0 %}zero{% elif loop.last %}last{% endif %}"
+                   style="height: {{ (100 * r.avg_total / dmax)|round(1) if r.avg_total else 0 }}%"
+                   title="{{ r.day }} · {{ r.avg_total }} avg free"></i>
+              {% endfor %}
+            </div>
+            {% set latest = rows|last %}
+            <div class="spark-now"><strong>{{ latest.avg_total }}</strong> <span class="adm-muted">now</span></div>
+          </div>
+        {% endfor %}
       {% endif %}
     {% else %}
       <p class="adm-muted">No samples yet — the first one lands within ~15 minutes of the next poll.</p>
@@ -201,21 +264,35 @@
   <section class="adm-section">
     <h2>Usage <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· signups per UTC day, last 30 days</span></h2>
     {% if s.usage_daily %}
-      <table class="adm-table adm-wide">
-        <tr class="adm-head">
-          <td class="k">Day</td><td class="v">Signups</td>
-          <td class="v">Confirmed</td><td class="v">Cancelled</td><td class="v">By city</td>
-        </tr>
-        {% for d in s.usage_daily %}
-          <tr>
-            <td class="k">{{ d.day }}</td>
-            <td class="v">{{ d.signups }}</td>
-            <td class="v">{{ d.confirmed }}</td>
-            <td class="v">{{ d.deleted }}</td>
-            <td class="v adm-muted">{% for c, n in d.by_city|dictsort %}{{ s.city_labels.get(c, c) }} {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</td>
-          </tr>
+      {% set days = s.usage_daily|reverse|list %}
+      {% set umax = (s.usage_daily|map(attribute='signups')|max) or 1 %}
+      <div class="mini-stats">
+        <div><div class="ms-num">{{ s.usage_daily|sum(attribute='signups') }}</div><div class="ms-lbl">Signups · 30d</div></div>
+        <div><div class="ms-num">{{ s.usage_daily|sum(attribute='confirmed') }}</div><div class="ms-lbl">Confirmed</div></div>
+        <div><div class="ms-num">{{ s.usage_daily|sum(attribute='deleted') }}</div><div class="ms-lbl">Cancelled</div></div>
+      </div>
+      {# Stacked column: confirmed (solid) at the base, still-pending (light) on
+         top. Hover a day for the exact split and the per-city breakdown. #}
+      <div class="bars">
+        {% for d in days %}
+          {% set bycity = d.by_city|dictsort|map('join', ' ')|join(' · ') %}
+          <div class="bar-col" title="{{ d.day }} · {{ d.signups }} signups ({{ d.confirmed }} confirmed, {{ d.deleted }} cancelled){% if bycity %} · {{ bycity }}{% endif %}">
+            {% if d.signups %}
+              <div class="bar" style="height: {{ (100 * d.signups / umax)|round(1) }}%">
+                <div class="bar-fill" style="height: {{ (100 * d.confirmed / d.signups)|round(1) }}%"></div>
+              </div>
+            {% else %}
+              <div class="bar empty"></div>
+            {% endif %}
+          </div>
         {% endfor %}
-      </table>
+      </div>
+      {% set first_day = days|first %}{% set last_day = days|last %}
+      <div class="bar-axis"><span>{{ first_day.day }}</span><span>{{ last_day.day }}</span></div>
+      <div class="legend">
+        <span><span class="swatch" style="background:var(--accent)"></span>Confirmed</span>
+        <span><span class="swatch" style="background:color-mix(in srgb, var(--accent) 26%, transparent)"></span>Pending confirmation</span>
+      </div>
     {% else %}
       <p class="adm-muted">No signups in the last 30 days.</p>
     {% endif %}
