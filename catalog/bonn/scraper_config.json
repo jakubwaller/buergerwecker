@@ -1,0 +1,7 @@
+{
+  "vendor": "smartcjm",
+  "base_url": "https://termine.bonn.de/m/dlz/extern/calendar",
+  "uid": "b91bb67b-15cf-44df-ab0b-96ebe25c1ae3",
+  "steps": "serviceslocationssearch_resultsbookingfinish",
+  "poll_interval_seconds": 180
+}

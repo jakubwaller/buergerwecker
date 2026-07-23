@@ -1,0 +1,7 @@
+{
+  "vendor": "smartcjm",
+  "base_url": "https://termine.bochum.de/m/buergerbuero/extern/calendar",
+  "uid": "eab3c2ce-bd9c-4c81-8dab-663aebdc0ce3",
+  "steps": "serviceslocationssearch_resultsbookingfinish",
+  "poll_interval_seconds": 180
+}

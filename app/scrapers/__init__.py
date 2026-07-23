@@ -28,6 +28,8 @@ _REGISTRY: dict[str, ModuleType] = {
     "leipzig": smartcjm,
     "leipzig-abh": smartcjm,
     "dresden": tevis,
+    "bochum": smartcjm,
+    "bonn": smartcjm,
 }
 
 def get_scraper(city: str) -> ModuleType:
