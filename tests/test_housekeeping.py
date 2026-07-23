@@ -32,15 +32,53 @@ def _f():
                   time_window_start=time(0,0), time_window_end=time(23,59))
 
 
-def test_ops_summary_email_uses_dashboard_layout(db):
+def test_ops_summary_first_run_sends_heartbeat(db):
+    """Fresh DB: no prior summary mail, no anomalies -> a weekly all-clear goes
+    out and the heartbeat clock is stamped."""
     from app.config import load_config
     from app.housekeeping import _send_summary_email
+    # Recent backup so the stale-backup anomaly doesn't fire.
+    db.execute("INSERT INTO meta (key, value) VALUES ('last_backup_at', ?)",
+               (datetime.utcnow().isoformat(),))
     with patch("app.mail.send") as send:
         _send_summary_email(db, load_config())
     assert send.call_count == 1
-    body = send.call_args.args[3]   # send(conn, to, subject, body, *, idem_key=...)
-    assert "OVERVIEW" in body and "CITIES" in body and "SYSTEM" in body
-    assert "active_subscriptions:" not in body   # not the old raw key:value dump
+    subject, body = send.call_args.args[2], send.call_args.args[3]
+    assert "all-clear" in subject
+    assert "SNAPSHOT" in body and "Full dashboard" in body
+    stamped = db.execute(
+        "SELECT value FROM meta WHERE key='last_summary_email_at'").fetchone()
+    assert stamped is not None
+
+
+def test_ops_summary_quiet_day_stays_silent(db):
+    """A recent heartbeat + no anomalies -> nothing is sent."""
+    from app.config import load_config
+    from app.housekeeping import _send_summary_email
+    now = datetime.utcnow()
+    db.execute("INSERT INTO meta (key, value) VALUES ('last_backup_at', ?)",
+               (now.isoformat(),))
+    db.execute("INSERT INTO meta (key, value) VALUES ('last_summary_email_at', ?)",
+               (now.isoformat(),))
+    with patch("app.mail.send") as send:
+        _send_summary_email(db, load_config())
+    assert send.call_count == 0
+
+
+def test_ops_summary_anomaly_sends_despite_recent_heartbeat(db):
+    """An anomaly (here: stale backup) fires even inside the weekly quiet
+    window, and the subject signals it needs a look."""
+    from app.config import load_config
+    from app.housekeeping import _send_summary_email
+    db.execute("INSERT INTO meta (key, value) VALUES ('last_summary_email_at', ?)",
+               (datetime.utcnow().isoformat(),))
+    # No last_backup_at -> stale-backup anomaly.
+    with patch("app.mail.send") as send:
+        _send_summary_email(db, load_config())
+    assert send.call_count == 1
+    subject, body = send.call_args.args[2], send.call_args.args[3]
+    assert "need a look" in subject
+    assert "backup is stale" in body
 
 def test_expired_subscriptions_soft_deleted(db):
     sid = insert_pending(db, email="a@x.com", city="leipzig", language="de",

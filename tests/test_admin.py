@@ -2,7 +2,7 @@ import pytest
 from datetime import datetime
 from app.web import create_app
 from app.db import connect, init_schema
-from app.admin import stats, render_summary_text
+from app.admin import stats, summary_anomalies, render_summary_email
 import os
 
 @pytest.fixture
@@ -177,12 +177,14 @@ def test_stats_notification_metrics(tmp_path):
     assert s["emails_by_provider_7d"] == {"mailjet": 1, "resend": 1}  # 'pending' excluded
 
 
-# ---------- ops-summary email renderer (mirrors the dashboard) ----------
+# ---------- ops-summary: anomaly detection + compact email ----------
 
 NOW = datetime(2026, 6, 9, 14, 34, 0)
 
 
 def _summary_stats(**over):
+    # A wholly healthy baseline: no anomalies should fire against this. Poll is
+    # fresh, quotas well under warn %, signups near baseline, backup recent.
     base = {
         "active_subscriptions": 42,
         "active_subscriptions_by_city": {"leipzig": 42},
@@ -195,6 +197,7 @@ def _summary_stats(**over):
         "upstream_by_city": {"leipzig": {"polls_today": 120, "polls_total": 9821,
                                          "requests_today": 240, "requests_total": 20140}},
         "last_polled_at_by_city": {"leipzig": "2026-06-09T14:32:00"},
+        "city_labels": {"leipzig": "Leipzig"},
         "slots_cached": 17,
         "emails_sent_total": 1203,
         "notifications_24h": 2,
@@ -203,6 +206,8 @@ def _summary_stats(**over):
         "active_awaiting_first_match": 4,
         "last_notification": {"sub_id": 5, "at": "2026-06-09T14:33:00"},
         "emails_by_provider_7d": {"mailjet": 80, "resend": 8},
+        "email_usage": {"mailjet": {"month": 100, "today": 12,
+                                    "month_quota": 6000, "day_quota": 200}},
         "last_failure_alert_at": None,
         "last_housekeeping_at": "2026-06-09T11:30:00",
         "last_backup_at": "2026-06-09T09:30:00",
@@ -215,84 +220,97 @@ def _line(text, needle):
     return next(l for l in text.splitlines() if needle in l)
 
 
-def test_summary_has_three_sections():
-    text = render_summary_text(_summary_stats(), now=NOW)
-    assert "OVERVIEW" in text
-    assert "CITIES" in text
-    assert "SYSTEM" in text
+# --- anomaly detection ---
+
+def test_healthy_baseline_has_no_anomalies():
+    assert summary_anomalies(_summary_stats(), now=NOW) == []
 
 
-def test_summary_overview_numbers():
-    text = render_summary_text(_summary_stats(), now=NOW)
-    assert "42" in _line(text, "Active subscriptions")
-    assert "1203" in _line(text, "Emails sent")
-    assert "17" in _line(text, "Slots cached")
+def test_anomaly_quota_near_cap():
+    a = summary_anomalies(_summary_stats(email_usage={
+        "mailjet": {"month": 100, "today": 170, "month_quota": 6000, "day_quota": 200},
+    }), now=NOW)
+    assert any("mailjet today quota at 85% (170/200)" in x for x in a)
+
+
+def test_anomaly_signup_spike():
+    a = summary_anomalies(_summary_stats(signups_last_24h=51, signups_last_7d=68),
+                          now=NOW)
+    assert any("signup spike: 51 in 24h" in x for x in a)
+
+
+def test_anomaly_signup_drop():
+    # Baseline ~4/day, zero in the last 24h -> flagged.
+    a = summary_anomalies(_summary_stats(signups_last_24h=0, signups_last_7d=28),
+                          now=NOW)
+    assert any("no signups in 24h" in x for x in a)
+
+
+def test_no_signup_drop_for_quiet_tenant():
+    # Baseline below SIGNUP_DROP_BASELINE: a zero day is normal, not an anomaly.
+    assert summary_anomalies(_summary_stats(signups_last_24h=0, signups_last_7d=7),
+                             now=NOW) == []
+
+
+def test_anomaly_stale_polling():
+    a = summary_anomalies(
+        _summary_stats(last_polled_at_by_city={"leipzig": "2026-06-09T06:00:00"}),
+        now=NOW)  # ~8.5h stale
+    assert any("Leipzig: not polled for 8h" in x for x in a)
+
+
+def test_anomaly_never_polled_with_subs():
+    a = summary_anomalies(_summary_stats(last_polled_at_by_city={}), now=NOW)
+    assert any("Leipzig: 42 active subs but no poll recorded" in x for x in a)
+
+
+def test_zero_matches_alone_is_not_an_anomaly():
+    # A scarce city legitimately reports zero matches; the canary owns that case.
+    assert summary_anomalies(
+        _summary_stats(parser_zero_match_since_by_city={"leipzig": "2026-06-08T06:00:00"}),
+        now=NOW) == []
+
+
+def test_anomaly_reflects_recent_failure_alert():
+    a = summary_anomalies(
+        _summary_stats(last_failure_alert_at="2026-06-09T12:00:00"), now=NOW)
+    assert any("failure alert fired" in x for x in a)
+
+
+def test_anomaly_reflects_stale_backup():
+    a = summary_anomalies(_summary_stats(last_backup_at=None), now=NOW)
+    assert any("backup is stale" in x for x in a)
+
+
+# --- compact email rendering ---
+
+def test_email_leads_with_anomalies():
+    anomalies = ["mailjet today quota at 85% (170/200)", "backup is stale (>48h) or missing"]
+    text = render_summary_email(_summary_stats(), now=NOW, anomalies=anomalies,
+                                base_url="https://buergerwecker.de")
+    assert "2 things need a look:" in text
+    assert "• mailjet today quota at 85% (170/200)" in text
+    assert "https://buergerwecker.de/admin" in _line(text, "Full dashboard")
+
+
+def test_email_singular_anomaly_grammar():
+    text = render_summary_email(_summary_stats(), now=NOW,
+                                anomalies=["backup is stale (>48h) or missing"])
+    assert "1 thing needs a look:" in text
+
+
+def test_email_heartbeat_all_clear():
+    text = render_summary_email(_summary_stats(), now=NOW, anomalies=[])
+    assert "all-clear" in text.lower()
+
+
+def test_email_snapshot_numbers():
+    text = render_summary_email(_summary_stats(), now=NOW, anomalies=[])
+    assert "42" in _line(text, "Active subs") and "Leipzig 42" in _line(text, "Active subs")
     signups = _line(text, "Signups")
     assert "24h 5" in signups and "7d 19" in signups
-
-
-def test_summary_notifications_block():
-    text = render_summary_text(_summary_stats(), now=NOW)
-    assert "NOTIFICATIONS" in text
-    noti = _line(text, "Subscribers notified")
-    assert "24h 2" in noti and "7d 7" in noti and "ever 9" in noti
-    assert "4 of 42 active" in _line(text, "Awaiting first match")
-    recent = _line(text, "Most recent")
-    assert "2026-06-09 14:33Z" in recent and "sub #5" in recent
-
-
-def test_summary_delivery_provider_line():
-    text = render_summary_text(_summary_stats(), now=NOW)
-    dl = _line(text, "Delivery (7d)")
-    assert "mailjet 80" in dl and "resend 8" in dl
-
-
-def test_summary_notifications_fallbacks():
-    text = render_summary_text(
-        _summary_stats(last_notification=None, emails_by_provider_7d={}), now=NOW)
-    assert "none yet" in _line(text, "Most recent")
-    assert "none" in _line(text, "Delivery (7d)")
-
-
-def test_summary_city_block():
-    text = render_summary_text(_summary_stats(), now=NOW)
-    assert "leipzig" in _line(text, "leipzig")
-    assert "matching slots" in _line(text, "leipzig")
-    polls = _line(text, "Polls")
-    assert "120 today" in polls and "9821 total" in polls
-    assert "240 today" in _line(text, "Requests")
-    subs = _line(text, "Plans")   # only the city block has a "Plans" count
-    assert "42" in subs and "Plans 6" in subs
-
-
-def test_summary_last_polled_shows_absolute_and_relative():
-    text = render_summary_text(_summary_stats(), now=NOW)
-    lp = _line(text, "Last polled")
-    assert "2026-06-09 14:32Z" in lp   # absolute UTC
-    assert "2m ago" in lp              # relative hint (now - 2 min)
-
-
-def test_summary_city_status_no_matches():
-    text = render_summary_text(
-        _summary_stats(parser_zero_match_since_by_city={"leipzig": "2026-06-08T06:00:00"}),
-        now=NOW)
-    assert "NO MATCHES since 2026-06-08T06:00:00" in _line(text, "leipzig")
-
-
-def test_summary_system_fallbacks():
-    text = render_summary_text(
-        _summary_stats(last_backup_at=None, last_failure_alert_at=None), now=NOW)
-    assert "never" in _line(text, "Last backup")
-    assert "none" in _line(text, "Failure alert")
-    hk = _line(text, "Last housekeeping")
-    assert "2026-06-09 11:30Z" in hk and "3h ago" in hk
-
-
-def test_summary_empty_cities():
-    text = render_summary_text(
-        _summary_stats(upstream_by_city={}, active_subscriptions_by_city={},
-                       last_polled_at_by_city={}), now=NOW)
-    assert "No polling activity yet." in text
+    assert "mailjet 80" in _line(text, "Delivery")
+    assert "mailjet 12/200" in _line(text, "Quota today")
 
 
 def test_stats_today_counts_gated_by_stale_date(tmp_path):
@@ -347,10 +365,6 @@ def test_admin_aggregates_upstream_load_per_host_and_labels_tenants(client):
     assert "Upstream hosts" in html
     assert "terminvereinbarung.leipzig.de" in html
     assert "Leipzig-abh" not in html             # raw key no longer shown
-    # Text summary mirrors both.
-    body = render_summary_text(s, now=datetime.utcnow())
-    assert "UPSTREAM HOSTS" in body
-    assert "38 today" in body
 
 
 # ---------- email quota view (durable per-day counters) ----------
@@ -396,12 +410,10 @@ def test_admin_renders_email_quota_section(client):
     assert "483 / 6000" in html          # MAILJET_MONTHLY_QUOTA default
     assert "0 / 3000" in html            # RESEND_MONTHLY_QUOTA default
 
-def test_summary_email_quota_lines():
-    text = render_summary_text(_summary_stats(email_usage={
+def test_summary_email_quota_line_lists_each_provider():
+    text = render_summary_email(_summary_stats(email_usage={
         "mailjet": {"month": 483, "today": 12, "month_quota": 6000, "day_quota": 200},
         "resend":  {"month": 1, "today": 0, "month_quota": 3000, "day_quota": 100},
-    }), now=NOW)
-    mj = _line(text, "Quota mailjet")
-    assert "month 483/6000" in mj and "today 12/200" in mj
-    re_ = _line(text, "Quota resend")
-    assert "month 1/3000" in re_ and "today 0/100" in re_
+    }), now=NOW, anomalies=[])
+    q = _line(text, "Quota today")
+    assert "mailjet 12/200" in q and "resend 0/100" in q

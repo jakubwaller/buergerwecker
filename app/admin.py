@@ -1,8 +1,20 @@
 from __future__ import annotations
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from app.analytics import availability_daily, availability_summary, usage_daily
+
+# Thresholds for summary_anomalies(). Kept as module constants so the tests can
+# pin exact boundaries and prod can be retuned in one place.
+QUOTA_WARN_PCT = 80        # a provider's usage crossing this % of a cap warns
+                           # here, ahead of the hard block in maybe_quota_alert.
+SIGNUP_SPIKE_MIN = 10      # ignore "spikes" below this absolute 24h count
+SIGNUP_SPIKE_FACTOR = 3    # 24h signups >= factor x daily baseline == a spike
+SIGNUP_DROP_BASELINE = 3   # only flag a zero-signup day if the baseline is this
+                           # busy (>= ~21/wk) — a quiet tenant hitting 0 is normal
+STALE_POLL_HOURS = 3       # a city with subs unpolled this long has stalled
+RECENT_ALERT_HOURS = 24    # reflect dedicated alerts fired within this window
+BACKUP_STALE_HOURS = 48    # mirrors housekeeping._check_backup_health
 
 
 def _humanize_age(iso: str | None, now: datetime) -> str:
@@ -43,100 +55,118 @@ def _ts(iso: str | None, now: datetime, *, missing: str) -> str:
     return f"{abs_}{_humanize_age(iso, now)}"
 
 
-def render_summary_text(s: dict, *, now: datetime) -> str:
-    """Plain-text ops summary mirroring the /admin dashboard sections.
+def _parse_ts(iso: str | None) -> datetime | None:
+    """ISO string (naive UTC, optional trailing Z) -> datetime, or None."""
+    if not iso:
+        return None
+    try:
+        return datetime.fromisoformat(iso.rstrip("Z"))
+    except (TypeError, ValueError):
+        return None
 
-    Pure: takes a `stats()` dict and the current time (injected for testable
-    relative-age rendering) and returns the email body.
+
+def summary_anomalies(s: dict, *, now: datetime) -> list[str]:
+    """Short, human-readable lines for anything worth a look — empty when all is
+    healthy. Pure: reads a stats() dict + injected `now`.
+
+    Hard failures (parser canary, stale backup, catalog drift, quota block,
+    poller errors) already send their own targeted mail. The first three checks
+    here surface *softer* signals those don't; the last two simply reflect a
+    recent hard alert so this one mail is a complete picture, not a thing to
+    cross-check against the others.
     """
+    out: list[str] = []
+
+    # 1. A provider's send volume is climbing toward a configured cap — warns
+    #    ahead of the hard quota block in mail.maybe_quota_alert.
+    for prov, u in sorted((s.get("email_usage") or {}).items()):
+        for period, cap_key in (("today", "day_quota"), ("month", "month_quota")):
+            cap = u.get(cap_key)
+            used = u.get(period) or 0
+            if cap and used >= cap * QUOTA_WARN_PCT / 100:
+                out.append(f"{prov} {period} quota at {round(used * 100 / cap)}% "
+                           f"({used}/{cap})")
+
+    # 2. Signup volume deviates sharply from the trailing 7-day baseline — a
+    #    press/Reddit surge, or an inflow that suddenly dried up.
+    d24 = s.get("signups_last_24h") or 0
+    baseline = (s.get("signups_last_7d") or 0) / 7
+    if d24 >= SIGNUP_SPIKE_MIN and d24 >= baseline * SIGNUP_SPIKE_FACTOR:
+        out.append(f"signup spike: {d24} in 24h vs ~{baseline:.0f}/day baseline")
+    elif baseline >= SIGNUP_DROP_BASELINE and d24 == 0:
+        out.append(f"no signups in 24h (baseline ~{baseline:.0f}/day)")
+
+    # 3. A city with active subscribers has stopped polling — a silent stall the
+    #    zero-match canary can't catch (it keys off matches, not poll liveness).
+    #    Zero-matches itself is deliberately NOT flagged: for a scarce tenant
+    #    like Leipzig that's a normal state, and a broken parser is the canary's job.
+    subs_by_city = s.get("active_subscriptions_by_city") or {}
+    polled = s.get("last_polled_at_by_city") or {}
+    labels = s.get("city_labels") or {}
+    for city, n in sorted(subs_by_city.items()):
+        if n <= 0:
+            continue
+        label = labels.get(city, city)
+        last = _parse_ts(polled.get(city))
+        if last is None:
+            out.append(f"{label}: {n} active subs but no poll recorded")
+        elif now - last > timedelta(hours=STALE_POLL_HOURS):
+            hrs = int((now - last).total_seconds() // 3600)
+            out.append(f"{label}: not polled for {hrs}h ({n} active subs)")
+
+    # 4. Reflect a dedicated alert that fired recently, for one consolidated view.
+    fa = _parse_ts(s.get("last_failure_alert_at"))
+    if fa is not None and now - fa <= timedelta(hours=RECENT_ALERT_HOURS):
+        out.append("a failure alert fired in the last "
+                   f"{RECENT_ALERT_HOURS}h "
+                   f"({_ts(s.get('last_failure_alert_at'), now, missing='')})")
+    bk = _parse_ts(s.get("last_backup_at"))
+    if bk is None or now - bk > timedelta(hours=BACKUP_STALE_HOURS):
+        out.append(f"backup is stale (>{BACKUP_STALE_HOURS}h) or missing")
+
+    return out
+
+
+def render_summary_email(s: dict, *, now: datetime, anomalies: list[str],
+                         base_url: str = "") -> str:
+    """Compact, phone-readable ops mail. Leads with the anomalies (or a weekly
+    all-clear line), then a small at-a-glance snapshot, then a dashboard link.
+    The full per-city / availability / usage breakdown lives on /admin — this
+    mail is a glance, not the report it used to be.
+    """
+    lines: list[str] = []
+    if anomalies:
+        n = len(anomalies)
+        lines.append(f"{n} thing{'s' if n != 1 else ''} need"
+                     f"{'' if n != 1 else 's'} a look:")
+        lines += [f"  • {a}" for a in anomalies]
+    else:
+        lines.append("Weekly all-clear — nothing unusual. Everything healthy.")
+    lines.append("")
+
+    by_city = s.get("active_subscriptions_by_city") or {}
+    labels = s.get("city_labels") or {}
+    city_str = " · ".join(f"{labels.get(c, c)} {n}"
+                          for c, n in sorted(by_city.items())) or "none"
     prov = s.get("emails_by_provider_7d") or {}
     prov_str = " · ".join(f"{k} {prov[k]}" for k in sorted(prov)) or "none"
-    ln = s.get("last_notification")
-    recent = (f"{_ts(ln.get('at'), now, missing='none')} — sub #{ln.get('sub_id')}"
-              if ln else "none yet")
-    out = ["OVERVIEW",
-           f"  Active subscriptions   {s['active_subscriptions']}",
-           f"  Pending confirmation   {s['pending_confirmation']}",
-           f"  Signups                24h {s['signups_last_24h']} · 7d {s['signups_last_7d']}",
-           f"  Digests sent (7d)      {s['digests_sent_last_7d']}",
-           f"  Emails sent (total)    {s['emails_sent_total']}",
-           f"  Delivery (7d)          {prov_str}"]
-    for p, u in sorted((s.get("email_usage") or {}).items()):
-        month = (f"{u['month']}/{u['month_quota']}" if u.get("month_quota")
-                 else str(u.get("month", 0)))
-        today = (f"{u['today']}/{u['day_quota']}" if u.get("day_quota")
-                 else str(u.get("today", 0)))
-        out.append(f"  Quota {p:<17}month {month} · today {today}")
-    out += [f"  Slots cached           {s['slots_cached']}",
-           "",
-           "NOTIFICATIONS (appointment slots delivered to subscribers)",
-           f"  Subscribers notified   24h {s.get('notifications_24h', 0)}"
-           f" · 7d {s.get('notifications_7d', 0)}"
-           f" · ever {s.get('subscribers_ever_notified', 0)}",
-           f"  Awaiting first match   {s.get('active_awaiting_first_match', 0)}"
-           f" of {s['active_subscriptions']} active",
-           f"  Most recent            {recent}",
-           "",
-           "CITIES"]
-    # City-key union, same sources as the dashboard template.
-    city_keys = (list(s.get("upstream_by_city", {}))
-                 + list(s.get("active_subscriptions_by_city", {}))
-                 + list(s.get("last_polled_at_by_city", {})))
-    cities = sorted(dict.fromkeys(city_keys))
-    if not cities:
-        out.append("  No polling activity yet.")
-    else:
-        for city in cities:
-            up = s.get("upstream_by_city", {}).get(city, {})
-            zms = s.get("parser_zero_match_since_by_city", {}).get(city)
-            lp = s.get("last_polled_at_by_city", {}).get(city)
-            status = f"NO MATCHES since {zms}" if zms else "matching slots"
-            subs = s.get("active_subscriptions_by_city", {}).get(city, 0)
-            plans = s.get("current_plan_count_by_city", {}).get(city, 0)
-            label = s.get("city_labels", {}).get(city, city)
-            out.append(f"  {label} — {status}")
-            out.append(f"    Last polled   {_ts(lp, now, missing='never')}")
-            out.append(f"    Active subs   {subs} · Plans {plans}")
-            out.append(f"    Polls         {up.get('polls_today', 0)} today "
-                       f"· {up.get('polls_total', 0)} total")
-            out.append(f"    Requests      {up.get('requests_today', 0)} today "
-                       f"· {up.get('requests_total', 0)} total")
-    # Combined load per physical upstream host — several tenants can share one
-    # server, and the rate-limit/ban-risk number is the host total.
-    hosts = s.get("upstream_by_host") or {}
-    if hosts:
-        out += ["", "UPSTREAM HOSTS (combined load across tenants)"]
-        for host in sorted(hosts):
-            agg = hosts[host]
-            out.append(f"  {host}")
-            out.append(f"    Requests      {agg.get('requests_today', 0)} today "
-                       f"· {agg.get('requests_total', 0)} total")
-            out.append(f"    Polls         {agg.get('polls_today', 0)} today "
-                       f"· {agg.get('polls_total', 0)} total")
-            out.append(f"    Tenants       {', '.join(agg.get('tenants', []))}")
-    avail = s.get("availability") or []
-    if avail:
-        out += ["", "AVAILABILITY (avg free slots per sample, 7d · empty% = samples with none)"]
-        for r in avail[:15]:
-            out.append(f"  {r['city_label']} · {r['service']} · {r['location']}")
-            out.append(f"    avg {r['avg_slots']} · max {r['max_slots']} "
-                       f"· empty {r['zero_rate']}% · n={r['samples']}")
-        if len(avail) > 15:
-            out.append(f"  … {len(avail) - 15} more rows on /admin")
-    usage = s.get("usage_daily") or []
-    if usage:
-        out += ["", "USAGE (signups per UTC day, last 7 shown)"]
-        for d in usage[:7]:
-            cities = " · ".join(f"{c} {n}" for c, n in sorted(d["by_city"].items()))
-            out.append(f"  {d['day']}  signups {d['signups']} · confirmed "
-                       f"{d['confirmed']} · cancelled {d['deleted']}"
-                       + (f"  ({cities})" if cities else ""))
-    out += ["",
-            "SYSTEM",
-            f"  Last housekeeping  {_ts(s.get('last_housekeeping_at'), now, missing='never')}",
-            f"  Last backup        {_ts(s.get('last_backup_at'), now, missing='never')}",
-            f"  Failure alert      {_ts(s.get('last_failure_alert_at'), now, missing='none')}"]
-    return "\n".join(out)
+    lines += ["SNAPSHOT",
+              f"  Active subs   {s.get('active_subscriptions', 0)}  ({city_str})",
+              f"  Signups       24h {s.get('signups_last_24h', 0)}"
+              f" · 7d {s.get('signups_last_7d', 0)}",
+              f"  Notified      24h {s.get('notifications_24h', 0)}"
+              f" · 7d {s.get('notifications_7d', 0)}",
+              f"  Delivery 7d   {prov_str}"]
+    # Quota line only when a daily cap is configured — otherwise it's just noise.
+    quota_bits = [f"{p} {u.get('today', 0)}/{u['day_quota']}"
+                  for p, u in sorted((s.get("email_usage") or {}).items())
+                  if u.get("day_quota")]
+    if quota_bits:
+        lines.append(f"  Quota today   {' · '.join(quota_bits)}")
+
+    admin = f"{base_url.rstrip('/')}/admin" if base_url else "/admin"
+    lines += ["", f"Full dashboard → {admin}"]
+    return "\n".join(lines)
 
 
 def _email_usage(conn: sqlite3.Connection, cfg) -> dict:
