@@ -9,15 +9,17 @@ Free email notifications for free Amt appointments in German cities.
 - **Leipzig** — Bürgerbüros (e.g. Wohnsitzanmeldung, Ausweise) and the
   Ausländerbehörde (residence-document pickup).
 - **Dresden** — Bürgerbüros & Meldestellen (earliest free slot per office).
+- **Bochum** and **Bonn** — Bürgerbüros.
 
-Support for more cities may follow.
+Support for more cities may follow — the live list is on
+[buergerwecker.de](https://buergerwecker.de).
 
 ## What this does
 
 You enter your email, pick the appointment type (e.g. Wohnsitzanmeldung) and
 which offices work for you, and receive an email the moment a matching
-slot is available on `terminvereinbarung.leipzig.de`. You then book it
-yourself on the official city website. We never book on your behalf.
+slot is available on the city's official booking site. You then book it
+yourself there. We never book on your behalf.
 
 For the Ausländerbehörde, booking additionally requires the personal
 Termin-Code from the office's letter — this service only tells you when a
