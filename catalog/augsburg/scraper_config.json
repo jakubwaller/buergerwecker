@@ -1,0 +1,7 @@
+{
+  "vendor": "tevis",
+  "base_url": "https://buergeramt-augsburg.termine-reservieren.online",
+  "md": 3,
+  "mdt": 37,
+  "poll_interval_seconds": 120
+}

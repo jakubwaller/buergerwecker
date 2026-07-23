@@ -56,11 +56,17 @@
   </h1>
 
   {% if other_cities %}
-    <ul class="city-switch">
-      {% for label, url in other_cities %}
-        <li><a href="{{ url }}">→ {{ label }}</a></li>
-      {% endfor %}
-    </ul>
+    <details class="city-switch" {% if other_cities|length <= 4 %}open{% endif %}>
+      <summary>
+        {% if lang == 'en' %}Other cities &amp; offices ({{ other_cities|length }})
+        {% else %}Weitere Städte &amp; Ämter ({{ other_cities|length }}){% endif %}
+      </summary>
+      <nav class="city-grid" aria-label="{% if lang == 'en' %}Switch city{% else %}Stadt wechseln{% endif %}">
+        {% for label, url in other_cities %}
+          <a href="{{ url }}" title="{{ label }}">{{ label }}</a>
+        {% endfor %}
+      </nav>
+    </details>
   {% endif %}
 
   <p class="disclaimer">

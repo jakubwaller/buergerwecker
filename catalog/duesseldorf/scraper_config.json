@@ -1,0 +1,7 @@
+{
+  "vendor": "tevis",
+  "base_url": "https://termine.duesseldorf.de",
+  "md": 4,
+  "mdt": 352,
+  "poll_interval_seconds": 120
+}

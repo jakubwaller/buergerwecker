@@ -161,3 +161,16 @@ def test_unknown_city_redirects_to_default(client):
     r = client.get("/?city=nope-nothing-here")
     assert r.status_code == 302
     assert r.headers["Location"].endswith("/")
+
+
+def test_city_switcher_uses_bare_names_except_multi_tenant_cities(client):
+    """The switcher lists single-tenant cities by bare city name; only cities
+    with several tenants (Leipzig: Bürgerbüro + Ausländerbehörde) keep the
+    full per-tenant label to disambiguate. Rendered as a collapsible
+    <details> so it scales to dozens of cities."""
+    body = client.get("/?city=dresden").data.decode()
+    assert '<details class="city-switch"' in body
+    assert '>Bochum</a>' in body                       # bare name
+    assert 'Bochum: ' not in body                      # not the long label
+    assert 'Leipzig: Bürgerbüro-Termine' in body       # multi-tenant keeps label
+    assert 'Leipzig: Ausländerbehörde' in body

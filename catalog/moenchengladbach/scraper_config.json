@@ -1,0 +1,7 @@
+{
+  "vendor": "tevis",
+  "base_url": "https://termine.moenchengladbach.de",
+  "md": 17,
+  "mdt": 20,
+  "poll_interval_seconds": 120
+}

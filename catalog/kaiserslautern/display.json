@@ -1,0 +1,18 @@
+{
+  "city_name": {
+    "de": "Kaiserslautern",
+    "en": "Kaiserslautern"
+  },
+  "label": {
+    "de": "Kaiserslautern: Bürgeramt-Termine",
+    "en": "Kaiserslautern: citizens' office appointments"
+  },
+  "heading": {
+    "de": "Nie wieder freie Bürgeramt-Termine in Kaiserslautern verpassen",
+    "en": "Never miss a free appointment at Kaiserslautern's citizens' offices"
+  },
+  "note": {
+    "de": "Hinweis: Dieser Dienst meldet je Standort den jeweils frühesten freien Termin (so zeigt es auch die Terminseite der Stadt an). Gebucht wird weiterhin selbst auf der offiziellen Terminseite der Stadt Kaiserslautern.",
+    "en": "Note: this service reports the earliest free slot per office (matching what the city's appointment page shows). You still book yourself on the City of Kaiserslautern's official appointment page."
+  }
+}

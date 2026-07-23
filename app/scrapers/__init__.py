@@ -30,6 +30,33 @@ _REGISTRY: dict[str, ModuleType] = {
     "dresden": tevis,
     "bochum": smartcjm,
     "bonn": smartcjm,
+    # TEVIS wave 2026-07 (vendor survey Tier 1): per-city config lives in
+    # catalog/<slug>/; all share the Dresden scraper.
+    "augsburg": tevis,
+    "bottrop": tevis,
+    "braunschweig": tevis,
+    "darmstadt": tevis,
+    "duesseldorf": tevis,
+    "hagen": tevis,
+    "ingolstadt": tevis,
+    "kaiserslautern": tevis,
+    "kassel": tevis,
+    "kiel": tevis,
+    "ludwigshafen": tevis,
+    "luebeck": tevis,
+    "mainz": tevis,
+    "moenchengladbach": tevis,
+    "moers": tevis,
+    "muenster": tevis,
+    "neuss": tevis,
+    "nuernberg": tevis,
+    "oberhausen": tevis,
+    "oldenburg": tevis,
+    "paderborn": tevis,
+    "remscheid": tevis,
+    "saarbruecken": tevis,
+    "salzgitter": tevis,
+    "trier": tevis,
 }
 
 def get_scraper(city: str) -> ModuleType:

@@ -1,0 +1,7 @@
+{
+  "vendor": "tevis",
+  "base_url": "https://www.ingolstadt.de/tevisweb",
+  "md": 5,
+  "mdt": 61,
+  "poll_interval_seconds": 120
+}

@@ -1,0 +1,7 @@
+{
+  "vendor": "tevis",
+  "base_url": "https://tevis.krzn.de/tevisweb040",
+  "md": 1,
+  "mdt": 66,
+  "poll_interval_seconds": 120
+}

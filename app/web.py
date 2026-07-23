@@ -2,6 +2,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from collections import Counter
 from datetime import time as time_cls
 from urllib.parse import urlencode
 from flask import Flask, request, render_template, redirect
@@ -233,21 +234,30 @@ def create_app() -> Flask:
         except CatalogError:
             # Unknown/garbage ?city= — land on the default tenant, not a 500.
             return redirect("/?lang=en" if lang == "en" else "/")
-        # Cross-links to the other tenants (e.g. Bürgerbüro ⇄ Ausländerbehörde),
-        # labeled from each catalog's display.json.
-        other_cities = []
+        # Cross-links to the other tenants. A city with a single tenant is
+        # listed by bare city name; only where one city has several tenants
+        # (e.g. Leipzig Bürgerbüro + Ausländerbehörde) does the full label
+        # disambiguate — with ~30 tenants the switcher can't afford the long
+        # per-tenant labels everywhere.
+        tenants = []
         for other in available_cities():
-            if other == city:
-                continue
             try:
                 ocat = load_catalog(other)
             except CatalogError:
                 # An incomplete tenant dir (e.g. a scaffold with only a
                 # scraper_config.json) must not take down every tenant's page.
                 continue
+            cname = ocat.display_text("city_name", lang) or other
             label = ocat.display_text("label", lang) or other
+            tenants.append((cname, label, other))
+        tenants_per_city = Counter(cname for cname, _, _ in tenants)
+        other_cities = []
+        for cname, label, other in tenants:
+            if other == city:
+                continue
+            display = label if tenants_per_city[cname] > 1 else cname
             url = f"/?city={other}" + ("&lang=en" if lang == "en" else "")
-            other_cities.append((label, url))
+            other_cities.append((display, url))
         # Labels start with the city name, so a label sort orders the links
         # by city, then service.
         other_cities.sort(key=lambda pair: pair[0].casefold())
