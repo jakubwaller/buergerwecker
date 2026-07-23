@@ -1,0 +1,7 @@
+{
+  "vendor": "tevis",
+  "base_url": "https://tevis.itebo.de/braunschweig",
+  "md": 6,
+  "mdt": 45,
+  "poll_interval_seconds": 120
+}

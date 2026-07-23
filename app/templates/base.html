@@ -235,12 +235,33 @@
     .city-switch {
       font-size: 0.9375rem;
       margin: -0.5rem 0 1.25rem;
-      list-style: none;
-      padding: 0;
     }
-    .city-switch li { margin: 0.25rem 0; }
-    .city-switch a { text-decoration: none; }
-    .city-switch a:hover { text-decoration: underline; }
+    .city-switch summary {
+      cursor: pointer;
+      color: var(--accent);
+      font-weight: 500;
+      width: fit-content;
+    }
+    .city-switch summary:hover { text-decoration: underline; }
+    .city-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+      gap: 0.4rem 0.6rem;
+      margin-top: 0.6rem;
+    }
+    .city-grid a {
+      display: block;
+      padding: 0.3rem 0.6rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-input);
+      text-decoration: none;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      transition: border-color 0.15s;
+    }
+    .city-grid a:hover { border-color: var(--accent); }
     .hidden { position: absolute; left: -9999px; }
     @media (max-width: 480px) {
       .container { padding: 1rem 0 3rem; }

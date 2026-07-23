@@ -1,0 +1,7 @@
+{
+  "vendor": "tevis",
+  "base_url": "https://hltermin.luebeck.de/termine",
+  "md": 1,
+  "mdt": 29,
+  "poll_interval_seconds": 120
+}
