@@ -245,11 +245,47 @@ def _sync_catalogs(conn, cfg):
 
 
 def _send_summary_email(conn, cfg):
-    from app.admin import stats, render_summary_text
+    """Exception-based ops mail: send only when something is unusual, plus a
+    weekly all-clear so silence stays trustworthy. On a quiet, non-heartbeat
+    day this sends nothing. Full detail always lives on /admin."""
+    from app.admin import stats, summary_anomalies, render_summary_email
+    now = datetime.utcnow()
     s = stats(conn, cfg)
-    body = render_summary_text(s, now=datetime.utcnow())
+    anomalies = summary_anomalies(s, now=now)
+
+    # Weekly heartbeat gate. Any summary mail (anomaly OR heartbeat) resets the
+    # clock, so a busy week never also gets a redundant all-clear.
+    row = conn.execute(
+        "SELECT value FROM meta WHERE key='last_summary_email_at'"
+    ).fetchone()
+    last_sent = None
+    if row:
+        try:
+            last_sent = datetime.fromisoformat(row["value"])
+        except ValueError:
+            pass
+    heartbeat_due = last_sent is None or (now - last_sent) >= timedelta(days=7)
+
+    if not anomalies and not heartbeat_due:
+        return  # quiet day, nothing to say
+
+    body = render_summary_email(s, now=now, anomalies=anomalies,
+                                base_url=cfg.public_base_url)
+    if anomalies:
+        n = len(anomalies)
+        subject = f"[buergerwecker] ops: {n} thing{'s' if n != 1 else ''} need a look"
+        tag = "anomaly"
+    else:
+        subject = "[buergerwecker] weekly all-clear"
+        tag = "heartbeat"
     try:
-        mail_send(conn, cfg.developer_email, "[buergerwecker] ops summary", body,
-                  idem_key=_idem_key(0, [], f"summary-{datetime.utcnow().date()}"))
+        mail_send(conn, cfg.developer_email, subject, body,
+                  idem_key=_idem_key(0, [], f"summary-{tag}-{now.date()}"))
+        conn.execute(
+            "INSERT INTO meta (key,value) VALUES ('last_summary_email_at', ?) "
+            "ON CONFLICT (key) DO UPDATE SET value=excluded.value, "
+            "updated_at=CURRENT_TIMESTAMP",
+            (now.isoformat(),),
+        )
     except Exception:
         pass
