@@ -38,10 +38,10 @@ reverse proxy, a Flask web app for subscriptions, a Python poller that
 checks the city's booking site once a minute, and a backup container that
 snapshots the SQLite database to an external HDD.
 
-## Not affiliated with Stadt Leipzig
+## Not affiliated with any city
 
 This is an independent service. We only inform about available appointments.
-The city of Leipzig has no involvement.
+None of the listed cities have any involvement.
 
 ## License
 
