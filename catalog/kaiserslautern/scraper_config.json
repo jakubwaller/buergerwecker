@@ -1,0 +1,7 @@
+{
+  "vendor": "tevis",
+  "base_url": "https://kaiserslautern.termine-reservieren.online",
+  "md": 2,
+  "mdt": 1,
+  "poll_interval_seconds": 120
+}

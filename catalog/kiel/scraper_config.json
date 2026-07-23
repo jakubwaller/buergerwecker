@@ -1,0 +1,7 @@
+{
+  "vendor": "tevis",
+  "base_url": "https://terminvergabe.kiel.de/tevis-ema",
+  "md": 1,
+  "mdt": 11,
+  "poll_interval_seconds": 120
+}

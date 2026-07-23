@@ -1,0 +1,7 @@
+{
+  "vendor": "tevis",
+  "base_url": "https://nuernberg.termine-reservieren.de",
+  "md": 5,
+  "mdt": 314,
+  "poll_interval_seconds": 120
+}

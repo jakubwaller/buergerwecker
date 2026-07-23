@@ -1,0 +1,7 @@
+{
+  "vendor": "tevis",
+  "base_url": "https://termine-reservieren.de/termine/trier",
+  "md": 9,
+  "mdt": 84,
+  "poll_interval_seconds": 120
+}
