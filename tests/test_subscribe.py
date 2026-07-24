@@ -102,6 +102,27 @@ def test_ip_ratelimit(client):
                         headers={"X-Forwarded-For":"1.2.3.4"})
         assert r.status_code == 429
 
+def test_ip_ratelimit_prefers_cf_connecting_ip(client):
+    """Behind Cloudflare, X-Forwarded-For is the CF edge IP shared by many
+    visitors; CF-Connecting-IP is the real client and must key the limit."""
+    from unittest.mock import patch
+    with patch("app.web._send_confirmation_email"):
+        for i in range(2):
+            r = client.post("/subscribe", data=_form(email=f"cf{i}@x.com"),
+                            headers={"X-Forwarded-For": "104.16.0.1",
+                                     "CF-Connecting-IP": "5.5.5.5"})
+            assert r.status_code in (200, 302)
+        # Same edge IP, different real client: must NOT be rate-limited.
+        r = client.post("/subscribe", data=_form(email="cf-other@x.com"),
+                        headers={"X-Forwarded-For": "104.16.0.1",
+                                 "CF-Connecting-IP": "5.5.5.6"})
+        assert r.status_code in (200, 302)
+        # Same real client a third time: limited.
+        r = client.post("/subscribe", data=_form(email="cf3@x.com"),
+                        headers={"X-Forwarded-For": "104.16.0.2",
+                                 "CF-Connecting-IP": "5.5.5.5"})
+        assert r.status_code == 429
+
 def test_subscribe_stores_max_days_ahead(client):
     import os, json
     from unittest.mock import patch
