@@ -311,6 +311,7 @@ def create_app() -> Flask:
                                other_cities=other_cities,
                                appointment_types=catalog.appointment_types_for(lang),
                                locations=catalog.locations_for(lang),
+                               service_locations=catalog.service_locations,
                                kofi_url=app.config["TERMINE_CONFIG"].kofi_url)
 
     @app.route("/subscribe", methods=["POST"])

@@ -93,12 +93,16 @@ def test_registry_and_booking_start_url():
             == "https://termine-buergerbuero.dresden.de/select2?md=2")
 
 
-def test_catalog_sync_skips_tevis_tenant():
+def test_catalog_sync_probes_tevis_tenant_with_gets_only():
+    """TEVIS tenants are drift-synced too (select2 + /location probes), but
+    strictly read-only: no POSTs anywhere near the booking flow. An
+    unparseable page is an error, never treated as 'city deleted everything'."""
     from app.catalog_sync import sync_city
     http = MagicMock()
+    http.get.return_value = MagicMock(status_code=200, text="<html></html>")
     result = sync_city("dresden", http, alert_fn=MagicMock())
-    assert result["skipped"] == "vendor tevis"
-    http.get.assert_not_called()
+    assert result["error"]
+    http.get.assert_called()
     http.post.assert_not_called()
 
 

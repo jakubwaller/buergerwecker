@@ -141,4 +141,81 @@
       {% if lang == 'en' %}Subscribe{% else %}Anmelden{% endif %}
     </button>
   </form>
+
+  {% if service_locations %}
+    <script id="service-locations" type="application/json">{{ service_locations | tojson }}</script>
+    <script>
+      // Hide offices that don't offer the selected service (the city's own
+      // booking page does the same). A service missing from the map has
+      // unknown coverage — show everything rather than guess. Hidden boxes
+      // are unchecked so a service switch can't submit an impossible
+      // service+office pair that would never notify.
+      (function () {
+        var map = JSON.parse(document.getElementById('service-locations').textContent);
+        var select = document.querySelector('select[name="appointment_type"]');
+        var boxes = document.querySelectorAll('fieldset.loc-list input[name="locations"]');
+        if (!select || !boxes.length) return;
+        function apply() {
+          var offered = map[select.value];
+          boxes.forEach(function (cb) {
+            var show = !offered || offered.indexOf(cb.value) !== -1;
+            cb.closest('label').style.display = show ? '' : 'none';
+            if (!show && cb.checked) cb.checked = false;
+          });
+        }
+        select.addEventListener('change', apply);
+        apply();
+      })();
+    </script>
+  {% endif %}
+
+  <section class="faq">
+    <h2 id="fair">{% if lang == 'en' %}Is this fair?{% else %}Ist das fair?{% endif %}</h2>
+    {% if lang == 'en' %}
+      <p>
+        Bürgerwecker <strong>never books appointments</strong> — it checks and
+        notifies. Booking still happens by hand on the city's own site, the
+        same way as for everyone else: no automatic reserving, no blocking,
+        no queue tricks.
+      </p>
+      <p>
+        The honest answer: the status quo isn't fair. Today, appointments go
+        to whoever can hit refresh all day — or to commercial services that
+        block slots in bulk and resell them. Bürgerwecker is free, ad-free
+        and open source, so this small head start is available to everyone,
+        not just the tech-savvy or those willing to pay.
+      </p>
+      <p>
+        To keep it responsible: the cities are informed about this service,
+        polling intervals are deliberately conservative, subscriptions expire
+        automatically after 90 days, and the
+        <a href="https://github.com/jakubwaller/buergerwecker">source code is
+        public</a> (AGPLv3) — anyone can verify it does exactly this and
+        nothing else.
+      </p>
+    {% else %}
+      <p>
+        Bürgerwecker <strong>bucht keine Termine</strong> – er schaut nach
+        und sagt Bescheid. Gebucht wird weiterhin von Hand auf der Seite der
+        Stadt, genau wie von allen anderen: kein automatisches Reservieren,
+        kein Blockieren, keine Warteschlangen-Tricks.
+      </p>
+      <p>
+        Die ehrliche Antwort: Der Status quo ist nicht fair. Heute bekommt
+        die Termine, wer den ganzen Tag F5 drücken kann – oder wer
+        kommerzielle Anbieter bezahlt, die Termine massenhaft blockieren und
+        weiterverkaufen. Bürgerwecker ist kostenlos, werbefrei und Open
+        Source, damit dieser kleine Informationsvorsprung allen offensteht
+        und nicht nur Technikaffinen oder Zahlungswilligen.
+      </p>
+      <p>
+        Damit das Ganze verantwortungsvoll bleibt: Die Städte sind über den
+        Dienst informiert, die Abfrage-Intervalle sind bewusst konservativ
+        gewählt, Anmeldungen laufen nach 90 Tagen automatisch aus, und der
+        <a href="https://github.com/jakubwaller/buergerwecker">Quellcode ist
+        öffentlich</a> (AGPLv3) – jeder kann prüfen, dass das Tool genau das
+        tut und nichts anderes.
+      </p>
+    {% endif %}
+  </section>
 {% endblock %}
