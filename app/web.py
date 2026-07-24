@@ -284,7 +284,15 @@ def create_app() -> Flask:
         # localized result page (the success paths redirect, so they don't
         # need it).
         lang = request.form.get("lang", "de")
-        ip = request.headers.get("X-Forwarded-For", request.remote_addr or "")
+        # Client IP for the soft per-IP limit. Behind Cloudflare the
+        # X-Forwarded-For that Caddy sets is the CF edge IP (Caddy replaces
+        # untrusted client XFF with the peer address), so all users behind one
+        # CF PoP would share a bucket. CF-Connecting-IP carries the real client
+        # IP; Caddy strips it for connections that don't come from Cloudflare's
+        # published ranges, so it can't be spoofed by direct requests.
+        ip = (request.headers.get("CF-Connecting-IP")
+              or request.headers.get("X-Forwarded-For")
+              or request.remote_addr or "")
         email = request.form.get("email", "").strip().lower()
         if not email or "@" not in email:
             return _result_page("invalid_email", lang, status=400)
