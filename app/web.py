@@ -1,4 +1,5 @@
 from __future__ import annotations
+import ipaddress
 import logging
 import os
 import re
@@ -18,6 +19,44 @@ from app.planning import would_exceed_cap
 from app.mail import send as mail_send, _idem_key
 
 log = logging.getLogger(__name__)
+
+# Cloudflare's published edge ranges (https://www.cloudflare.com/ips/).
+# CF-Connecting-IP is only trustworthy when the request actually arrived
+# through Cloudflare; from anyone else it's a client-chosen header.
+_CLOUDFLARE_NETS = [ipaddress.ip_network(n) for n in (
+    "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
+    "141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20",
+    "188.114.96.0/20", "197.234.240.0/22", "198.41.128.0/17",
+    "162.158.0.0/15", "104.16.0.0/13", "104.24.0.0/14", "172.64.0.0/13",
+    "131.0.72.0/22",
+    "2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32",
+    "2405:8100::/32", "2a06:98c0::/29", "2c0f:f248::/32",
+)]
+
+
+def _is_cloudflare(addr: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return False
+    return any(ip in net for net in _CLOUDFLARE_NETS)
+
+
+def _client_ip() -> str:
+    """Real client IP for rate limiting.
+
+    Caddy (no trusted_proxies configured) discards any client-supplied
+    X-Forwarded-For and sets it to the actual peer address, so XFF here is
+    the trustworthy immediate peer. Behind Cloudflare that peer is a CF edge
+    IP shared by many visitors, so prefer CF-Connecting-IP — but only when
+    the peer really is Cloudflare, otherwise the header is spoofable.
+    """
+    peer = request.headers.get("X-Forwarded-For", request.remote_addr or "")
+    peer = peer.split(",")[0].strip()
+    cf_ip = request.headers.get("CF-Connecting-IP", "").strip()
+    if cf_ip and _is_cloudflare(peer):
+        return cf_ip
+    return peer
 
 
 # Localized copy for the standalone result/status pages (unsubscribe, manage
@@ -284,15 +323,7 @@ def create_app() -> Flask:
         # localized result page (the success paths redirect, so they don't
         # need it).
         lang = request.form.get("lang", "de")
-        # Client IP for the soft per-IP limit. Behind Cloudflare the
-        # X-Forwarded-For that Caddy sets is the CF edge IP (Caddy replaces
-        # untrusted client XFF with the peer address), so all users behind one
-        # CF PoP would share a bucket. CF-Connecting-IP carries the real client
-        # IP; Caddy strips it for connections that don't come from Cloudflare's
-        # published ranges, so it can't be spoofed by direct requests.
-        ip = (request.headers.get("CF-Connecting-IP")
-              or request.headers.get("X-Forwarded-For")
-              or request.remote_addr or "")
+        ip = _client_ip()
         email = request.form.get("email", "").strip().lower()
         if not email or "@" not in email:
             return _result_page("invalid_email", lang, status=400)

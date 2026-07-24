@@ -123,6 +123,23 @@ def test_ip_ratelimit_prefers_cf_connecting_ip(client):
                                  "CF-Connecting-IP": "5.5.5.5"})
         assert r.status_code == 429
 
+def test_ip_ratelimit_ignores_spoofed_cf_header(client):
+    """CF-Connecting-IP from a non-Cloudflare peer is attacker-controlled and
+    must be ignored — the limit keys on the peer IP instead."""
+    from unittest.mock import patch
+    with patch("app.web._send_confirmation_email"):
+        for i in range(2):
+            r = client.post("/subscribe", data=_form(email=f"sp{i}@x.com"),
+                            headers={"X-Forwarded-For": "203.0.113.7",
+                                     "CF-Connecting-IP": f"10.0.0.{i}"})
+            assert r.status_code in (200, 302)
+        # Third request from the same peer with yet another fake CF header:
+        # still rate-limited because the fake header didn't rotate the key.
+        r = client.post("/subscribe", data=_form(email="sp3@x.com"),
+                        headers={"X-Forwarded-For": "203.0.113.7",
+                                 "CF-Connecting-IP": "10.0.0.99"})
+        assert r.status_code == 429
+
 def test_subscribe_stores_max_days_ahead(client):
     import os, json
     from unittest.mock import patch
