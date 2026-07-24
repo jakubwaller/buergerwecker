@@ -47,6 +47,11 @@ class Catalog:
     # "heading", "note", "city_name", each a {"de": …, "en": …} map. Missing
     # file or keys → the templates fall back to their built-in default copy.
     display: dict = field(default_factory=dict)
+    # Optional service uuid → [location uuids offering it], maintained by
+    # catalog_sync. The sign-up form uses it to hide offices that don't offer
+    # the selected service. Empty/missing service key = unknown coverage —
+    # the form then shows every location for that service.
+    service_locations: dict = field(default_factory=dict)
 
     def display_text(self, key: str, lang: str) -> str | None:
         """Localized display.json text for `key`; falls back to German; None if unset."""
@@ -101,10 +106,11 @@ def load_catalog(city: str) -> Catalog:
     ats_en = _read_optional_json(city_dir / "appointment_type.en.json")
     locs_en = _read_optional_json(city_dir / "locations.en.json")
     display = _read_optional_json(city_dir / "display.json")
+    svc_locs = _read_optional_json(city_dir / "service_locations.json")
     return Catalog(city=city, appointment_types=ats, locations=locs,
                    scraper_config=scfg,
                    appointment_types_en=ats_en, locations_en=locs_en,
-                   display=display)
+                   display=display, service_locations=svc_locs)
 
 
 def city_display_name(city: str, lang: str) -> str | None:

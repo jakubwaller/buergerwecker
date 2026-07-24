@@ -174,3 +174,51 @@ def test_city_switcher_uses_bare_names_except_multi_tenant_cities(client):
     assert 'Bochum: ' not in body                      # not the long label
     assert 'Leipzig: Bürgerbüro-Termine' in body       # multi-tenant keeps label
     assert 'Leipzig: Ausländerbehörde' in body
+
+def test_form_has_fairness_faq_in_both_languages(client):
+    de = client.get("/?lang=de").data.decode()
+    en = client.get("/?lang=en").data.decode()
+    assert "Ist das fair?" in de
+    assert "bucht keine Termine" in de
+    assert "Is this fair?" in en
+    assert "never books appointments" in en
+
+def test_form_embeds_service_locations_map_when_present(client, tmp_path, monkeypatch):
+    """A catalog with service_locations.json gets the JSON map + filter script;
+    the map keys the JS uses must be the raw uuids."""
+    import json
+    from app import catalog as catalog_mod
+    src = catalog_mod.CATALOG_ROOT / "leipzig"
+    root = tmp_path / "catalog"
+    city = root / "leipzig"
+    city.mkdir(parents=True)
+    for f in ("appointment_type.json", "locations.json", "scraper_config.json"):
+        (city / f).write_text((src / f).read_text())
+    loc_uuid = next(iter(json.loads((src / "locations.json").read_text()).values()))
+    svc_uuid = next(iter(json.loads((src / "appointment_type.json").read_text()).values()))
+    (city / "service_locations.json").write_text(
+        json.dumps({svc_uuid: [loc_uuid]}))
+    monkeypatch.setattr(catalog_mod, "CATALOG_ROOT", root)
+    catalog_mod.load_catalog.cache_clear()
+    try:
+        body = client.get("/").data.decode()
+    finally:
+        catalog_mod.load_catalog.cache_clear()
+    assert 'id="service-locations"' in body
+    assert svc_uuid in body and loc_uuid in body
+
+def test_form_omits_filter_script_without_map(client, tmp_path, monkeypatch):
+    from app import catalog as catalog_mod
+    src = catalog_mod.CATALOG_ROOT / "leipzig"
+    root = tmp_path / "catalog"
+    city = root / "leipzig"
+    city.mkdir(parents=True)
+    for f in ("appointment_type.json", "locations.json", "scraper_config.json"):
+        (city / f).write_text((src / f).read_text())
+    monkeypatch.setattr(catalog_mod, "CATALOG_ROOT", root)
+    catalog_mod.load_catalog.cache_clear()
+    try:
+        body = client.get("/").data.decode()
+    finally:
+        catalog_mod.load_catalog.cache_clear()
+    assert 'id="service-locations"' not in body

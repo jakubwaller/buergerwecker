@@ -374,3 +374,191 @@ def test_sync_city_skips_location_probe_for_tenant_without_locations_step(tmp_pa
     assert alerts == []
     http.post.assert_not_called()          # no location probing whatsoever
     assert (city / "locations.json").read_text() == loc_before
+
+
+# ---------- service_locations.json (coverage map) ----------
+
+def test_sync_city_writes_service_locations_map(tmp_catalog_root):
+    """The per-service coverage map is written even without set drift."""
+    http = _build_probe_http(
+        services_page=_services_page_html(),
+        locations_pages_by_target_uid={"u1": {"loc-1": "Bürgerbüro Eins"}},
+    )
+    http.get.side_effect = _stack_get([
+        MagicMock(status_code=200, json=lambda: {"success": True, "results": [
+            {"uid": "u1", "display_name": "Personalausweis beantragen"}
+        ]}),
+    ], probe_get_side_effect=http.get.side_effect)
+    catalog_sync.sync_city("leipzig", http, alert_fn=lambda *a, **k: None,
+                           catalog_root=tmp_catalog_root)
+    written = json.loads(
+        (tmp_catalog_root / "leipzig" / "service_locations.json").read_text())
+    assert written == {"u1": ["loc-1"]}
+
+
+def test_write_service_map_skips_unchanged_content(tmp_path):
+    path = tmp_path / "service_locations.json"
+    catalog_sync._write_service_map_if_changed(tmp_path, {"s": ["b", "a"]})
+    mtime = path.stat().st_mtime_ns
+    catalog_sync._write_service_map_if_changed(tmp_path, {"s": ["a", "b"]})
+    assert path.stat().st_mtime_ns == mtime  # sorted-equal → no rewrite
+
+
+# ---------- TEVIS sync ----------
+
+TEVIS_BASE = "https://terminvergabe.kiel.de/tevis-ema"
+
+
+def _tevis_select2_html(services: dict[str, str]) -> str:
+    parts = ["<html><body><form>"]
+    for name, sid in services.items():
+        parts.append(f'<input type="number" name="cnc-{sid}" id="input-{sid}"/>')
+        parts.append(f'<label for="input-{sid}">{name}</label>')
+    parts.append("</form></body></html>")
+    return "".join(parts)
+
+
+def _tevis_location_html(offices: dict[str, str]) -> str:
+    """Real TEVIS layout: office cards are <dl>s of labelled rows, plus a
+    text-free map-marker duplicate form per office."""
+    parts = ["<html><body>"]
+    for lid, name in offices.items():
+        parts.append(f'<form><input type="hidden" name="loc" value="{lid}"/></form>')
+        parts.append(
+            f'<form><input type="hidden" name="loc" value="{lid}"/>'
+            f'<dl><dt>Name</dt><dd>{name}</dd>'
+            f'<dt>Anschrift</dt><dd>Musterstraße 1</dd>'
+            f'<dt>Nächster Termin</dt><dd>ab 01.08.2026, 08:00 Uhr</dd></dl>'
+            f'</form>')
+    parts.append("</body></html>")
+    return "".join(parts)
+
+
+def _build_tevis_http(services: dict[str, str],
+                      offices_by_sid: dict[str, dict[str, str]]):
+    http = MagicMock()
+
+    def _get(url, params=None, **kw):
+        if url.endswith("/select2"):
+            return MagicMock(status_code=200,
+                             text=_tevis_select2_html(services))
+        assert url.endswith("/location")
+        sid = next(k[len("cnc-"):] for k in params if k.startswith("cnc-"))
+        return MagicMock(status_code=200,
+                         text=_tevis_location_html(offices_by_sid.get(sid, {})))
+
+    http.get.side_effect = _get
+    return http
+
+
+@pytest.fixture
+def tmp_tevis_root(tmp_path):
+    root = tmp_path / "catalog"
+    city = root / "kiel"
+    city.mkdir(parents=True)
+    (city / "scraper_config.json").write_text(json.dumps({
+        "vendor": "tevis", "base_url": TEVIS_BASE, "md": 1, "mdt": 11,
+    }))
+    (city / "appointment_type.json").write_text(json.dumps({
+        "Personalausweis": "623",
+    }))
+    (city / "locations.json").write_text(json.dumps({
+        "Rathaus": "78",
+    }))
+    return root
+
+
+def test_sync_tevis_no_drift_makes_no_writes(tmp_tevis_root):
+    city = tmp_tevis_root / "kiel"
+    mtimes = {p: (city / p).stat().st_mtime_ns
+              for p in ("appointment_type.json", "locations.json")}
+    http = _build_tevis_http({"Personalausweis": "623"},
+                             {"623": {"78": "Rathaus"}})
+    alerts: list = []
+    result = catalog_sync.sync_city("kiel", http,
+                                    alert_fn=lambda *a, **k: alerts.append(k),
+                                    catalog_root=tmp_tevis_root)
+    assert result == {"service_drift": {}, "location_drift": {}}
+    assert alerts == []
+    for p, m in mtimes.items():
+        assert (city / p).stat().st_mtime_ns == m
+    # coverage map is still produced
+    assert json.loads((city / "service_locations.json").read_text()) == {
+        "623": ["78"]}
+
+
+def test_sync_tevis_detects_new_office_and_service(tmp_tevis_root):
+    http = _build_tevis_http(
+        {"Personalausweis": "623", "Reisepass": "625"},
+        {"623": {"78": "Rathaus", "74": "Stadtteilamt Hassee"},
+         "625": {"78": "Rathaus"}},
+    )
+    alerts: list = []
+    result = catalog_sync.sync_city("kiel", http,
+                                    alert_fn=lambda *a, **k: alerts.append(k),
+                                    catalog_root=tmp_tevis_root)
+    assert result["service_drift"].get("added") == ["Reisepass"]
+    assert result["location_drift"].get("added") == ["Stadtteilamt Hassee"]
+    assert len(alerts) == 1
+    city = tmp_tevis_root / "kiel"
+    assert json.loads((city / "appointment_type.json").read_text()) == {
+        "Personalausweis": "623", "Reisepass": "625"}
+    assert json.loads((city / "locations.json").read_text()) == {
+        "Rathaus": "78", "Stadtteilamt Hassee": "74"}
+    assert json.loads((city / "service_locations.json").read_text()) == {
+        "623": ["74", "78"], "625": ["78"]}
+
+
+def test_sync_tevis_keeps_curated_names_for_known_ids(tmp_tevis_root):
+    """A cosmetic live-label difference for a known id must not read as drift
+    (catalog names are hand-curated at onboarding)."""
+    http = _build_tevis_http(
+        {"Personalausweis (Antrag)": "623"},           # live label differs
+        {"623": {"78": "Rathaus (Fleethörn 9)"}},      # live label differs
+    )
+    result = catalog_sync.sync_city("kiel", http,
+                                    alert_fn=lambda *a, **k: None,
+                                    catalog_root=tmp_tevis_root)
+    assert result == {"service_drift": {}, "location_drift": {}}
+
+
+def test_sync_tevis_unparseable_select2_is_error_not_drift(tmp_tevis_root):
+    http = MagicMock()
+    http.get.return_value = MagicMock(status_code=200,
+                                      text="<html>Hilfe-Seite</html>")
+    city = tmp_tevis_root / "kiel"
+    mtime = (city / "appointment_type.json").stat().st_mtime_ns
+    alerts: list = []
+    result = catalog_sync.sync_city("kiel", http,
+                                    alert_fn=lambda *a, **k: alerts.append(k),
+                                    catalog_root=tmp_tevis_root)
+    assert result["error"]
+    assert alerts == []
+    assert (city / "appointment_type.json").stat().st_mtime_ns == mtime
+
+
+def test_sync_tevis_network_error_is_clean(tmp_tevis_root):
+    http = MagicMock()
+    http.get.side_effect = requests.ConnectionError("boom")
+    result = catalog_sync.sync_city("kiel", http,
+                                    alert_fn=lambda *a, **k: None,
+                                    catalog_root=tmp_tevis_root)
+    assert result["error"]
+
+
+def test_tevis_office_label_falls_back_to_first_text_line():
+    from bs4 import BeautifulSoup
+    html = ('<form><input name="loc" value="9"/>\nRathaus\nStraße 1</form>')
+    form = BeautifulSoup(html, "html.parser").find("form")
+    assert catalog_sync._tevis_office_label(form) == "Rathaus"
+
+
+def test_tevis_office_label_ignores_dl_row_labels():
+    """The 'Name' dt label itself must never become the office name (this
+    clobbered Augsburg's catalog in a dry run)."""
+    from bs4 import BeautifulSoup
+    html = ('<form><input name="loc" value="9"/>'
+            '<dl><dt>Name</dt><dd>Bürgerbüro Haunstetten</dd>'
+            '<dt>Anschrift</dt><dd>Tattenbachstr. 15</dd></dl></form>')
+    form = BeautifulSoup(html, "html.parser").find("form")
+    assert catalog_sync._tevis_office_label(form) == "Bürgerbüro Haunstetten"
