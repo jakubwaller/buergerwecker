@@ -170,51 +170,43 @@
   {% endif %}
 
   <section class="faq">
-    <h2 id="fair">{% if lang == 'en' %}Is this fair?{% else %}Ist das fair?{% endif %}</h2>
+    <h2 id="fair">FAQ</h2>
     {% if lang == 'en' %}
+      <h3>Does this book appointments?</h3>
       <p>
-        Bürgerwecker <strong>never books appointments</strong> — it checks and
-        notifies. Booking still happens by hand on the city's own site, the
-        same way as for everyone else: no automatic reserving, no blocking,
-        no queue tricks.
+        No. It checks and sends you an email. Booking is on you, on the
+        city's own site.
       </p>
+      <h3>Is this fair?</h3>
       <p>
-        The honest answer: the status quo isn't fair. Today, appointments go
-        to whoever can hit refresh all day — or to commercial services that
-        block slots in bulk and resell them. Bürgerwecker is free, ad-free
-        and open source, so this small head start is available to everyone,
-        not just the tech-savvy or those willing to pay.
+        Fairer than the status quo. Without it, appointments go to whoever
+        hits F5 all day or pays a slot reseller. This is free and the
+        <a href="https://github.com/jakubwaller/buergerwecker">code is
+        public</a> (AGPLv3).
       </p>
+      <h3>Do the cities know?</h3>
       <p>
-        To keep it responsible: the cities are informed about this service,
-        polling intervals are deliberately conservative, subscriptions expire
-        automatically after 90 days, and the
-        <a href="https://github.com/jakubwaller/buergerwecker">source code is
-        public</a> (AGPLv3) — anyone can verify it does exactly this and
-        nothing else.
+        Yes, all of them got an email. Polling is deliberately slow and
+        subscriptions expire after 90 days.
       </p>
     {% else %}
+      <h3>Bucht das Tool Termine?</h3>
       <p>
-        Bürgerwecker <strong>bucht keine Termine</strong> – er schaut nach
-        und sagt Bescheid. Gebucht wird weiterhin von Hand auf der Seite der
-        Stadt, genau wie von allen anderen: kein automatisches Reservieren,
-        kein Blockieren, keine Warteschlangen-Tricks.
+        Nein. Es schaut nach und schickt dir eine Mail. Buchen musst du
+        selbst, auf der Seite der Stadt.
       </p>
+      <h3>Ist das fair?</h3>
       <p>
-        Die ehrliche Antwort: Der Status quo ist nicht fair. Heute bekommt
-        die Termine, wer den ganzen Tag F5 drücken kann – oder wer
-        kommerzielle Anbieter bezahlt, die Termine massenhaft blockieren und
-        weiterverkaufen. Bürgerwecker ist kostenlos, werbefrei und Open
-        Source, damit dieser kleine Informationsvorsprung allen offensteht
-        und nicht nur Technikaffinen oder Zahlungswilligen.
+        Fairer als der Status quo. Ohne das Tool bekommt die Termine, wer
+        den ganzen Tag F5 drückt oder einen Termin-Weiterverkäufer bezahlt.
+        Das hier ist kostenlos und der
+        <a href="https://github.com/jakubwaller/buergerwecker">Code ist
+        öffentlich</a> (AGPLv3).
       </p>
+      <h3>Wissen die Städte davon?</h3>
       <p>
-        Damit das Ganze verantwortungsvoll bleibt: Die Städte sind über den
-        Dienst informiert, die Abfrage-Intervalle sind bewusst konservativ
-        gewählt, Anmeldungen laufen nach 90 Tagen automatisch aus, und der
-        <a href="https://github.com/jakubwaller/buergerwecker">Quellcode ist
-        öffentlich</a> (AGPLv3) – jeder kann prüfen, dass das Tool genau das
-        tut und nichts anderes.
+        Ja, alle wurden angeschrieben. Die Abfrage-Intervalle sind bewusst
+        zurückhaltend und Anmeldungen laufen nach 90 Tagen automatisch aus.
       </p>
     {% endif %}
   </section>

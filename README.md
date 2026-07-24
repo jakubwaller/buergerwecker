@@ -4,14 +4,14 @@ Free email notifications for free Amt appointments in German cities.
 
 **Live: [buergerwecker.de](https://buergerwecker.de)**
 
-**Covered cities:**
+**Covered cities (29):** Augsburg, Bochum, Bonn, Bottrop, Braunschweig,
+Darmstadt, Dresden, Düsseldorf, Hagen, Ingolstadt, Kaiserslautern, Kassel,
+Kiel, Leipzig, Ludwigshafen, Lübeck, Mainz, Moers, Mönchengladbach,
+Münster, Neuss, Nürnberg, Oberhausen, Oldenburg, Paderborn, Remscheid,
+Saarbrücken, Salzgitter, Trier.
 
-- **Leipzig** — Bürgerbüros (e.g. Wohnsitzanmeldung, Ausweise) and the
-  Ausländerbehörde (residence-document pickup).
-- **Dresden** — Bürgerbüros & Meldestellen (earliest free slot per office).
-- **Bochum** and **Bonn** — Bürgerbüros.
-
-Support for more cities may follow — the live list is on
+Mostly Bürgerbüro services (Wohnsitzanmeldung, Ausweise etc.). Leipzig also
+has the Ausländerbehörde (residence-document pickup). The live list is on
 [buergerwecker.de](https://buergerwecker.de).
 
 ## What this does
@@ -37,8 +37,9 @@ pickup slot is free.
 
 A Raspberry Pi in Germany runs a small Docker Compose project: a Caddy
 reverse proxy, a Flask web app for subscriptions, a Python poller that
-checks the city's booking site once a minute, and a backup container that
-snapshots the SQLite database to an external HDD.
+checks the cities' booking sites every one to three minutes (depending on
+the city), and a backup
+container that snapshots the SQLite database to an external HDD.
 
 ## Not affiliated with any city
 

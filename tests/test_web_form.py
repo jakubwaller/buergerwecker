@@ -179,9 +179,9 @@ def test_form_has_fairness_faq_in_both_languages(client):
     de = client.get("/?lang=de").data.decode()
     en = client.get("/?lang=en").data.decode()
     assert "Ist das fair?" in de
-    assert "bucht keine Termine" in de
+    assert "Bucht das Tool Termine?" in de
     assert "Is this fair?" in en
-    assert "never books appointments" in en
+    assert "Does this book appointments?" in en
 
 def test_form_embeds_service_locations_map_when_present(client, tmp_path, monkeypatch):
     """A catalog with service_locations.json gets the JSON map + filter script;
