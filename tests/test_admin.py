@@ -360,9 +360,10 @@ def test_admin_aggregates_upstream_load_per_host_and_labels_tenants(client):
     # Tenant labels come from display.json (admin is English-only).
     assert "ausländerbehörde" in s["city_labels"]["leipzig-abh"].lower() or \
            "foreigners" in s["city_labels"]["leipzig-abh"].lower()
-    # Dashboard renders the labeled card + the host section.
+    # Dashboard renders the labeled row + the shared-host section (both Leipzig
+    # tenants poll one server, so this host qualifies as shared).
     html = client.get("/admin?token=admin-tok").data.decode()
-    assert "Upstream hosts" in html
+    assert "Shared upstream hosts" in html
     assert "terminvereinbarung.leipzig.de" in html
     assert "Leipzig-abh" not in html             # raw key no longer shown
 

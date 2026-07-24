@@ -102,7 +102,10 @@ def summary_anomalies(s: dict, *, now: datetime) -> list[str]:
     #    like Leipzig that's a normal state, and a broken parser is the canary's job.
     subs_by_city = s.get("active_subscriptions_by_city") or {}
     polled = s.get("last_polled_at_by_city") or {}
-    labels = s.get("city_labels") or {}
+    # Prefer the short geographic name ("Kiel") over the full product label
+    # ("Kiel: citizens' office appointments") — these lines already say what's
+    # wrong, the label's service description is just noise here.
+    labels = {**(s.get("city_labels") or {}), **(s.get("city_names") or {})}
     for city, n in sorted(subs_by_city.items()):
         if n <= 0:
             continue
@@ -145,7 +148,7 @@ def render_summary_email(s: dict, *, now: datetime, anomalies: list[str],
     lines.append("")
 
     by_city = s.get("active_subscriptions_by_city") or {}
-    labels = s.get("city_labels") or {}
+    labels = {**(s.get("city_labels") or {}), **(s.get("city_names") or {})}
     city_str = " · ".join(f"{labels.get(c, c)} {n}"
                           for c, n in sorted(by_city.items())) or "none"
     prov = s.get("emails_by_provider_7d") or {}
@@ -270,6 +273,7 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
     from urllib.parse import urlsplit
     from app.catalog import load_catalog
     city_labels: dict[str, str] = {}
+    city_names: dict[str, str] = {}
     city_hosts: dict[str, str] = {}
     for c in set(list(by_city_subs) + list(upstream_by_city)
                  + list(last_polled_at_by_city)):
@@ -280,6 +284,9 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         label = cat.display_text("label", "en")  # admin is English-only
         if label:
             city_labels[c] = label
+        name = cat.display_text("city_name", "en")
+        if name:
+            city_names[c] = name
         host = urlsplit(cat.scraper_config.get("base_url", "")).netloc
         if host:
             city_hosts[c] = host
@@ -313,6 +320,39 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
     ).fetchone()
     last_notification = ({"sub_id": notif["id"], "at": notif["last_notified_at"]}
                          if notif else None)
+    # One row per tenant for the dashboard's city table, sorted by active subs
+    # so the tenants that matter are on top — with 30 tenants the page can no
+    # longer afford a card per city, and a template assembling this from five
+    # separate dicts was the messier place to do it.
+    cities = []
+    for c in set(list(by_city_subs) + list(upstream_by_city)
+                 + list(last_polled_at_by_city) + list(by_city_plans)):
+        up = upstream_by_city.get(c, {})
+        cities.append({
+            "key": c,
+            "name": city_names.get(c) or city_labels.get(c, c.capitalize()),
+            "sub": None,
+            "label": city_labels.get(c, c.capitalize()),
+            "subs": by_city_subs.get(c, 0),
+            "plans": by_city_plans.get(c, 0),
+            "polls_today": up.get("polls_today", 0),
+            "polls_total": up.get("polls_total", 0),
+            "requests_today": up.get("requests_today", 0),
+            "requests_total": up.get("requests_total", 0),
+            "last_polled_at": last_polled_at_by_city.get(c),
+            "zero_match_since": canary.get(c),
+        })
+    # Two tenants can share one geographic name (leipzig / leipzig-abh are both
+    # "Leipzig") — give colliding rows the label's descriptor as a sub-line so
+    # the table stays scannable without repeating the full label everywhere.
+    name_counts: dict[str, int] = {}
+    for r in cities:
+        name_counts[r["name"]] = name_counts.get(r["name"], 0) + 1
+    for r in cities:
+        if name_counts[r["name"]] > 1:
+            r["sub"] = (r["label"].split(":", 1)[1].strip()
+                        if ":" in r["label"] else r["key"])
+    cities.sort(key=lambda r: (-r["subs"], r["name"].lower(), r["key"]))
     # Delivery provider mix (7d). A rising `resend` share means the Mailjet primary
     # is rejecting sends and the failover is carrying the mail — an early warning.
     provider_7d: dict[str, int] = {}
@@ -327,6 +367,7 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
             scalar("SELECT COUNT(*) FROM subscriptions WHERE deleted_at IS NULL "
                    "AND confirmed_at IS NOT NULL AND expires_at > CURRENT_TIMESTAMP"),
         "active_subscriptions_by_city": by_city_subs,
+        "cities": cities,
         "current_plan_count_by_city": by_city_plans,
         "parser_zero_match_since_by_city": canary,
         "pending_confirmation":
@@ -345,6 +386,7 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         "upstream_by_city": upstream_by_city,
         "upstream_by_host": upstream_by_host,
         "city_labels": city_labels,
+        "city_names": city_names,
         "last_polled_at_by_city": last_polled_at_by_city,
         "slots_cached": scalar("SELECT COUNT(*) FROM slots_cache"),
         "emails_sent_total":

@@ -505,11 +505,14 @@ def create_app() -> Flask:
         expected = _hl.sha256(cfg.admin_token.encode("utf-8")).hexdigest()
         if not _hmac.compare_digest(provided, expected):
             return ("Unauthorized", 401)
-        from app.admin import stats
+        from datetime import datetime as _dt
+        from app.admin import stats, summary_anomalies
         conn = connect(cfg.db_path)
+        s = stats(conn, cfg)
         # Admin is an internal, English-only stats page — hide the (no-op)
         # DE/EN switcher that base.html otherwise renders.
-        return render_template("admin.html", stats=stats(conn, cfg),
+        return render_template("admin.html", stats=s,
+                               anomalies=summary_anomalies(s, now=_dt.utcnow()),
                                show_lang_switcher=False)
 
     @app.route("/datenschutz")

@@ -3,6 +3,9 @@
 
 {% block head %}
 <style>
+  /* The public pages are a narrow form; this is a data dashboard — let it breathe. */
+  .container { max-width: 64rem; }
+
   .adm-title-sub { color: var(--text-muted); font-weight: 500; }
   .adm-caption { color: var(--text-muted); font-size: 0.9rem; margin: -0.75rem 0 1.5rem; }
   .adm-section { margin-top: 1.9rem; }
@@ -32,18 +35,41 @@
   .adm-table td.k { color: var(--text-muted); }
   .adm-table td.v { text-align: right; font-variant-numeric: tabular-nums; }
 
-  .city {
-    border: 1px solid var(--border);
-    border-radius: var(--radius-input);
-    padding: 0.1rem 1rem 0.7rem;
-    margin-top: 0.75rem;
+  /* gap, not text whitespace — flex items swallow the space before the <time> */
+  .status { font-size: 0.875rem; color: var(--text-muted); display: inline-flex; align-items: center; gap: 0.3rem; }
+
+  /* Attention banner (mirrors the ops mail's anomaly list) */
+  .adm-alert {
+    border: 1px solid #d97706; border-radius: var(--radius-input);
+    padding: 0.8rem 1rem; background: color-mix(in srgb, #d97706 7%, transparent);
   }
-  .city-head {
-    display: flex; align-items: center; justify-content: space-between;
-    flex-wrap: wrap; gap: 0.4rem; padding: 0.7rem 0 0.55rem;
+  .adm-alert strong { display: block; margin-bottom: 0.3rem; }
+  .adm-alert ul { margin: 0; padding-left: 1.2rem; }
+  .adm-alert li { margin: 0.15rem 0; }
+  .adm-allclear { color: var(--text-muted); font-size: 0.9rem; display: inline-flex; align-items: center; }
+
+  /* Cities table (one row per tenant — 30 tenants no longer fit as cards) */
+  .city-table td { padding: 0.5rem 1.1rem 0.5rem 0; }
+  .city-table td.name { font-weight: 600; }
+  .city-table td.name .quiet { font-weight: 400; }
+  .city-table td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .city-table .quiet { color: var(--text-muted); font-size: 0.82rem; }
+  .city-table tr.no-subs td.name { font-weight: 400; color: var(--text-muted); }
+
+  /* Collapsible per-city availability */
+  details.av-city { border-top: 1px solid var(--border); }
+  details.av-city:first-of-type { border-top: none; }
+  details.av-city > summary {
+    cursor: pointer; list-style: none; display: flex; flex-wrap: wrap;
+    align-items: baseline; gap: 0.3rem 0.8rem; padding: 0.6rem 0;
   }
-  .city-name { font-weight: 600; font-size: 1.05rem; letter-spacing: -0.01em; }
-  .status { font-size: 0.875rem; color: var(--text-muted); display: inline-flex; align-items: center; }
+  details.av-city > summary::before { content: "▸"; color: var(--text-muted); font-size: 0.8rem; }
+  details.av-city[open] > summary::before { content: "▾"; }
+  details.av-city > summary::-webkit-details-marker { display: none; }
+  .av-name { font-weight: 600; }
+  .av-meta { font-size: 0.82rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .av-flag { font-size: 0.82rem; font-weight: 600; }
+  details.av-city > .hbars { margin: 0 0 0.8rem 1.1rem; }
 
   .dot {
     width: 0.55rem; height: 0.55rem; border-radius: 999px;
@@ -117,6 +143,15 @@
   <h1>Admin <span class="adm-title-sub">· Bürgerwecker</span></h1>
   <p class="adm-caption">Internal ops dashboard · times in your local zone (hover for UTC).</p>
 
+  {% if anomalies %}
+    <section class="adm-section adm-alert">
+      <strong>{{ anomalies|length }} thing{{ 's' if anomalies|length != 1 }} need{{ 's' if anomalies|length == 1 }} a look</strong>
+      <ul>{% for a in anomalies %}<li>{{ a }}</li>{% endfor %}</ul>
+    </section>
+  {% else %}
+    <p class="adm-allclear"><span class="dot dot-ok"></span>All clear — no anomalies.</p>
+  {% endif %}
+
   <section class="adm-section">
     <div class="stat-grid">
       <div class="stat"><div class="stat-num">{{ s.active_subscriptions }}</div><div class="stat-label">Active subscriptions</div></div>
@@ -158,47 +193,51 @@
   </section>
 
   <section class="adm-section">
-    <h2>Cities</h2>
-    {% set city_keys = (s.upstream_by_city.keys()|list)
-                     + (s.active_subscriptions_by_city.keys()|list)
-                     + (s.last_polled_at_by_city.keys()|list) %}
-    {% set cities = city_keys|unique|list %}
-    {% if cities %}
-      {% for city in cities %}
-        {% set up = s.upstream_by_city.get(city, {}) %}
-        {% set zms = s.parser_zero_match_since_by_city.get(city) %}
-        {% set lp = s.last_polled_at_by_city.get(city) %}
-        <div class="city">
-          <div class="city-head">
-            <span class="city-name">{{ s.city_labels.get(city, city|capitalize) }}</span>
-            {% if zms %}
-              <span class="status"><span class="dot dot-warn"></span>No matches since <time class="ts" data-ts="{{ zms }}">{{ zms }}</time></span>
-            {% else %}
-              <span class="status"><span class="dot dot-ok"></span>Matching slots</span>
-            {% endif %}
-          </div>
-          <table class="adm-table">
-            <tr><td class="k">Last polled</td><td class="v">{% if lp %}<time class="ts" data-ts="{{ lp }}" data-warn-sec="180">{{ lp }}</time>{% else %}<span class="adm-muted">never</span>{% endif %}</td></tr>
-            <tr><td class="k">Active subs</td><td class="v">{{ s.active_subscriptions_by_city.get(city, 0) }}</td></tr>
-            <tr><td class="k">Plans</td><td class="v">{{ s.current_plan_count_by_city.get(city, 0) }}</td></tr>
-            <tr><td class="k">Polls</td><td class="v">{{ up.get('polls_today', 0) }} today · {{ up.get('polls_total', 0) }} total</td></tr>
-            <tr><td class="k">Requests</td><td class="v">{{ up.get('requests_today', 0) }} today · {{ up.get('requests_total', 0) }} total</td></tr>
-          </table>
-        </div>
-      {% endfor %}
+    <h2>Cities <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· {{ s.cities|length }} tenants, sorted by active subs · Polls &amp; Requests are today / total</span></h2>
+    {% if s.cities %}
+      <div class="adm-wide">
+        <table class="adm-table city-table">
+          <tr class="adm-head">
+            <td>City</td><td>Status</td><td class="num">Subs</td><td class="num">Plans</td>
+            <td>Last polled</td><td class="num">Polls</td><td class="num">Requests</td>
+          </tr>
+          {% for c in s.cities %}
+            <tr{% if not c.subs %} class="no-subs"{% endif %}>
+              <td class="name" title="{{ c.label }}">{{ c.name }}{% if c.sub %}<br><span class="quiet">{{ c.sub }}</span>{% endif %}</td>
+              <td>
+                {% if c.zero_match_since %}
+                  <span class="status"><span class="dot dot-warn"></span>No matches since <time class="ts" data-ts="{{ c.zero_match_since }}">{{ c.zero_match_since }}</time></span>
+                {% else %}
+                  <span class="status"><span class="dot dot-ok"></span>Matching slots</span>
+                {% endif %}
+              </td>
+              <td class="num">{{ c.subs }}</td>
+              <td class="num">{{ c.plans }}</td>
+              <td>{% if c.last_polled_at %}<time class="ts" data-ts="{{ c.last_polled_at }}" data-warn-sec="180">{{ c.last_polled_at }}</time>{% else %}<span class="adm-muted">never</span>{% endif %}</td>
+              <td class="num">{{ c.polls_today }} <span class="quiet">/ {{ c.polls_total }}</span></td>
+              <td class="num">{{ c.requests_today }} <span class="quiet">/ {{ c.requests_total }}</span></td>
+            </tr>
+          {% endfor %}
+        </table>
+      </div>
     {% else %}
       <p class="adm-muted">No polling activity yet.</p>
     {% endif %}
   </section>
 
-  {% if s.upstream_by_host %}
+  {# Only hosts serving several tenants: for those the rate-limit / ban-risk
+     number is the combined host total (leipzig + leipzig-abh both poll
+     terminvereinbarung.leipzig.de). Single-tenant hosts would just repeat
+     the city table's Polls/Requests columns. #}
+  {% set shared = [] %}
+  {% for host, agg in s.upstream_by_host|dictsort %}
+    {% if agg.tenants|length > 1 %}{% set _ = shared.append((host, agg)) %}{% endif %}
+  {% endfor %}
+  {% if shared %}
   <section class="adm-section">
-    <h2>Upstream hosts</h2>
-    {# Combined load per physical server: several tenants can share one host
-       (leipzig + leipzig-abh both poll terminvereinbarung.leipzig.de), and the
-       rate-limit / ban-risk number is the host total, not the tenant split. #}
+    <h2>Shared upstream hosts <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· combined load where several tenants poll one server</span></h2>
     <table class="adm-table">
-      {% for host, agg in s.upstream_by_host|dictsort %}
+      {% for host, agg in shared %}
         <tr>
           <td class="k">{{ host }}</td>
           <td class="v">
@@ -215,24 +254,41 @@
   <section class="adm-section">
     <h2>Availability <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· free slots per office &amp; type, sampled every ~15 min · last 7 days</span></h2>
     {% if s.availability %}
-      {# Bar length = avg free slots (scaled to the busiest office); colour flags
-         scarcity by empty-sample rate. Longer & bluer = more availability. #}
-      {% set avmax = (s.availability|map(attribute='avg_slots')|max) or 1 %}
-      <div class="hbars">
-        {% for r in s.availability %}
-          <div class="hbar-row">
-            <div class="hbar-lbl">{{ r.city_label }} · {{ r.service }}<br><span class="sub">{{ r.location }}</span></div>
-            <div class="hbar-track" title="avg {{ r.avg_slots }} · max {{ r.max_slots }} · empty {{ r.zero_rate }}% · {{ r.samples }} samples">
-              <div class="hbar-bg">
-                <div class="hbar-fill{% if r.zero_rate >= 80 %} empty{% elif r.zero_rate >= 40 %} scarce{% endif %}"
-                     style="width: {{ (2 + 98 * r.avg_slots / avmax)|round(1) }}%"></div>
-              </div>
-              <div class="hbar-val"><strong>{{ r.avg_slots }}</strong> avg · max {{ r.max_slots }} ·
-                <span{% if r.zero_rate >= 80 %} style="color:#dc2626;font-weight:600"{% elif r.zero_rate >= 40 %} style="color:#d97706;font-weight:600"{% endif %}>{{ r.zero_rate }}% empty</span></div>
+      {# One collapsible block per city, in the same subs-first order as the
+         table above; open only where someone is actually subscribed or the
+         city is mostly empty. Bar length = avg free slots, scaled to that
+         city's busiest office; colour flags scarcity by empty-sample rate. #}
+      {% for c in s.cities %}
+        {% set rows = s.availability|selectattr('city', 'equalto', c.key)|list %}
+        {% if rows %}
+          {% set worst = rows|map(attribute='zero_rate')|max %}
+          {% set avmax = (rows|map(attribute='avg_slots')|max) or 1 %}
+          <details class="av-city"{% if c.subs or worst >= 80 %} open{% endif %}>
+            <summary title="{{ c.label }}">
+              <span class="av-name">{{ c.name }}</span>
+              {% if c.sub %}<span class="av-meta">{{ c.sub }}</span>{% endif %}
+              <span class="av-meta">{{ rows|length }} office/type row{{ 's' if rows|length != 1 }} · {{ c.subs }} sub{{ 's' if c.subs != 1 }}</span>
+              {% if worst >= 80 %}<span class="av-flag" style="color:#dc2626">≥1 mostly empty</span>
+              {% elif worst >= 40 %}<span class="av-flag" style="color:#d97706">≥1 scarce</span>{% endif %}
+            </summary>
+            <div class="hbars">
+              {% for r in rows %}
+                <div class="hbar-row">
+                  <div class="hbar-lbl">{{ r.service }}<br><span class="sub">{{ r.location }}</span></div>
+                  <div class="hbar-track" title="avg {{ r.avg_slots }} · max {{ r.max_slots }} · empty {{ r.zero_rate }}% · {{ r.samples }} samples">
+                    <div class="hbar-bg">
+                      <div class="hbar-fill{% if r.zero_rate >= 80 %} empty{% elif r.zero_rate >= 40 %} scarce{% endif %}"
+                           style="width: {{ (2 + 98 * r.avg_slots / avmax)|round(1) }}%"></div>
+                    </div>
+                    <div class="hbar-val"><strong>{{ r.avg_slots }}</strong> avg · max {{ r.max_slots }} ·
+                      <span{% if r.zero_rate >= 80 %} style="color:#dc2626;font-weight:600"{% elif r.zero_rate >= 40 %} style="color:#d97706;font-weight:600"{% endif %}>{{ r.zero_rate }}% empty</span></div>
+                  </div>
+                </div>
+              {% endfor %}
             </div>
-          </div>
-        {% endfor %}
-      </div>
+          </details>
+        {% endif %}
+      {% endfor %}
       <div class="legend">
         <span><span class="swatch" style="background:var(--accent)"></span>Plentiful</span>
         <span><span class="swatch" style="background:#d97706"></span>Scarce (≥40% empty)</span>
@@ -240,20 +296,23 @@
       </div>
       {% if s.availability_daily %}
         <h3 style="margin-top:1.4rem;font-size:1rem;">Daily mean free slots per city <span class="adm-muted" style="font-weight:400;">· last 14 days</span></h3>
-        {% for city, rows in s.availability_daily|groupby('city') %}
-          {% set dmax = (rows|map(attribute='avg_total')|max) or 1 %}
-          <div class="spark-row">
-            <div class="spark-city">{{ s.city_labels.get(city, city) }}</div>
-            <div class="spark">
-              {% for r in rows %}
-                <i class="{% if r.avg_total == 0 %}zero{% elif loop.last %}last{% endif %}"
-                   style="height: {{ (100 * r.avg_total / dmax)|round(1) if r.avg_total else 0 }}%"
-                   title="{{ r.day }} · {{ r.avg_total }} avg free"></i>
-              {% endfor %}
+        {% for c in s.cities %}
+          {% set rows = s.availability_daily|selectattr('city', 'equalto', c.key)|list %}
+          {% if rows %}
+            {% set dmax = (rows|map(attribute='avg_total')|max) or 1 %}
+            <div class="spark-row">
+              <div class="spark-city" title="{{ c.label }}">{{ c.name }}{% if c.sub %}<br><span class="adm-muted" style="font-size:0.72rem;font-weight:400;">{{ c.sub|truncate(24) }}</span>{% endif %}</div>
+              <div class="spark">
+                {% for r in rows %}
+                  <i class="{% if r.avg_total == 0 %}zero{% elif loop.last %}last{% endif %}"
+                     style="height: {{ (100 * r.avg_total / dmax)|round(1) if r.avg_total else 0 }}%"
+                     title="{{ r.day }} · {{ r.avg_total }} avg free"></i>
+                {% endfor %}
+              </div>
+              {% set latest = rows|last %}
+              <div class="spark-now"><strong>{{ latest.avg_total }}</strong> <span class="adm-muted">now</span></div>
             </div>
-            {% set latest = rows|last %}
-            <div class="spark-now"><strong>{{ latest.avg_total }}</strong> <span class="adm-muted">now</span></div>
-          </div>
+          {% endif %}
         {% endfor %}
       {% endif %}
     {% else %}
