@@ -1,8 +1,10 @@
 from __future__ import annotations
+import hashlib
 import ipaddress
 import logging
 import os
 import re
+import time as time_mod
 from collections import Counter
 from datetime import time as time_cls
 from urllib.parse import urlencode
@@ -150,6 +152,36 @@ _RESULT_MESSAGES: dict[str, dict] = {
                "We can't take new sign-ups right now. Please try again in a "
                "few days."),
     },
+    "contact_sent": {
+        "kind": "success",
+        "de": ("Gesendet", "Nachricht ist raus",
+               "Danke für deine Nachricht — sie wurde zugestellt. Falls eine "
+               "Antwort nötig ist, melde ich mich an der angegebenen "
+               "E-Mail-Adresse."),
+        "en": ("Sent", "Your message is on its way",
+               "Thanks for getting in touch — your message has been "
+               "delivered. If a reply is needed, I'll write to the email "
+               "address you provided."),
+    },
+    "contact_missing": {
+        "kind": "error",
+        "de": ("Nachricht fehlt", "Bitte schreib noch etwas dazu",
+               "Es wurde keine Nachricht eingegeben. Bitte gehe zurück und "
+               "beschreibe kurz dein Anliegen."),
+        "en": ("Message missing", "Please add a message",
+               "No message was entered. Please go back and describe your "
+               "request briefly."),
+    },
+    "contact_failed": {
+        "kind": "error",
+        "de": ("Nicht gesendet", "Das hat leider nicht geklappt",
+               "Die Nachricht konnte gerade nicht zugestellt werden. Bitte "
+               "versuche es in ein paar Minuten erneut oder schreibe direkt "
+               "eine E-Mail."),
+        "en": ("Not sent", "That didn't go through",
+               "Your message couldn't be delivered just now. Please try again "
+               "in a few minutes, or send an email directly."),
+    },
     "missing_type": {
         "kind": "error",
         "de": ("Anliegen fehlt", "Bitte wähle ein Anliegen",
@@ -160,6 +192,26 @@ _RESULT_MESSAGES: dict[str, dict] = {
                "the type you need."),
     },
 }
+
+
+# Projects whose Impressum links here for the § 5 DDG second contact channel.
+# The slug arrives as ?projekt=… so the message says which site it came from;
+# an unknown or missing slug is fine and just renders the picker unselected.
+_CONTACT_PROJECTS: dict[str, str] = {
+    "buergerwecker": "Bürgerwecker",
+    "papamap": "PapaMap",
+    "zapfkompass": "Zapfkompass",
+}
+
+_CONTACT_NAME_MAX = 200
+_CONTACT_MESSAGE_MAX = 5000
+
+# Deliberately conservative: the submitted address becomes a Reply-To header,
+# so reject anything with whitespace, control characters, angle brackets or a
+# bare domain rather than trusting the provider to sanitize it. Turning away a
+# handful of exotic-but-valid addresses is the right trade here — they can
+# still use the plain mailto: link on the same page.
+_CONTACT_EMAIL_RE = re.compile(r"[^@\s<>,;\"]+@[^@\s<>,;\"]+\.[A-Za-z]{2,}")
 
 
 def _parse_hhmm(s: str) -> time_cls:
@@ -562,6 +614,73 @@ def create_app() -> Flask:
     @app.route("/impressum")
     def impressum_route():
         return render_template("impressum.html", lang=request.args.get("lang", "de"))
+
+    @app.route("/kontakt", methods=["GET", "POST"])
+    def kontakt_route():
+        """§ 5 DDG second contact channel, shared by all three sites.
+
+        DDG requires a means of "unmittelbare Kommunikation" alongside the
+        email address; ECJ C-298/07 established that a web form satisfies
+        this and that a phone number is not required. PapaMap is a static
+        site with no backend of its own, so all three Impressums link here
+        and pass ?projekt= to say which site the message concerns.
+        """
+        cfg = app.config["TERMINE_CONFIG"]
+        lang = request.values.get("lang", "de")
+        if lang not in ("de", "en"):
+            lang = "de"
+        projekt = request.values.get("projekt", "")
+        if projekt not in _CONTACT_PROJECTS:
+            projekt = ""
+
+        if request.method == "GET":
+            return render_template("kontakt.html", lang=lang, projekt=projekt,
+                                   projects=_CONTACT_PROJECTS,
+                                   kofi_url=cfg.kofi_url)
+
+        # Honeypot: a field hidden from humans. Bots fill it, so answer 200
+        # without sending — a 4xx would tell the bot to retry differently.
+        if request.form.get("website", ""):
+            return ("", 200)
+        email = request.form.get("email", "").strip()
+        # Stricter than /subscribe's "@" check: this address is echoed into a
+        # Reply-To header, so anything with whitespace, control characters or
+        # a missing domain is rejected rather than handed to the provider.
+        if not _CONTACT_EMAIL_RE.fullmatch(email):
+            return _result_page("invalid_email", lang, status=400)
+        message = request.form.get("message", "").strip()
+        if not message:
+            return _result_page("contact_missing", lang, status=400)
+        if not GLOBAL_IP_LIMITER.hit(f"contact:{_client_ip()}",
+                                     cfg.contact_ratelimit_per_ip_per_hour,
+                                     3600):
+            return _result_page("rate_limited", lang, status=429)
+
+        name = request.form.get("name", "").strip()[:_CONTACT_NAME_MAX]
+        message = message[:_CONTACT_MESSAGE_MAX]
+        label = _CONTACT_PROJECTS.get(projekt, "unbekannt")
+        subject = f"[Kontakt] {label}: {name or email}"
+        body = (f"Projekt: {label}\n"
+                f"Name: {name or '—'}\n"
+                f"E-Mail: {email}\n"
+                f"Sprache: {lang}\n\n"
+                f"{message}\n")
+        # Bucket the idempotency key by 10-minute window so an impatient
+        # double-submit of the same text doesn't arrive twice, while a
+        # genuinely new message later still gets through.
+        bucket = int(time_mod.time() // 600)
+        idem = hashlib.sha256(
+            f"contact|{email}|{message}|{bucket}".encode("utf-8")).hexdigest()
+        conn = connect(cfg.db_path)
+        try:
+            # reply_to overrides REPLY_TO_EMAIL for this message only, so
+            # hitting reply answers the visitor instead of our own mailbox.
+            mail_send(conn, cfg.developer_email, subject, body, idem_key=idem,
+                      reply_to=email)
+        except Exception:
+            log.exception("contact form delivery failed for %s", email)
+            return _result_page("contact_failed", lang, status=502)
+        return _result_page("contact_sent", lang)
 
     return app
 

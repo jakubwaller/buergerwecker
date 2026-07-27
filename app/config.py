@@ -28,6 +28,7 @@ class Config:
     parser_canary_threshold_hours: int
     subscribe_ratelimit_per_ip_per_hour: int
     subscribe_ratelimit_per_email_per_day: int
+    contact_ratelimit_per_ip_per_hour: int
     developer_email: str
     kofi_url: str
     db_path: str
@@ -83,6 +84,12 @@ def load_config() -> Config:
         parser_canary_threshold_hours=_req_int("PARSER_CANARY_THRESHOLD_HOURS"),
         subscribe_ratelimit_per_ip_per_hour=_req_int("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR"),
         subscribe_ratelimit_per_email_per_day=_req_int("SUBSCRIBE_RATELIMIT_PER_EMAIL_PER_DAY"),
+        # Contact form (§ 5 DDG second contact channel). Optional with a
+        # default so existing deploys don't need a new env var. Lower than the
+        # subscribe limit: every submission costs a provider send, and the
+        # form has no confirmation step to absorb abuse.
+        contact_ratelimit_per_ip_per_hour=int(
+            os.environ.get("CONTACT_RATELIMIT_PER_IP_PER_HOUR", "5")),
         developer_email=_req("DEVELOPER_EMAIL"),
         kofi_url=_req("KOFI_URL"),
         db_path=os.environ.get("DB_PATH", "/data/app.db"),

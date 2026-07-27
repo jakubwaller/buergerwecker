@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}{% if lang == 'en' %}Contact{% else %}Kontakt{% endif %} · Bürgerwecker{% endblock %}
+{% block content %}
+  {% if lang == 'en' %}
+    <h1>Contact</h1>
+    <p>Use this form to get in touch directly. You can also simply write to
+    <a href="mailto:jakub@jakubwaller.eu">jakub@jakubwaller.eu</a>.</p>
+  {% else %}
+    <h1>Kontakt</h1>
+    <p>Über dieses Formular kannst du mich direkt erreichen. Alternativ
+    genügt auch eine E-Mail an
+    <a href="mailto:jakub@jakubwaller.eu">jakub@jakubwaller.eu</a>.</p>
+  {% endif %}
+
+  <form method="post" action="/kontakt">
+    <input type="hidden" name="lang" value="{{ lang }}">
+
+    <label for="projekt">
+      {% if lang == 'en' %}Which site is this about?{% else %}Um welche Seite geht es?{% endif %}
+    </label>
+    <select id="projekt" name="projekt">
+      <option value="" {% if not projekt %}selected{% endif %}>
+        {% if lang == 'en' %}Please choose{% else %}Bitte auswählen{% endif %}
+      </option>
+      {% for slug, label in projects.items() %}
+        <option value="{{ slug }}" {% if projekt == slug %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+
+    <label for="name">
+      {% if lang == 'en' %}Name (optional){% else %}Name (optional){% endif %}
+    </label>
+    <input type="text" id="name" name="name" maxlength="200" autocomplete="name">
+
+    <label for="email">
+      {% if lang == 'en' %}Your email address{% else %}Deine E-Mail-Adresse{% endif %}
+    </label>
+    <input type="email" id="email" name="email" required maxlength="254"
+           autocomplete="email"
+           placeholder="{% if lang == 'en' %}so I can reply{% else %}damit ich antworten kann{% endif %}">
+
+    <label for="message">
+      {% if lang == 'en' %}Your message{% else %}Deine Nachricht{% endif %}
+    </label>
+    <textarea id="message" name="message" rows="8" required
+              maxlength="5000"></textarea>
+
+    {# Honeypot: hidden from humans, irresistible to bots. #}
+    <div class="hidden" aria-hidden="true">
+      <label for="website">Website</label>
+      <input type="text" id="website" name="website" tabindex="-1" autocomplete="off">
+    </div>
+
+    <button type="submit">
+      {% if lang == 'en' %}Send message{% else %}Nachricht senden{% endif %}
+    </button>
+  </form>
+
+  <p class="disclaimer">
+    {% if lang == 'en' %}
+      Your email address is used only to reply to this message and is not
+      stored beyond that. See the <a href="/datenschutz?lang=en">privacy
+      policy</a> for details.
+    {% else %}
+      Deine E-Mail-Adresse wird ausschließlich zur Beantwortung dieser
+      Nachricht verwendet und darüber hinaus nicht gespeichert. Details in der
+      <a href="/datenschutz">Datenschutzerklärung</a>.
+    {% endif %}
+  </p>
+{% endblock %}
