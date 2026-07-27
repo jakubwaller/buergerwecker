@@ -47,8 +47,8 @@ def _pending_ids(conn):
 def test_deferred_confirmation_is_kept_then_delivered_by_retry(db):
     sid = _sub(db)
     # All quota exhausted → the immediate send defers.
-    with patch("app.mail._call_mailjet_batch", return_value=True), \
-         patch("app.mail._call_resend_batch", return_value=True):
+    with patch("app.mail._call_mailjet_batch", return_value=200), \
+         patch("app.mail._call_resend_batch", return_value=200):
         delivered = send_confirmation_now(db, sid, "a@x.com", "de", "leipzig",
                                           _cfg(mailjet_hourly_quota=0,
                                                mailjet_daily_quota=0,
@@ -58,7 +58,7 @@ def test_deferred_confirmation_is_kept_then_delivered_by_retry(db):
     assert sid in _pending_ids(db)            # still awaiting confirmation
 
     # Later cycle, quota available → retry pass delivers it.
-    with patch("app.mail._call_mailjet_batch", return_value=True) as mb:
+    with patch("app.mail._call_mailjet_batch", return_value=200) as mb:
         send_pending_confirmations(db, _cfg())
     mb.assert_called_once()
     assert _sent_at(db, sid) is not None
@@ -67,10 +67,10 @@ def test_deferred_confirmation_is_kept_then_delivered_by_retry(db):
 
 def test_retry_is_idempotent_once_delivered(db):
     sid = _sub(db)
-    with patch("app.mail._call_mailjet_batch", return_value=True):
+    with patch("app.mail._call_mailjet_batch", return_value=200):
         assert send_confirmation_now(db, sid, "a@x.com", "de", "leipzig", _cfg()) is True
     # A second retry pass must not re-send an already-confirmed-sent sign-up.
-    with patch("app.mail._call_mailjet_batch", return_value=True) as mb:
+    with patch("app.mail._call_mailjet_batch", return_value=200) as mb:
         send_pending_confirmations(db, _cfg())
     mb.assert_not_called()
 
@@ -78,7 +78,7 @@ def test_retry_is_idempotent_once_delivered(db):
 def test_retry_skips_already_confirmed_users(db):
     sid = _sub(db, "b@x.com")
     confirm(db, sid)                          # user clicked the link already
-    with patch("app.mail._call_mailjet_batch", return_value=True) as mb:
+    with patch("app.mail._call_mailjet_batch", return_value=200) as mb:
         send_pending_confirmations(db, _cfg())
     mb.assert_not_called()
 
@@ -88,6 +88,6 @@ def test_retry_abandons_stale_signups(db):
     db.execute("UPDATE subscriptions SET created_at=datetime('now','-10 days') "
                "WHERE id=?", (sid,))
     assert _pending_ids(db) == []             # outside the 7-day retry window
-    with patch("app.mail._call_mailjet_batch", return_value=True) as mb:
+    with patch("app.mail._call_mailjet_batch", return_value=200) as mb:
         send_pending_confirmations(db, _cfg())
     mb.assert_not_called()

@@ -166,3 +166,35 @@ def test_subscribe_empty_max_days_ahead_means_no_limit(client):
     row = conn.execute("SELECT filters_json FROM subscriptions WHERE email=?",
                        ("nolimit@example.com",)).fetchone()
     assert json.loads(row["filters_json"])["max_days_ahead"] is None
+
+@pytest.mark.parametrize("email", [
+    "subscriber@example-com",   # the real 2026-07-24 typo: no dot, dead domain
+    "nodomain@",
+    "@example.com",
+    "plainstring",
+    "spaced out@example.com",
+    "trailing@example.",
+    "two@@example.com",
+])
+def test_subscribe_rejects_undeliverable_addresses(client, email):
+    """Sign-up used to accept anything containing an '@'. A domain with no TLD
+    is undeliverable, and Mailjet rejects the entire batch it lands in."""
+    from unittest.mock import patch
+    with patch("app.web._send_confirmation_email") as send:
+        r = client.post("/subscribe", data=_form(email=email))
+    assert r.status_code == 400
+    send.assert_not_called()
+
+@pytest.mark.parametrize("email,ip", [
+    ("subscriber@example.com", "10.9.0.1"),
+    ("a.b+tag@sub.example.co.uk", "10.9.0.2"),
+])
+def test_subscribe_still_accepts_normal_addresses(client, email, ip):
+    # Distinct X-Forwarded-For per case: GLOBAL_IP_LIMITER is a module-level
+    # singleton whose counts outlive the test, so sharing 127.0.0.1 with the
+    # other subscribe tests would 429 this one in a full-suite run.
+    from unittest.mock import patch
+    with patch("app.web._send_confirmation_email", return_value=True):
+        r = client.post("/subscribe", data=_form(email=email),
+                        headers={"X-Forwarded-For": ip})
+    assert r.status_code == 302

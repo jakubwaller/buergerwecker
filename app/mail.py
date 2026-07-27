@@ -165,8 +165,18 @@ class BatchResult:
     delivered: set[str] = field(default_factory=set)  # idem_keys actually sent
     deferred: int = 0                                  # left for a later cycle
     sent_by_provider: dict[str, int] = field(default_factory=dict)
+    # idem_keys whose recipient the provider refused outright, or who is over
+    # the failure cap. Distinct from `deferred`: deferred will be retried and
+    # is a quota signal, undeliverable is a dead address and is not.
+    undeliverable: set[str] = field(default_factory=set)
 
-def _call_mailjet_batch(items: list[Outgoing]) -> bool:
+# The batch callers return the provider's HTTP status rather than a bare
+# success flag: `_deliver` needs to tell "this provider is unusable" (auth,
+# rate limit, 5xx, timeout) apart from "this provider read the request and
+# rejected its content" (400/422), because only the latter means one of the
+# recipients is bad rather than the provider being down.
+
+def _call_mailjet_batch(items: list[Outgoing]) -> int:
     resp = requests.post(
         "https://api.mailjet.com/v3.1/send",
         auth=(os.environ["MAILJET_API_KEY"], os.environ["MAILJET_API_SECRET"]),
@@ -174,16 +184,16 @@ def _call_mailjet_batch(items: list[Outgoing]) -> bool:
               for i in items]},
         timeout=60,
     )
-    return resp.status_code < 400
+    return resp.status_code
 
-def _call_resend_batch(items: list[Outgoing]) -> bool:
+def _call_resend_batch(items: list[Outgoing]) -> int:
     resp = requests.post(
         "https://api.resend.com/emails/batch",
         headers={"Authorization": f"Bearer {os.environ['RESEND_API_KEY']}"},
         json=[_resend_email(i.to, i.subject, i.body, i.unsub_url) for i in items],
         timeout=60,
     )
-    return resp.status_code < 400
+    return resp.status_code
 
 def _window_used(conn: sqlite3.Connection, provider: str, window_seconds: int) -> int:
     """Count emails a provider actually sent within the last `window_seconds`.
@@ -226,6 +236,71 @@ def _providers(cfg) -> list[tuple]:
         specs.append(spec)
     return specs
 
+def _ok(status: int | None) -> bool:
+    return status is not None and 200 <= status < 300
+
+def _content_rejected(status: int | None) -> bool:
+    """400/422: the provider parsed the request and rejected what was in it.
+    For a batch send that points at a recipient, not at the provider."""
+    return status in (400, 422)
+
+def _deliver(send_fn, chunk: list[Outgoing]) -> tuple[list, list, bool]:
+    """Send `chunk`. Returns (delivered, undeliverable, provider_unusable).
+
+    A batch is all-or-nothing at both providers, so a single malformed
+    recipient sinks everyone batched with it. On a content rejection we split
+    and retry the halves: bisection isolates the culprit in log2(n) calls and
+    lets every other recipient through. Only a chunk of one that is still
+    rejected is attributed to its address.
+
+    Any other failure — auth, rate limit, 5xx, timeout — is the provider
+    itself. Give up on it and let the caller fall through to the next one,
+    exactly as before; blaming a recipient for a provider outage would retire
+    perfectly good addresses.
+    """
+    try:
+        status = send_fn(chunk)
+    except Exception:
+        status = None
+    if _ok(status):
+        return list(chunk), [], False
+    if not _content_rejected(status):
+        return [], [], True
+    if len(chunk) == 1:
+        return [], list(chunk), False
+    mid = len(chunk) // 2
+    left_ok, left_bad, failed = _deliver(send_fn, chunk[:mid])
+    if failed:
+        return left_ok, left_bad, True
+    right_ok, right_bad, failed = _deliver(send_fn, chunk[mid:])
+    return left_ok + right_ok, left_bad + right_bad, failed
+
+def _record_send_failure(conn: sqlite3.Connection, email: str) -> None:
+    conn.execute(
+        "INSERT INTO email_failures (email, failures, last_failed_at) "
+        "VALUES (?, 1, CURRENT_TIMESTAMP) "
+        "ON CONFLICT (email) DO UPDATE SET failures = failures + 1, "
+        "last_failed_at = CURRENT_TIMESTAMP",
+        (email,),
+    )
+
+def _clear_send_failures(conn: sqlite3.Connection, emails: set[str]) -> None:
+    """A delivered mail clears the address's history: the earlier rejections
+    were transient, and a recovered address must not creep up to the cap."""
+    if emails:
+        conn.executemany("DELETE FROM email_failures WHERE email=?",
+                         [(e,) for e in emails])
+
+def _dead_addresses(conn: sqlite3.Connection, cfg) -> set[str]:
+    """Addresses the providers have refused often enough that we stop paying
+    for the attempt. Without this a typo'd sign-up is retried every cycle for
+    as long as its row lives."""
+    cap = getattr(cfg, "max_send_failures_per_address", 3)
+    if cap <= 0:
+        return set()
+    return {r["email"] for r in conn.execute(
+        "SELECT email FROM email_failures WHERE failures >= ?", (cap,))}
+
 def _headroom(conn: sqlite3.Connection, limits: list[tuple], provider: str) -> int:
     room = None
     for limit, window in limits:
@@ -246,11 +321,16 @@ def send_batch(conn: sqlite3.Connection, items: list[Outgoing], cfg) -> BatchRes
     from app.db import transaction
     result = BatchResult()
     pending: list[Outgoing] = []
+    dead = _dead_addresses(conn, cfg)
     # Claim all idempotency rows in ONE transaction. In autocommit each INSERT
     # would fsync separately — fatal when a popular slot matches tens of
     # thousands of subscribers (that many fsyncs would overrun the cycle).
     with transaction(conn):
         for it in items:
+            if it.to in dead:
+                # Never claimed, never sent, never retried: the address is out.
+                result.undeliverable.add(it.idem_key)
+                continue
             cur = conn.execute(
                 "INSERT OR IGNORE INTO sent_idempotency (idem_key, provider) "
                 "VALUES (?, 'pending')",
@@ -261,34 +341,54 @@ def send_batch(conn: sqlite3.Connection, items: list[Outgoing], cfg) -> BatchRes
             # rowcount 0 → already sent/claimed by an earlier cycle: skip.
 
     remaining = list(pending)
+    refused: list[Outgoing] = []
     for name, send_fn, batch_size, limits in _providers(cfg):
+        # Anything the previous provider refused gets one more chance here: a
+        # content rejection can be provider-specific (a domain one provider
+        # blocklists and the other accepts), so an address is only condemned
+        # once EVERY provider has refused it.
+        remaining, refused = remaining + refused, []
         if not remaining:
             break
         room = _headroom(conn, limits, name)
         while remaining and room > 0:
             take = min(batch_size, room, len(remaining))
             chunk = remaining[:take]
-            try:
-                ok = send_fn(chunk)
-            except Exception:
-                ok = False
-            if not ok:
-                # Provider errored: stop using it and leave these items claimed
-                # (still 'pending') so the next provider can send them. If every
-                # provider fails, the trailing deferral block releases them.
+            sent, chunk_refused, provider_unusable = _deliver(send_fn, chunk)
+            if sent:
+                with transaction(conn):
+                    conn.executemany(
+                        "UPDATE sent_idempotency SET provider=?, "
+                        "sent_at=CURRENT_TIMESTAMP WHERE idem_key=?",
+                        [(name, c.idem_key) for c in sent],
+                    )
+                    _record_send_count(conn, name, len(sent))
+                    _clear_send_failures(conn, {c.to for c in sent})
+                result.delivered.update(c.idem_key for c in sent)
+                result.sent_by_provider[name] = (
+                    result.sent_by_provider.get(name, 0) + len(sent))
+            refused.extend(chunk_refused)
+            handled = {c.idem_key for c in sent} | {c.idem_key
+                                                    for c in chunk_refused}
+            remaining = [it for it in remaining if it.idem_key not in handled]
+            # Only delivered mail spends quota — a refused batch never left.
+            room -= len(sent)
+            if provider_unusable:
+                # Leave whatever is left claimed (still 'pending') so the next
+                # provider can take it. If every provider fails, the trailing
+                # deferral block releases them.
                 break
-            with transaction(conn):
-                conn.executemany(
-                    "UPDATE sent_idempotency SET provider=?, sent_at=CURRENT_TIMESTAMP "
-                    "WHERE idem_key=?",
-                    [(name, c.idem_key) for c in chunk],
-                )
-                _record_send_count(conn, name, take)
-            for c in chunk:
-                result.delivered.add(c.idem_key)
-            result.sent_by_provider[name] = result.sent_by_provider.get(name, 0) + take
-            remaining = remaining[take:]
-            room -= take
+
+    if refused:
+        # Refused by every provider that could try it. Release the claim so a
+        # transient rejection can still be retried next cycle; the failure
+        # counter is what eventually retires the address for good.
+        with transaction(conn):
+            for c in refused:
+                _record_send_failure(conn, c.to)
+            conn.executemany("DELETE FROM sent_idempotency WHERE idem_key=?",
+                             [(c.idem_key,) for c in refused])
+        result.undeliverable.update(c.idem_key for c in refused)
 
     if remaining:
         # Over quota (or every provider failed): defer. Release the claims so

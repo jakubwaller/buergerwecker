@@ -90,8 +90,8 @@ def test_run_cycle_writes_no_slot_cache_and_digest_links_city_page(client):
     slot = Slot("2026-06-18", "17:20", "loc-1",
                 "29cd0a26-fe7a-4d65-88cd-1e05fd749c71", booking_token, "res-1")
     with patch("app.cycle.get_scraper") as gs, \
-         patch("app.mail._call_mailjet_batch", return_value=True) as mb, \
-         patch("app.mail._call_resend_batch", return_value=True):
+         patch("app.mail._call_mailjet_batch", return_value=200) as mb, \
+         patch("app.mail._call_resend_batch", return_value=200):
         sc = MagicMock(); sc.poll.return_value = [slot]; gs.return_value = sc
         run_cycle(conn, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
     cached = conn.execute("SELECT COUNT(*) AS n FROM slots_cache").fetchone()["n"]

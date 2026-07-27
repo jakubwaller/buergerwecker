@@ -62,7 +62,7 @@ def test_quota_limited_cycle_serves_longest_waiting_first_and_defers_rest(db):
 
     scraper = MagicMock(); scraper.poll.return_value = slot
     with patch("app.cycle.get_scraper", return_value=scraper), \
-         patch("app.mail._call_resend_batch", return_value=True) as rb:
+         patch("app.mail._call_resend_batch", return_value=200) as rb:
         run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
 
     # Exactly one email this cycle (quota = 1)...
@@ -88,8 +88,8 @@ def test_render_cap_still_marks_all_matched_slots_seen(db):
                   "loc-1", "svc-A", f"tok-{i}") for i in range(n_total)]
     scraper = MagicMock(); scraper.poll.return_value = slots
     with patch("app.cycle.get_scraper", return_value=scraper), \
-         patch("app.mail._call_mailjet_batch", return_value=True) as mb, \
-         patch("app.mail._call_resend_batch", return_value=True):
+         patch("app.mail._call_mailjet_batch", return_value=200) as mb, \
+         patch("app.mail._call_resend_batch", return_value=200):
         run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
     sent_bodies = [i.body for i in mb.call_args_list[0].args[0]]
     assert len(sent_bodies) == 1                       # one email, not a flood
@@ -101,7 +101,7 @@ def test_render_cap_still_marks_all_matched_slots_seen(db):
     # A later cycle with the SAME slots sends nothing.
     db.execute("UPDATE subscriptions SET last_notified_at=NULL WHERE id=?", (sid,))
     with patch("app.cycle.get_scraper", return_value=scraper), \
-         patch("app.mail._call_mailjet_batch", return_value=True) as mb2, \
-         patch("app.mail._call_resend_batch", return_value=True):
+         patch("app.mail._call_mailjet_batch", return_value=200) as mb2, \
+         patch("app.mail._call_resend_batch", return_value=200):
         run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c2")
     mb2.assert_not_called()

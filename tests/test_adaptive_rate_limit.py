@@ -55,8 +55,8 @@ def _cycle(db, slots, cycle_id):
     scraper = MagicMock()
     scraper.poll.return_value = slots
     with patch("app.cycle.get_scraper", return_value=scraper), \
-         patch("app.mail._call_mailjet_batch", return_value=True) as mb, \
-         patch("app.mail._call_resend_batch", return_value=True):
+         patch("app.mail._call_mailjet_batch", return_value=200) as mb, \
+         patch("app.mail._call_resend_batch", return_value=200):
         run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15,
                   cycle_id=cycle_id)
     return mb
@@ -135,8 +135,8 @@ def test_deferred_digest_does_not_record_a_count(db):
     scraper = MagicMock()
     scraper.poll.return_value = _slots(30)
     with patch("app.cycle.get_scraper", return_value=scraper), \
-         patch("app.mail._call_mailjet_batch", return_value=False), \
-         patch("app.mail._call_resend_batch", return_value=False):
+         patch("app.mail._call_mailjet_batch", return_value=500), \
+         patch("app.mail._call_resend_batch", return_value=500):
         run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
     assert _state(db, sid) == (None, None)
 

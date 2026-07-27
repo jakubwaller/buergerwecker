@@ -15,6 +15,7 @@ class Config:
     resend_monthly_quota: int
     mailjet_hourly_quota: int
     quota_alert_threshold_pct: int
+    max_send_failures_per_address: int
     email_provider_order: tuple
     token_secret_primary: str
     token_secret_previous: str
@@ -66,6 +67,10 @@ def load_config() -> Config:
         resend_monthly_quota=int(os.environ.get("RESEND_MONTHLY_QUOTA", "3000")),
         mailjet_hourly_quota=int(os.environ.get("MAILJET_HOURLY_QUOTA", "10")),
         quota_alert_threshold_pct=int(os.environ.get("QUOTA_ALERT_THRESHOLD_PCT", "80")),
+        # How many provider content-rejections an address may collect before we
+        # stop attempting it at all. 0 disables the cap (retry forever).
+        max_send_failures_per_address=int(
+            os.environ.get("MAX_SEND_FAILURES_PER_ADDRESS", "3")),
         # Order in which providers are tried for notification digests. Default
         # Mailjet-first so its account sees the traffic (needed to get the
         # new-sender throttle lifted); Resend absorbs the overflow.

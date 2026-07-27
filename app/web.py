@@ -206,12 +206,17 @@ _CONTACT_PROJECTS: dict[str, str] = {
 _CONTACT_NAME_MAX = 200
 _CONTACT_MESSAGE_MAX = 5000
 
-# Deliberately conservative: the submitted address becomes a Reply-To header,
-# so reject anything with whitespace, control characters, angle brackets or a
-# bare domain rather than trusting the provider to sanitize it. Turning away a
-# handful of exotic-but-valid addresses is the right trade here — they can
-# still use the plain mailto: link on the same page.
-_CONTACT_EMAIL_RE = re.compile(r"[^@\s<>,;\"]+@[^@\s<>,;\"]+\.[A-Za-z]{2,}")
+# Deliberately conservative: on the contact form the submitted address becomes
+# a Reply-To header, so reject anything with whitespace, control characters,
+# angle brackets or a bare domain rather than trusting the provider to sanitize
+# it. Turning away a handful of exotic-but-valid addresses is the right trade
+# here — they can still use the plain mailto: link on the same page.
+#
+# Sign-up uses the same rule. It used to accept anything containing an "@",
+# which let `subscriber@example-com` through on 2026-07-24 — a missing dot, so an
+# undeliverable domain. Mailjet rejects the whole batch such an address lands
+# in, and that sign-up never got its confirmation mail.
+_EMAIL_RE = re.compile(r"[^@\s<>,;\"]+@[^@\s<>,;\"]+\.[A-Za-z]{2,}")
 
 
 def _parse_hhmm(s: str) -> time_cls:
@@ -378,7 +383,7 @@ def create_app() -> Flask:
         lang = request.form.get("lang", "de")
         ip = _client_ip()
         email = request.form.get("email", "").strip().lower()
-        if not email or "@" not in email:
+        if not _EMAIL_RE.fullmatch(email):
             return _result_page("invalid_email", lang, status=400)
         # 2. per-IP rate limit (in-memory, soft)
         if not GLOBAL_IP_LIMITER.hit(f"ip:{ip}",
@@ -651,7 +656,7 @@ def create_app() -> Flask:
         # Stricter than /subscribe's "@" check: this address is echoed into a
         # Reply-To header, so anything with whitespace, control characters or
         # a missing domain is rejected rather than handed to the provider.
-        if not _CONTACT_EMAIL_RE.fullmatch(email):
+        if not _EMAIL_RE.fullmatch(email):
             return _result_page("invalid_email", lang, status=400)
         message = request.form.get("message", "").strip()
         if not message:
