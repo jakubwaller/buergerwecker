@@ -195,3 +195,48 @@ def test_one_click_unsubscribe_post(client):
     row = connect(os.environ["DB_PATH"]).execute(
         "SELECT deleted_at FROM subscriptions WHERE id=?", (sid,)).fetchone()
     assert row["deleted_at"] is not None
+
+def test_filter_edit_clears_the_abundance_measurement(tmp_path, monkeypatch):
+    """`last_match_count` was measured against the previous filter. Narrowing a
+    firehose filter down to one scarce office must not leave the subscriber
+    stuck on the slow cadence the old filter earned."""
+    db_path = str(tmp_path / "t.db")
+    monkeypatch.setenv("DB_PATH", db_path)
+    monkeypatch.setenv("TOKEN_SECRET_PRIMARY", "x"*32)
+    monkeypatch.setenv("TOKEN_SECRET_PREVIOUS", "")
+    for k, v in {
+        "SUBSCRIPTION_TTL_DAYS":"90","SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR":"99",
+        "SUBSCRIBE_RATELIMIT_PER_EMAIL_PER_DAY":"99",
+        "MAILJET_API_KEY":"m","MAILJET_API_SECRET":"m","MAILJET_FROM_EMAIL":"x@x",
+        "MAILJET_FROM_NAME":"x","MAILJET_DAILY_QUOTA":"6000","RESEND_API_KEY":"r",
+        "ADMIN_TOKEN":"a"*32,"PUBLIC_BASE_URL":"https://x",
+        "DEDUP_WINDOW_HOURS":"24","RATE_LIMIT_MINUTES":"15",
+        "RENEWAL_REMINDER_DAYS_BEFORE":"10","MAX_PLANS_PER_CITY":"10",
+        "PARSER_CANARY_THRESHOLD_HOURS":"2","DEVELOPER_EMAIL":"d@x","KOFI_URL":"https://k",
+    }.items():
+        monkeypatch.setenv(k, v)
+    conn = connect(db_path); init_schema(conn)
+    from app.catalog import load_catalog
+    cat = load_catalog("leipzig")
+    appt_uuid = next(iter(cat.appointment_types.values()))
+    loc_uuid = next(iter(cat.locations.values()))
+    f = Filter(appointment_types=[appt_uuid], locations="all",
+               weekdays=[1, 2, 3, 4, 5, 6, 7],
+               time_window_start=time(0, 0), time_window_end=time(23, 59))
+    sid = insert_pending(conn, email="m@x.com", city="leipzig", language="de",
+                         filter_=f, ttl_days=90)
+    conn.execute("UPDATE subscriptions SET confirmed_at=datetime('now'), "
+                 "last_match_count=90 WHERE id=?", (sid,))
+    conn.commit()
+
+    app = create_app(); app.config["TESTING"] = True
+    r = app.test_client().post(f"/manage/{_sign(sid, 'manage')}", data={
+        "appointment_type": appt_uuid, "locations": [loc_uuid],
+        "weekdays": ["2"], "time_start": "09:00", "time_end": "10:00",
+    })
+    assert r.status_code == 200, r.data[:200]
+    row = connect(db_path).execute(
+        "SELECT last_match_count, filters_json FROM subscriptions WHERE id=?",
+        (sid,)).fetchone()
+    assert row["last_match_count"] is None
+    assert loc_uuid in row["filters_json"]      # the edit really landed

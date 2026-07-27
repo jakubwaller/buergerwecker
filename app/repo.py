@@ -64,6 +64,8 @@ def _row_to_subscription(row: sqlite3.Row) -> Subscription:
         heartbeat_30d_at=_p(row["heartbeat_30d_at"]),
         heartbeat_60d_at=_p(row["heartbeat_60d_at"]),
         deleted_at=_p(row["deleted_at"]),
+        last_match_count=(row["last_match_count"]
+                          if "last_match_count" in row.keys() else None),
     )
 
 def active_subscriptions(conn: sqlite3.Connection) -> list[Subscription]:
@@ -76,9 +78,16 @@ def active_subscriptions(conn: sqlite3.Connection) -> list[Subscription]:
     ).fetchall()
     return [_row_to_subscription(r) for r in rows]
 
-def set_last_notified(conn: sqlite3.Connection, sub_id: int) -> None:
-    conn.execute("UPDATE subscriptions SET last_notified_at=CURRENT_TIMESTAMP "
-                 "WHERE id=?", (sub_id,))
+def set_last_notified(conn: sqlite3.Connection, sub_id: int,
+                      match_count: int | None = None) -> None:
+    """Stamp a delivered digest. `match_count` is how many slots the filter
+    matched in that cycle (seen ones included) — the adaptive rate limit reads
+    it back next cycle. COALESCE keeps the previous measurement when a caller
+    passes nothing, so an unmeasured send never resets a subscriber to the
+    base interval."""
+    conn.execute("UPDATE subscriptions SET last_notified_at=CURRENT_TIMESTAMP, "
+                 "last_match_count=COALESCE(?, last_match_count) WHERE id=?",
+                 (match_count, sub_id))
 
 def record_seen_slot(conn: sqlite3.Connection, sub_id: int, slot_hash: str) -> None:
     conn.execute(

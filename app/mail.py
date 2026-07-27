@@ -301,13 +301,34 @@ def send_batch(conn: sqlite3.Connection, items: list[Outgoing], cfg) -> BatchRes
         result.deferred = len(remaining)
     return result
 
+def _daily_usage(conn: sqlite3.Connection, cfg) -> list[tuple[str, int, int]]:
+    """(provider, sends in the last 24h, daily cap) for every provider that is
+    actually configured to send. Providers without a cap are skipped — there is
+    nothing to be near the limit of."""
+    caps = {"mailjet": getattr(cfg, "mailjet_daily_quota", 0),
+            "resend": getattr(cfg, "resend_daily_quota", 0)}
+    usage = []
+    for name, _send_fn, _batch_size, _limits in _providers(cfg):
+        cap = caps.get(name) or 0
+        if cap > 0:
+            usage.append((name, _window_used(conn, name, 86400), cap))
+    return usage
+
 def maybe_quota_alert(conn: sqlite3.Connection, cfg, *, deferred: int) -> None:
-    """Email the developer when daily send volume nears the free-tier cap, or
+    """Email the developer when daily send volume nears a free-tier cap, or
     when notifications had to be deferred for lack of quota. Rate-limited to
-    once per 24h via meta. This is the signal to upgrade to a paid plan."""
-    used = _window_used(conn, "resend", 86400)
-    threshold = cfg.resend_daily_quota * cfg.quota_alert_threshold_pct / 100
-    if deferred == 0 and used < threshold:
+    once per 24h via meta. This is the signal to upgrade to a paid plan.
+
+    Every configured provider is checked, not just one: Mailjet carries all the
+    notification traffic by default (EMAIL_PROVIDER_ORDER) and Resend only
+    absorbs its overflow, so watching Resend alone meant the alert could sit at
+    0% while Mailjet ran into its cap — which is exactly what happened on
+    2026-07-27, at 197 of 200.
+    """
+    usage = _daily_usage(conn, cfg)
+    threshold = cfg.quota_alert_threshold_pct / 100
+    breached = [u for u in usage if u[1] >= u[2] * threshold]
+    if deferred == 0 and not breached:
         return
     if not cfg.developer_email:
         return
@@ -320,14 +341,16 @@ def maybe_quota_alert(conn: sqlite3.Connection, cfg, *, deferred: int) -> None:
                 return
         except ValueError:
             pass
-    pct = round(used / cfg.resend_daily_quota * 100) if cfg.resend_daily_quota else 0
+    lines = [f"  {name}: {used}/{cap} ({round(used / cap * 100)}%)"
+             for name, used, cap in usage] or ["  (no provider has a daily cap set)"]
     subject = "[buergerwecker] email quota running low"
     body = (
-        f"Resend usage in the last 24h: {used}/{cfg.resend_daily_quota} ({pct}%).\n"
-        f"Notifications deferred this cycle for lack of quota: {deferred}.\n\n"
-        "Subscribers may be going un-notified. Consider upgrading to a paid "
-        "email plan (e.g. Resend Pro) and raising RESEND_DAILY_QUOTA / "
-        "MAILJET_HOURLY_QUOTA accordingly."
+        "Provider usage in the last 24h:\n"
+        + "\n".join(lines) + "\n\n"
+        + f"Notifications deferred this cycle for lack of quota: {deferred}.\n\n"
+        "Subscribers may be going un-notified. Either raise the send cadence "
+        "floor (RATE_LIMIT_MINUTES / ADAPTIVE_RATE_LIMIT_MAX_MULTIPLIER) or "
+        "upgrade to a paid email plan and raise the matching *_DAILY_QUOTA."
     )
     try:
         send(conn, cfg.developer_email, subject, body,

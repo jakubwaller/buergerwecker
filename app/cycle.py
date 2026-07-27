@@ -14,6 +14,52 @@ from app.analytics import record_availability
 from app.digest import send_digest, flush_digests  # noqa: E402
 
 
+# Adaptive send cadence.
+#
+# RATE_LIMIT_MINUTES is a floor, not a schedule: it is the gap a subscriber
+# gets when their filter is matching almost nothing — the scarce case, where a
+# single slot is worth an immediate mail. The more slots a filter is already
+# matching, the less any individual one matters, so the floor is multiplied
+# out. Without this the floor is the ONLY bound on volume, and in a plentiful
+# tenant the inventory churns faster than it, so every subscriber sits pinned
+# to 15-minute mails all day (14 subscribers produced 184 digests on
+# 2026-07-27, against a 200/day provider cap).
+#
+# Thresholds are raw slot counts, and they are deliberately low because vendor
+# granularity spans orders of magnitude: measured live on 2026-07-28, an
+# all-locations Bonn filter (smartCJM, every free slot) matched 2792 slots
+# while an all-locations Braunschweig filter (TEVIS, earliest slot per office
+# only) matched 6 — and the Braunschweig subscriber was the one sending 40
+# mails a day. So 6 has to land well up the ladder, not near the bottom.
+#
+# The trade-off that buys: a genuinely scarce Leipzig filter showing ~7 slots
+# also gets an hour. That is judged acceptable — seven standing options is not
+# an emergency, and nothing is dropped, only batched into the next digest.
+# Provisional calibration; re-measure against a daytime sample.
+_ABUNDANCE_LADDER = ((2, 1), (5, 2), (15, 4))
+_MAX_ABUNDANCE_MULTIPLIER = 8
+
+
+def adaptive_rate_limit_minutes(base_minutes: int, match_count: int | None, *,
+                                max_multiplier: int = _MAX_ABUNDANCE_MULTIPLIER) -> int:
+    """Minimum minutes between digests for a subscriber whose filter matched
+    `match_count` slots at its last delivered digest.
+
+    `None` — never notified, or a row predating the column — gets the base
+    floor: serve a new subscriber fast until we have actually measured them.
+    `max_multiplier=1` pins everyone to the base, i.e. the pre-adaptive
+    behaviour, which is what makes it a usable kill switch.
+    """
+    if match_count is None:
+        return base_minutes
+    multiplier = _MAX_ABUNDANCE_MULTIPLIER
+    for threshold, m in _ABUNDANCE_LADDER:
+        if match_count <= threshold:
+            multiplier = m
+            break
+    return base_minutes * min(multiplier, max(1, max_multiplier))
+
+
 def _poll_interval_s(city: str) -> int:
     """Per-tenant minimum seconds between polls (scraper_config key
     `poll_interval_seconds`, default 60 = every cycle). Lets a tenant honor a
@@ -161,14 +207,23 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
     record_availability(conn, slots_by_city)
 
     now = datetime.utcnow()
-    rate_cutoff = now - timedelta(minutes=rate_limit_minutes)
+    max_multiplier = getattr(cfg, "adaptive_rate_limit_max_multiplier",
+                             _MAX_ABUNDANCE_MULTIPLIER)
     # Fairness: serve longest-waiting subscribers first (never-notified, then
     # oldest last_notified_at). When a burst exceeds the daily send quota, the
     # deferred tail is whoever was most recently served — so nobody is
     # permanently starved across cycles. datetime.min sorts NULLs to the front.
     outbox: list = []
     for sub in sorted(subs, key=lambda s: s.last_notified_at or datetime.min):
-        if sub.last_notified_at and sub.last_notified_at > rate_cutoff:
+        # Each subscriber's floor is their own: scarce filters keep the base
+        # interval, filters swimming in slots wait longer. Cheap to evaluate
+        # here because the abundance was measured at their last delivery
+        # rather than recomputed for every skipped subscriber every cycle.
+        required_gap = adaptive_rate_limit_minutes(
+            rate_limit_minutes, sub.last_match_count,
+            max_multiplier=max_multiplier)
+        if (sub.last_notified_at
+                and sub.last_notified_at > now - timedelta(minutes=required_gap)):
             continue
         # Gather candidate slots from any plan that covers this subscription's filter.
         # Dedupe by hash within the cycle: the same logical slot (day/time/office/
@@ -176,6 +231,7 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
         # plans — Slot.hash() excludes the resource, so collapse them to one line.
         candidates: list[Slot] = []
         seen_in_cycle: set[str] = set()
+        matched_total = 0
         for plan in plans:
             if plan.city != sub.city:
                 continue
@@ -187,9 +243,15 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
                 slot_hash = slot.hash()
                 if slot_hash in seen_in_cycle:
                     continue
+                seen_in_cycle.add(slot_hash)
+                # Counted before the seen filter: the adaptive interval needs
+                # how much this filter is matching *in total*, not how much of
+                # it is new. A subscriber drip-fed one fresh slot per cycle out
+                # of thirty standing ones is the abundant case, not the scarce
+                # one, and counting only candidates would read it backwards.
+                matched_total += 1
                 if has_seen_slot(conn, sub.id, slot_hash):
                     continue
-                seen_in_cycle.add(slot_hash)
                 candidates.append(slot)
         if not candidates:
             continue
@@ -205,5 +267,6 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
         # inside flush_digests, but only for digests that were actually sent —
         # quota-deferred ones stay unrecorded so a later cycle re-sends them.
         send_digest(conn=conn, subscription=sub, matched_slots=candidates,
-                    cycle_id=cycle_id, cfg=cfg, sink=outbox)
+                    cycle_id=cycle_id, cfg=cfg, sink=outbox,
+                    match_count=matched_total)
     flush_digests(conn, outbox, cfg)

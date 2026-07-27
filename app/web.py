@@ -513,7 +513,12 @@ def create_app() -> Flask:
                        time_window_end=_parse_hhmm(te),
                        max_days_ahead=_parse_max_days(
                            request.form.get("max_days_ahead")))
-            conn.execute("UPDATE subscriptions SET filters_json=? WHERE id=?",
+            # Clear the abundance measurement along with the filter: it was
+            # measured against the OLD filter, and keeping it would leave
+            # someone who just narrowed a firehose down to one scarce office
+            # stuck on the slow cadence their previous filter earned.
+            conn.execute("UPDATE subscriptions SET filters_json=?, "
+                         "last_match_count=NULL WHERE id=?",
                          (f.to_json(), sub_id))
             row = conn.execute("SELECT language FROM subscriptions WHERE id=?",
                                (sub_id,)).fetchone()

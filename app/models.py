@@ -85,6 +85,10 @@ class Subscription:
     heartbeat_30d_at: datetime | None
     heartbeat_60d_at: datetime | None
     deleted_at: datetime | None
+    # How many slots this subscriber's filter matched at its last delivered
+    # digest — the abundance signal behind the adaptive send interval (see
+    # cycle.adaptive_rate_limit_minutes). None until the first digest goes out.
+    last_match_count: int | None = None
 
 @dataclass(frozen=True)
 class PollPlan:

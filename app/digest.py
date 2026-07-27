@@ -148,10 +148,14 @@ class QueuedDigest:
     item: Outgoing
     subscription: Subscription
     slots: list[Slot]
+    # Slots the filter matched this cycle, already-seen ones included. Recorded
+    # on delivery as the subscriber's abundance, which sets their next interval.
+    match_count: int | None = None
 
 def send_digest(*, conn: sqlite3.Connection, subscription: Subscription,
                 matched_slots: list[Slot], cycle_id: str, cfg,
-                sink: list | None = None) -> None:
+                sink: list | None = None,
+                match_count: int | None = None) -> None:
     """Render a digest and stage it for delivery. `cfg` is the loaded Config
     (passed in by callers that already have it loaded — never re-read from
     os.environ here). render_digest_text loads the per-city catalog itself.
@@ -180,6 +184,7 @@ def send_digest(*, conn: sqlite3.Connection, subscription: Subscription,
                       idem_key=key, unsub_url=unsub_url),
         subscription=subscription,
         slots=list(matched_slots),
+        match_count=match_count,
     )
     if sink is None:
         flush_digests(conn, [queued], cfg)
@@ -201,5 +206,5 @@ def flush_digests(conn: sqlite3.Connection, sink: list, cfg) -> None:
         with transaction(conn):
             for slot in q.slots:
                 record_seen_slot(conn, q.subscription.id, slot.hash())
-            set_last_notified(conn, q.subscription.id)
+            set_last_notified(conn, q.subscription.id, q.match_count)
     maybe_quota_alert(conn, cfg, deferred=result.deferred)

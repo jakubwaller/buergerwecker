@@ -22,6 +22,7 @@ class Config:
     public_base_url: str
     dedup_window_hours: int
     rate_limit_minutes: int
+    adaptive_rate_limit_max_multiplier: int
     subscription_ttl_days: int
     renewal_reminder_days_before: int
     max_plans_per_city: int
@@ -78,6 +79,12 @@ def load_config() -> Config:
         public_base_url=_req("PUBLIC_BASE_URL"),
         dedup_window_hours=_req_int("DEDUP_WINDOW_HOURS"),
         rate_limit_minutes=_req_int("RATE_LIMIT_MINUTES"),
+        # Ceiling on how far the adaptive cadence may stretch RATE_LIMIT_MINUTES
+        # for subscribers whose filter is matching a lot of slots (see
+        # cycle.adaptive_rate_limit_minutes). Set to 1 to disable adaptivity and
+        # put everyone back on the flat floor — the kill switch, no redeploy.
+        adaptive_rate_limit_max_multiplier=int(
+            os.environ.get("ADAPTIVE_RATE_LIMIT_MAX_MULTIPLIER", "8")),
         subscription_ttl_days=_req_int("SUBSCRIPTION_TTL_DAYS"),
         renewal_reminder_days_before=_req_int("RENEWAL_REMINDER_DAYS_BEFORE"),
         max_plans_per_city=_req_int("MAX_PLANS_PER_CITY"),

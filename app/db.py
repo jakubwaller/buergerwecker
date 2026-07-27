@@ -3,7 +3,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS subscriptions (
@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   heartbeat_30d_at  TIMESTAMP,
   heartbeat_60d_at  TIMESTAMP,
   deleted_at        TIMESTAMP,
-  confirmation_sent_at TIMESTAMP
+  confirmation_sent_at TIMESTAMP,
+  last_match_count  INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_active_subs
   ON subscriptions(deleted_at, confirmed_at, expires_at, city);
@@ -149,10 +150,15 @@ def init_schema(conn: sqlite3.Connection) -> None:
         "requests_total": "INTEGER NOT NULL DEFAULT 0",
         "counts_date":    "TEXT",
     })
-    # Tracks when a pending sign-up's confirmation email was successfully sent,
-    # so the retry pass can re-send confirmations that were quota-deferred.
+    # confirmation_sent_at: when a pending sign-up's confirmation email was
+    # successfully sent, so the retry pass can re-send quota-deferred ones.
+    # last_match_count: slots matched at the last delivered digest, read by the
+    # adaptive rate limit. NULL on existing rows means "not measured yet",
+    # which the ladder treats as the base interval — so a migrated DB keeps
+    # today's cadence until each subscriber's first digest re-measures it.
     _add_missing_columns(conn, "subscriptions", {
         "confirmation_sent_at": "TIMESTAMP",
+        "last_match_count": "INTEGER",
     })
     # Durable per-day send counters power the admin page's provider-quota view.
     # sent_idempotency only lives 14 days (housekeeping prune), so month-to-date
