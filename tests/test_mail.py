@@ -136,6 +136,19 @@ def test_resend_sets_reply_to_when_configured(monkeypatch, mailjet_env):
         _call_resend("alice@example.com", "subj", "body")
     assert seen["json"]["reply_to"] == "termine@jakubwaller.eu"
 
+def test_explicit_reply_to_overrides_the_env_default(monkeypatch, mailjet_env):
+    """Contact-form mail points replies at the visitor, not our own mailbox."""
+    monkeypatch.setenv("RESEND_API_KEY", "re_test_key")
+    monkeypatch.setenv("REPLY_TO_EMAIL", "buergerwecker@jakubwaller.eu")
+    seen, fake = _capture()
+    with patch("app.mail.requests.post", side_effect=fake):
+        _call_mailjet("alice@example.com", "subj", "body", None, "gast@example.org")
+    assert seen["json"]["Messages"][0]["ReplyTo"] == {"Email": "gast@example.org"}
+    with patch("app.mail.requests.post", side_effect=fake):
+        _call_resend("alice@example.com", "subj", "body", None, "gast@example.org")
+    assert seen["json"]["reply_to"] == "gast@example.org"
+
+
 def test_pending_row_blocks_second_call_after_crash(db):
     """If the process died mid-send leaving provider='pending', the next call must skip."""
     db.execute(

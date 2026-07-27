@@ -26,7 +26,8 @@ def _unsub_headers(unsub_url: str | None) -> dict:
             "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"}
 
 def _mailjet_message(to: str, subject: str, body: str,
-                     unsub_url: str | None = None) -> dict:
+                     unsub_url: str | None = None,
+                     reply_to: str | None = None) -> dict:
     """One entry of Mailjet's v3.1 `Messages` array (shared by single + batch)."""
     message = {
         "From": {"Email": os.environ["MAILJET_FROM_EMAIL"],
@@ -40,14 +41,16 @@ def _mailjet_message(to: str, subject: str, body: str,
         message["Headers"] = headers
     # From is the validated sending subdomain; Reply-To (optional) routes
     # replies to a real mailbox so the From address can be a subdomain that
-    # doesn't itself receive mail.
-    reply_to = os.environ.get("REPLY_TO_EMAIL")
+    # doesn't itself receive mail. An explicit `reply_to` overrides that
+    # default — contact-form mail points replies at the person who wrote in.
+    reply_to = reply_to or os.environ.get("REPLY_TO_EMAIL")
     if reply_to:
         message["ReplyTo"] = {"Email": reply_to}
     return message
 
 def _resend_email(to: str, subject: str, body: str,
-                  unsub_url: str | None = None) -> dict:
+                  unsub_url: str | None = None,
+                  reply_to: str | None = None) -> dict:
     """One Resend email object (shared by single `/emails` + `/emails/batch`)."""
     payload = {
         "from": f"{os.environ['MAILJET_FROM_NAME']} <{os.environ['MAILJET_FROM_EMAIL']}>",
@@ -58,26 +61,29 @@ def _resend_email(to: str, subject: str, body: str,
     headers = _unsub_headers(unsub_url)
     if headers:
         payload["headers"] = headers
-    reply_to = os.environ.get("REPLY_TO_EMAIL")
+    reply_to = reply_to or os.environ.get("REPLY_TO_EMAIL")
     if reply_to:
         payload["reply_to"] = reply_to
     return payload
 
 def _call_mailjet(to: str, subject: str, body: str,
-                  unsub_url: str | None = None) -> Any:
+                  unsub_url: str | None = None,
+                  reply_to: str | None = None) -> Any:
     return requests.post(
         "https://api.mailjet.com/v3.1/send",
         auth=(os.environ["MAILJET_API_KEY"], os.environ["MAILJET_API_SECRET"]),
-        json={"Messages": [_mailjet_message(to, subject, body, unsub_url)]},
+        json={"Messages": [_mailjet_message(to, subject, body, unsub_url,
+                                            reply_to)]},
         timeout=30,
     )
 
 def _call_resend(to: str, subject: str, body: str,
-                 unsub_url: str | None = None) -> Any:
+                 unsub_url: str | None = None,
+                 reply_to: str | None = None) -> Any:
     return requests.post(
         "https://api.resend.com/emails",
         headers={"Authorization": f"Bearer {os.environ['RESEND_API_KEY']}"},
-        json=_resend_email(to, subject, body, unsub_url),
+        json=_resend_email(to, subject, body, unsub_url, reply_to),
         timeout=30,
     )
 
@@ -93,8 +99,11 @@ def _record_send_count(conn: sqlite3.Connection, provider: str, n: int = 1) -> N
     )
 
 def send(conn: sqlite3.Connection, to: str, subject: str, body: str,
-         *, idem_key: str, unsub_url: str | None = None) -> None:
+         *, idem_key: str, unsub_url: str | None = None,
+         reply_to: str | None = None) -> None:
     """Send `body` to `to`. Idempotent on `idem_key`.
+
+    `reply_to` overrides the REPLY_TO_EMAIL default for this one message.
 
     Order: claim the idempotency row FIRST (atomic INSERT OR IGNORE), then
     attempt sends. If both providers fail the claim is rolled back so a
@@ -110,13 +119,13 @@ def send(conn: sqlite3.Connection, to: str, subject: str, body: str,
     if cur.rowcount == 0:
         return  # already claimed by an earlier call
     try:
-        resp = _call_mailjet(to, subject, body, unsub_url)
+        resp = _call_mailjet(to, subject, body, unsub_url, reply_to)
         provider = "mailjet"
         # Fail over to Resend on ANY Mailjet error (4xx incl. 401/403 account
         # blocks, and 5xx/429), not just transient ones — a blocked Mailjet
         # account returns 401, and that's exactly when the fallback must engage.
         if resp.status_code >= 400 and os.environ.get("RESEND_API_KEY"):
-            resp = _call_resend(to, subject, body, unsub_url)
+            resp = _call_resend(to, subject, body, unsub_url, reply_to)
             provider = "resend"
         if resp.status_code >= 400:
             raise MailFailed(f"provider failed; last status {resp.status_code}")
