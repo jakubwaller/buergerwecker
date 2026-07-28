@@ -89,6 +89,10 @@ class Subscription:
     # digest — the abundance signal behind the adaptive send interval (see
     # cycle.adaptive_rate_limit_minutes). None until the first digest goes out.
     last_match_count: int | None = None
+    # Digests delivered in an unbroken run — the flow signal behind the same
+    # adaptive interval. Reset to 0 by any cycle that finds this subscriber
+    # eligible with nothing to send.
+    consecutive_digests: int = 0
 
 @dataclass(frozen=True)
 class PollPlan:

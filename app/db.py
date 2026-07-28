@@ -3,7 +3,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS subscriptions (
@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   heartbeat_60d_at  TIMESTAMP,
   deleted_at        TIMESTAMP,
   confirmation_sent_at TIMESTAMP,
-  last_match_count  INTEGER
+  last_match_count  INTEGER,
+  consecutive_digests INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_active_subs
   ON subscriptions(deleted_at, confirmed_at, expires_at, city);
@@ -170,6 +171,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
     _add_missing_columns(conn, "subscriptions", {
         "confirmation_sent_at": "TIMESTAMP",
         "last_match_count": "INTEGER",
+        "consecutive_digests": "INTEGER NOT NULL DEFAULT 0",
     })
     # Durable per-day send counters power the admin page's provider-quota view.
     # sent_idempotency only lives 14 days (housekeeping prune), so month-to-date

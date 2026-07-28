@@ -68,6 +68,20 @@ def _state(db, sid):
     return row["last_match_count"], row["last_notified_at"]
 
 
+def _gap(db, sid):
+    """The interval this subscriber has currently earned."""
+    row = db.execute("SELECT last_match_count, consecutive_digests "
+                     "FROM subscriptions WHERE id=?", (sid,)).fetchone()
+    return adaptive_rate_limit_minutes(15, row["last_match_count"],
+                                       streak=row["consecutive_digests"])
+
+
+def _advance(db, sid):
+    """Age the subscriber just past its earned gap — a live stream coming back
+    as soon as it is allowed to, which keeps the run alive."""
+    _age(db, sid, _gap(db, sid) + 1)
+
+
 def _age(db, sid, minutes):
     db.execute(f"UPDATE subscriptions SET last_notified_at="
                f"datetime('now','-{minutes} minutes') WHERE id=?", (sid,))
@@ -183,3 +197,99 @@ def test_never_notified_subscriber_is_served_immediately(db):
     mb = _cycle(db, _slots(500), "c1")
     mb.assert_called_once()
     assert _state(db, sid)[1] is not None
+
+
+# --- the flow signal: consecutive digests ----------------------------------
+
+@pytest.mark.parametrize("streak,expected", [
+    (0, 15), (1, 15),   # a first digest is never delayed
+    (2, 30),
+    (3, 60),
+    (4, 120),           # four in a row → 2h
+    (99, 120),          # capped
+])
+def test_streak_ladder(streak, expected):
+    assert adaptive_rate_limit_minutes(15, 1, streak=streak) == expected
+
+
+def test_signals_compose_by_taking_the_larger_multiplier():
+    # Abundant but no run yet → abundance wins.
+    assert adaptive_rate_limit_minutes(15, 2792, streak=0) == 120
+    # Scarce stock but a long run → flow wins. This is the Augsburg case the
+    # abundance ladder structurally cannot see.
+    assert adaptive_rate_limit_minutes(15, 1, streak=4) == 120
+    # Neither → base.
+    assert adaptive_rate_limit_minutes(15, 1, streak=1) == 15
+    # The kill switch still overrides both.
+    assert adaptive_rate_limit_minutes(15, 2792, streak=9, max_multiplier=1) == 15
+
+
+def _streak(db, sid):
+    return db.execute("SELECT consecutive_digests FROM subscriptions WHERE id=?",
+                      (sid,)).fetchone()["consecutive_digests"]
+
+
+def test_streak_increments_on_each_delivered_digest(db):
+    sid = _sub(db)
+    _cycle(db, _slots(1), "c1")
+    assert _streak(db, sid) == 1
+    _age(db, sid, 20)
+    _cycle(db, _slots(2), "c2")
+    assert _streak(db, sid) == 2
+
+
+def test_streak_survives_a_merely_idle_cycle(db):
+    """A cycle that finds nothing is not the end of a run. Resetting on that
+    was measured against real traffic and almost never let the backoff engage:
+    someone getting mail every ~20 minutes is idle in between."""
+    sid = _sub(db)
+    _cycle(db, _slots(1), "c1")
+    assert _streak(db, sid) == 1
+    _age(db, sid, 16)                  # eligible, but nothing new to send
+    _cycle(db, _slots(1), "c2")
+    assert _streak(db, sid) == 1       # run intact
+    _cycle(db, _slots(2), "c3")        # stream resumes
+    assert _streak(db, sid) == 2
+
+
+def test_streak_ends_after_silence_worth_twice_the_earned_cadence(db):
+    sid = _sub(db)
+    for i in range(3):
+        _cycle(db, _slots(1, offset=i), f"c{i}")
+        _advance(db, sid)
+    assert _streak(db, sid) == 3        # earned a 60-minute cadence
+    _age(db, sid, 90)                   # quiet, but under 2x60
+    _cycle(db, _slots(1, offset=9), "warm")
+    assert _streak(db, sid) == 4        # still one run
+    _age(db, sid, 400)                  # silent well past 2x120
+    _cycle(db, _slots(1, offset=10), "cold")
+    assert _streak(db, sid) == 1        # run restarted, and served at once
+
+
+def test_drip_fed_single_slot_subscriber_gets_backed_off(db):
+    """The Augsburg case: one office on an earliest-slot-per-office tenant, so
+    the filter can never match more than one slot — maximally scarce by stock,
+    yet a fresh slot arrives every cycle. 10 emails on 2026-07-27."""
+    sid = _sub(db)
+    gaps = []
+    for i in range(5):
+        mb = _cycle(db, _slots(1, offset=i), f"c{i}")   # a NEW single slot each time
+        assert mb.call_count == 1, f"cycle {i} sent nothing"
+        gaps.append(_gap(db, sid))
+        _advance(db, sid)
+    assert _state(db, sid)[0] == 1                     # stock stayed "scarce"...
+    assert gaps == [15, 30, 60, 120, 120]              # ...but flow backed it off
+
+
+def test_a_dried_up_stream_returns_to_the_fast_floor(db):
+    """The safety property for genuinely scarce subscribers: when the stream
+    really does stop, the next slot is delivered at the fast floor again."""
+    sid = _sub(db)
+    for i in range(4):
+        _cycle(db, _slots(1, offset=i), f"c{i}")
+        _advance(db, sid)
+    assert _gap(db, sid) == 120                        # backed right off
+    _age(db, sid, 300)                                 # stream stops
+    _cycle(db, _slots(1, offset=9), "after")
+    assert _streak(db, sid) == 1
+    assert _gap(db, sid) == 15                         # fast again

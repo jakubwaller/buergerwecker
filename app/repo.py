@@ -66,6 +66,8 @@ def _row_to_subscription(row: sqlite3.Row) -> Subscription:
         deleted_at=_p(row["deleted_at"]),
         last_match_count=(row["last_match_count"]
                           if "last_match_count" in row.keys() else None),
+        consecutive_digests=(row["consecutive_digests"]
+                             if "consecutive_digests" in row.keys() else 0) or 0,
     )
 
 def active_subscriptions(conn: sqlite3.Connection) -> list[Subscription]:
@@ -86,8 +88,15 @@ def set_last_notified(conn: sqlite3.Connection, sub_id: int,
     passes nothing, so an unmeasured send never resets a subscriber to the
     base interval."""
     conn.execute("UPDATE subscriptions SET last_notified_at=CURRENT_TIMESTAMP, "
-                 "last_match_count=COALESCE(?, last_match_count) WHERE id=?",
+                 "last_match_count=COALESCE(?, last_match_count), "
+                 "consecutive_digests=consecutive_digests+1 WHERE id=?",
                  (match_count, sub_id))
+
+def reset_digest_streak(conn: sqlite3.Connection, sub_id: int) -> None:
+    """End a subscriber's unbroken run of digests — called when they were due
+    for one and there was nothing to send."""
+    conn.execute("UPDATE subscriptions SET consecutive_digests=0 WHERE id=?",
+                 (sub_id,))
 
 def record_seen_slot(conn: sqlite3.Connection, sub_id: int, slot_hash: str) -> None:
     conn.execute(

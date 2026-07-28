@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import requests
 from app.filters import matches
 from app.planning import build_plans
-from app.repo import active_subscriptions, has_seen_slot
+from app.repo import active_subscriptions, has_seen_slot, reset_digest_streak
 from app.scrapers import get_scraper
 from app.http_session import CountingSession
 from app.models import Slot
@@ -39,24 +39,55 @@ from app.digest import send_digest, flush_digests  # noqa: E402
 _ABUNDANCE_LADDER = ((2, 1), (5, 2), (15, 4))
 _MAX_ABUNDANCE_MULTIPLIER = 8
 
+# Abundance measures stock, and on an earliest-slot-per-office tenant a
+# subscriber watching ONE office can never match more than one slot — so
+# somebody being drip-fed a fresh single slot every cycle reads as maximally
+# scarce and keeps the fastest cadence. Two of those (Augsburg ×10, Darmstadt
+# ×16 on 2026-07-27) were invisible to the ladder above for exactly this
+# reason. This second signal measures flow instead: how many digests a
+# subscriber has had in an unbroken run.
+#
+# It is safe for genuinely scarce subscribers because the run ends as soon as
+# the stream goes quiet — and for real scarcity it goes quiet constantly.
+_STREAK_LADDER = ((1, 1), (2, 2), (3, 4))
+
+# "Quiet" has to mean the stream dried up, not that one cycle happened to find
+# nothing. An earlier version reset the run on any empty cycle, and measuring
+# it against 2026-07-27's real traffic showed it almost never engaged: someone
+# getting mail every ~20 minutes is idle in between, so the run was wiped
+# before it could build. A run is over when the silence since the last digest
+# has run to twice the cadence that digest earned — a live stream always comes
+# back well inside that.
+_QUIET_FACTOR = 2
+
+
+def _ladder_multiplier(ladder, value: int) -> int:
+    for threshold, multiplier in ladder:
+        if value <= threshold:
+            return multiplier
+    return _MAX_ABUNDANCE_MULTIPLIER
+
 
 def adaptive_rate_limit_minutes(base_minutes: int, match_count: int | None, *,
+                                streak: int = 0,
                                 max_multiplier: int = _MAX_ABUNDANCE_MULTIPLIER) -> int:
     """Minimum minutes between digests for a subscriber whose filter matched
-    `match_count` slots at its last delivered digest.
+    `match_count` slots at its last delivered digest, and who has had `streak`
+    digests in an unbroken run.
 
-    `None` — never notified, or a row predating the column — gets the base
-    floor: serve a new subscriber fast until we have actually measured them.
+    The two signals compose by taking the larger multiplier: either "you have
+    plenty of options" or "you are hearing from us constantly" is reason enough
+    to slow down, and they catch different subscribers.
+
+    `match_count is None` — never notified, or a row predating the column —
+    contributes nothing, so a new subscriber is served fast until measured.
     `max_multiplier=1` pins everyone to the base, i.e. the pre-adaptive
     behaviour, which is what makes it a usable kill switch.
     """
-    if match_count is None:
-        return base_minutes
-    multiplier = _MAX_ABUNDANCE_MULTIPLIER
-    for threshold, m in _ABUNDANCE_LADDER:
-        if match_count <= threshold:
-            multiplier = m
-            break
+    abundance = (1 if match_count is None
+                 else _ladder_multiplier(_ABUNDANCE_LADDER, match_count))
+    flow = _ladder_multiplier(_STREAK_LADDER, max(0, streak))
+    multiplier = max(abundance, flow)
     return base_minutes * min(multiplier, max(1, max_multiplier))
 
 
@@ -219,9 +250,21 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
         # interval, filters swimming in slots wait longer. Cheap to evaluate
         # here because the abundance was measured at their last delivery
         # rather than recomputed for every skipped subscriber every cycle.
+        streak = sub.consecutive_digests
         required_gap = adaptive_rate_limit_minutes(
-            rate_limit_minutes, sub.last_match_count,
+            rate_limit_minutes, sub.last_match_count, streak=streak,
             max_multiplier=max_multiplier)
+        # Has the run gone quiet for long enough to be over? Checked here
+        # rather than on empty cycles, so an unpolled or briefly idle tenant
+        # can't be mistaken for a stream that ended.
+        if (streak and sub.last_notified_at and required_gap
+                and sub.last_notified_at <= now - timedelta(
+                    minutes=required_gap * _QUIET_FACTOR)):
+            reset_digest_streak(conn, sub.id)
+            streak = 0
+            required_gap = adaptive_rate_limit_minutes(
+                rate_limit_minutes, sub.last_match_count, streak=0,
+                max_multiplier=max_multiplier)
         if (sub.last_notified_at
                 and sub.last_notified_at > now - timedelta(minutes=required_gap)):
             continue
