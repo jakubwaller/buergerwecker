@@ -18,6 +18,7 @@ dev = [
   "pytest>=8.0",
   "pytest-cov>=5.0",
   "freezegun>=1.5",
+  "ruff>=0.16",
 ]
 
 [tool.pytest.ini_options]
@@ -26,6 +27,11 @@ addopts = "-v"
 markers = [
   "live: hits real Leipzig endpoints; opt-in via LIVE_TESTS=1",
 ]
+
+[tool.ruff.lint]
+# real errors only: syntax, undefined names, broken f-strings. Ruff's wider
+# defaults mostly object to semicolons, which is a style opinion, not a bug.
+select = ["E9", "F63", "F7", "F82"]
 
 [build-system]
 requires = ["setuptools>=68"]
