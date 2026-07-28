@@ -170,13 +170,51 @@ class BatchResult:
     # is a quota signal, undeliverable is a dead address and is not.
     undeliverable: set[str] = field(default_factory=set)
 
-# The batch callers return the provider's HTTP status rather than a bare
+# The batch callers report the provider's HTTP status rather than a bare
 # success flag: `_deliver` needs to tell "this provider is unusable" (auth,
 # rate limit, 5xx, timeout) apart from "this provider read the request and
 # rejected its content" (400/422), because only the latter means one of the
 # recipients is bad rather than the provider being down.
+#
+# Mailjet also reports a verdict per message, which matters more than it looks:
+# "In case of errors on one or several of the messages, the API will not stop
+# the processing of other successful messages" and "All validated messages will
+# be processed for sending", with the response order preserved from the request
+# (dev.mailjet.com Send API v3.1). So a batch containing one bad recipient has
+# ALREADY delivered the good ones — retrying them would double-send. When the
+# per-message verdicts are readable we use them and retry nothing.
 
-def _call_mailjet_batch(items: list[Outgoing]) -> int:
+@dataclass(frozen=True)
+class ProviderResult:
+    status: int | None
+    # Per-message success flags, index-aligned with the chunk, when the
+    # provider reports them. None when it doesn't, or the body was unusable.
+    per_message: tuple[bool, ...] | None = None
+
+def _as_result(value) -> ProviderResult:
+    """Providers report a ProviderResult; a bare status code is also accepted
+    (nothing to say per message)."""
+    if isinstance(value, ProviderResult):
+        return value
+    if value is None or isinstance(value, bool):
+        return ProviderResult(None)
+    return ProviderResult(int(value))
+
+def _mailjet_verdicts(resp, expected: int) -> tuple[bool, ...] | None:
+    """Per-message success flags from a v3.1 response, or None if the body
+    can't be trusted to line up with what we sent."""
+    try:
+        messages = resp.json()["Messages"]
+    except Exception:
+        return None
+    if not isinstance(messages, list) or len(messages) != expected:
+        return None
+    try:
+        return tuple(m.get("Status") == "success" for m in messages)
+    except AttributeError:
+        return None
+
+def _call_mailjet_batch(items: list[Outgoing]) -> ProviderResult:
     resp = requests.post(
         "https://api.mailjet.com/v3.1/send",
         auth=(os.environ["MAILJET_API_KEY"], os.environ["MAILJET_API_SECRET"]),
@@ -184,16 +222,16 @@ def _call_mailjet_batch(items: list[Outgoing]) -> int:
               for i in items]},
         timeout=60,
     )
-    return resp.status_code
+    return ProviderResult(resp.status_code, _mailjet_verdicts(resp, len(items)))
 
-def _call_resend_batch(items: list[Outgoing]) -> int:
+def _call_resend_batch(items: list[Outgoing]) -> ProviderResult:
     resp = requests.post(
         "https://api.resend.com/emails/batch",
         headers={"Authorization": f"Bearer {os.environ['RESEND_API_KEY']}"},
         json=[_resend_email(i.to, i.subject, i.body, i.unsub_url) for i in items],
         timeout=60,
     )
-    return resp.status_code
+    return ProviderResult(resp.status_code)
 
 def _window_used(conn: sqlite3.Connection, provider: str, window_seconds: int) -> int:
     """Count emails a provider actually sent within the last `window_seconds`.
@@ -247,11 +285,16 @@ def _content_rejected(status: int | None) -> bool:
 def _deliver(send_fn, chunk: list[Outgoing]) -> tuple[list, list, bool]:
     """Send `chunk`. Returns (delivered, undeliverable, provider_unusable).
 
-    A batch is all-or-nothing at both providers, so a single malformed
-    recipient sinks everyone batched with it. On a content rejection we split
-    and retry the halves: bisection isolates the culprit in log2(n) calls and
-    lets every other recipient through. Only a chunk of one that is still
-    rejected is attributed to its address.
+    When the provider grades each message (Mailjet does), believe it: the
+    successes are already sent, so they are recorded as delivered and NOTHING
+    is retried. Re-sending them would deliver the same digest twice.
+
+    Otherwise a batch is all-or-nothing, and a single malformed recipient sinks
+    everyone batched with it. On a content rejection we split and retry the
+    halves: bisection isolates the culprit in log2(n) calls and lets every
+    other recipient through. Only a chunk of one that is still rejected is
+    attributed to its address. (Safe here precisely because this path is for
+    providers that did NOT partially deliver.)
 
     Any other failure — auth, rate limit, 5xx, timeout — is the provider
     itself. Give up on it and let the caller fall through to the next one,
@@ -259,9 +302,15 @@ def _deliver(send_fn, chunk: list[Outgoing]) -> tuple[list, list, bool]:
     perfectly good addresses.
     """
     try:
-        status = send_fn(chunk)
+        result = _as_result(send_fn(chunk))
     except Exception:
-        status = None
+        result = ProviderResult(None)
+    verdicts = result.per_message
+    if verdicts is not None and len(verdicts) == len(chunk):
+        sent = [c for c, ok in zip(chunk, verdicts) if ok]
+        bad = [c for c, ok in zip(chunk, verdicts) if not ok]
+        return sent, bad, False
+    status = result.status
     if _ok(status):
         return list(chunk), [], False
     if not _content_rejected(status):

@@ -368,3 +368,63 @@ def test_rejected_by_every_provider_is_condemned_once_not_twice(db, resend_on):
     assert db.execute(
         "SELECT failures FROM email_failures WHERE email='bad@nope'"
     ).fetchone()["failures"] == 1
+
+
+# --- Mailjet grades each message; believe it rather than retrying -----------
+
+def _mj(verdicts, status=400):
+    """A Mailjet-shaped ProviderResult: per-message verdicts, index-aligned."""
+    from app.mail import ProviderResult
+    return lambda chunk: ProviderResult(status, tuple(verdicts))
+
+
+def test_partial_success_is_not_re_sent(db):
+    """Mailjet processes the valid messages in a batch even when a sibling is
+    rejected, so the successes are ALREADY delivered. Retrying them would send
+    the same digest twice."""
+    items = _items(4)
+    items[1] = Outgoing(to="bad@nope", subject="s", body="b", idem_key="poison")
+    calls = []
+    def send(chunk):
+        from app.mail import ProviderResult
+        calls.append([i.idem_key for i in chunk])
+        return ProviderResult(400, tuple(i.idem_key != "poison" for i in chunk))
+    with patch("app.mail._call_mailjet_batch", send):
+        res = send_batch(db, items, _cfg(order=("mailjet",)))
+    assert len(calls) == 1                    # graded, so no bisection at all
+    assert res.delivered == {"k0", "k2", "k3"}
+    assert res.undeliverable == {"poison"}
+    assert _sent(db, "mailjet") == 3
+
+
+def test_per_message_errors_are_caught_even_on_http_200(db):
+    """v3.1 can return 200 overall while individual messages errored. Trusting
+    the HTTP status alone would mark a failed message as delivered and never
+    retry it."""
+    items = _items(2)
+    with patch("app.mail._call_mailjet_batch", _mj([True, False], status=200)):
+        res = send_batch(db, items, _cfg(order=("mailjet",)))
+    assert res.delivered == {"k0"}
+    assert res.undeliverable == {"k1"}
+
+
+def test_falls_back_to_bisection_when_verdicts_are_unusable(db):
+    """A body we can't line up with the request (wrong length, unparseable)
+    must not be guessed at — fall back to isolating by bisection."""
+    items = _items(4)
+    items[2] = Outgoing(to="bad@nope", subject="s", body="b", idem_key="poison")
+    calls = []
+    with patch("app.mail._call_mailjet_batch", _poisoned(["bad@nope"], calls)):
+        res = send_batch(db, items, _cfg(order=("mailjet",)))
+    assert len(calls) > 1                     # bisected
+    assert len(res.delivered) == 3 and res.undeliverable == {"poison"}
+
+
+def test_graded_batch_where_everything_failed_is_not_a_provider_outage(db, resend_on):
+    """All messages graded 'error' means the recipients are bad, not that
+    Mailjet is down — so Resend gets a turn before anyone is condemned."""
+    with patch("app.mail._call_mailjet_batch", _mj([False, False])), \
+         patch("app.mail._call_resend_batch", return_value=200):
+        res = send_batch(db, _items(2), _cfg())
+    assert len(res.delivered) == 2 and res.undeliverable == set()
+    assert res.sent_by_provider == {"resend": 2}
