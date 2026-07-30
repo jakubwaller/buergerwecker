@@ -264,23 +264,23 @@
 
   <section class="adm-section">
     <details class="adm-collapse" open>
-      <summary><h2>Daily mean free slots <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· per city, last 14 days</span></h2></summary>
+      <summary><h2>Daily free slots per service <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· mean per polled service &amp; day — churn-proof: one flooded service can't spike a city · last 14 days</span></h2></summary>
       {% if s.availability_daily %}
         {% for c in s.cities %}
           {% set rows = s.availability_daily|selectattr('city', 'equalto', c.key)|list %}
           {% if rows %}
-            {% set dmax = (rows|map(attribute='avg_total')|max) or 1 %}
+            {% set dmax = (rows|map(attribute='avg_per_service')|max) or 1 %}
             <div class="spark-row">
               <div class="spark-city" title="{{ c.label }}">{{ c.name }}{% if c.sub %}<br><span class="adm-muted" style="font-size:0.72rem;font-weight:400;">{{ c.sub|truncate(24) }}</span>{% endif %}</div>
               <div class="spark">
                 {% for r in rows %}
-                  <i class="{% if r.avg_total == 0 %}zero{% elif loop.last %}last{% endif %}"
-                     style="height: {{ (100 * r.avg_total / dmax)|round(1) if r.avg_total else 0 }}%"
-                     title="{{ r.day }} · {{ r.avg_total }} avg free"></i>
+                  <i class="{% if r.avg_per_service == 0 %}zero{% elif loop.last %}last{% endif %}"
+                     style="height: {{ (100 * r.avg_per_service / dmax)|round(1) if r.avg_per_service else 0 }}%"
+                     title="{{ r.day }} · {{ r.avg_per_service }} free per polled service"></i>
                 {% endfor %}
               </div>
               {% set latest = rows|last %}
-              <div class="spark-now"><strong>{{ latest.avg_total }}</strong> <span class="adm-muted">now</span></div>
+              <div class="spark-now"><strong>{{ latest.avg_per_service }}</strong> <span class="adm-muted">now</span></div>
             </div>
           {% endif %}
         {% endfor %}
@@ -330,7 +330,7 @@
   </section>
 
   <section class="adm-section">
-    <h2>Availability <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· free slots per office &amp; type, sampled every ~15 min · last 7 days</span></h2>
+    <h2>Availability <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· free slots per office &amp; type, ~15-min samples, last 7 days · a service is only polled while subscribed: "polled %" = coverage, "empty %" = scarcity within it</span></h2>
     {% if s.availability %}
       {# One collapsible block per city (collapsed by default), in the same
          subs-first order as the table above; the summary line carries the
@@ -346,7 +346,7 @@
             <summary title="{{ c.label }}">
               <span class="av-name">{{ c.name }}</span>
               {% if c.sub %}<span class="av-meta">{{ c.sub }}</span>{% endif %}
-              <span class="av-meta">{{ rows|length }} office/type row{{ 's' if rows|length != 1 }} · {{ c.subs }} sub{{ 's' if c.subs != 1 }} · Ø {{ rows|map(attribute='avg_slots')|sum|round|int }} free</span>
+              <span class="av-meta">{{ rows|length }} office/type row{{ 's' if rows|length != 1 }} · {{ c.subs }} sub{{ 's' if c.subs != 1 }} · Ø {{ rows|map(attribute='avg_slots')|sum|round|int }} free · polled {{ (rows|map(attribute='coverage')|sum / rows|length)|round|int }}%</span>
               {% if n_empty %}<span class="av-flag" style="color:#dc2626">{{ n_empty }} mostly empty</span>{% endif %}
               {% if n_scarce %}<span class="av-flag" style="color:#d97706">{{ n_scarce }} scarce</span>{% endif %}
             </summary>
@@ -354,13 +354,13 @@
               {% for r in rows %}
                 <div class="hbar-row">
                   <div class="hbar-lbl">{{ r.service }}<br><span class="sub">{{ r.location }}</span></div>
-                  <div class="hbar-track" title="avg {{ r.avg_slots }} · max {{ r.max_slots }} · empty {{ r.zero_rate }}% · {{ r.samples }} samples">
+                  <div class="hbar-track" title="avg {{ r.avg_slots }} over polled samples (absence = 0) · max {{ r.max_slots }} · {{ r.samples }} samples with slots">
                     <div class="hbar-bg">
                       <div class="hbar-fill{% if r.zero_rate >= 80 %} empty{% elif r.zero_rate >= 40 %} scarce{% endif %}"
                            style="width: {{ (2 + 98 * r.avg_slots / avmax)|round(1) }}%"></div>
                     </div>
-                    <div class="hbar-val"><strong>{{ r.avg_slots }}</strong> avg · max {{ r.max_slots }} ·
-                      <span{% if r.zero_rate >= 80 %} style="color:#dc2626;font-weight:600"{% elif r.zero_rate >= 40 %} style="color:#d97706;font-weight:600"{% endif %}>{{ r.zero_rate }}% empty</span></div>
+                    <div class="hbar-val"><strong>{{ r.avg_slots }}</strong> avg · polled {{ r.coverage }}% ·
+                      <span{% if r.zero_rate >= 80 %} style="color:#dc2626;font-weight:600"{% elif r.zero_rate >= 40 %} style="color:#d97706;font-weight:600"{% endif %}>empty {{ r.zero_rate }}% of polled</span></div>
                   </div>
                 </div>
               {% endfor %}
@@ -370,7 +370,7 @@
       {% endfor %}
       <div class="legend">
         <span><span class="swatch" style="background:var(--accent)"></span>Plentiful</span>
-        <span><span class="swatch" style="background:#d97706"></span>Scarce (≥40% empty)</span>
+        <span><span class="swatch" style="background:#d97706"></span>Scarce (empty ≥40% of polled time)</span>
         <span><span class="swatch" style="background:#dc2626"></span>Mostly empty (≥80%)</span>
       </div>
     {% else %}

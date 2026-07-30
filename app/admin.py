@@ -436,6 +436,10 @@ def _availability(conn: sqlite3.Connection, city_labels: dict) -> list[dict]:
         r["city_label"] = city_labels.get(city, city)
         r["service"] = (cat.appointment_type_label(r["service_uuid"], "en")
                         if cat else r["service_uuid"])
-        r["location"] = (cat.location_label(r["location_uuid"], "en")
-                         if cat else r["location_uuid"])
+        if not r["location_uuid"]:
+            # Polled, but no office ever produced a slot in the window.
+            r["location"] = "all offices"
+        else:
+            r["location"] = (cat.location_label(r["location_uuid"], "en")
+                             if cat else r["location_uuid"])
     return rows

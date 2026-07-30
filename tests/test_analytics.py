@@ -47,21 +47,50 @@ def test_empty_poll_records_a_zero_marker(tmp_path):
     assert (row["service_uuid"], row["n_slots"]) == ("", 0)
     # The marker is excluded from the per-key summary...
     assert availability_summary(conn) == []
-    # ...but still counts as a sample, so a later key reads as 100% empty then.
+    # ...but still counts as a sample, so the daily series shows 0, not a hole.
     assert availability_daily(conn) == [{"city": "leipzig",
                                          "day": datetime.utcnow().date().isoformat(),
-                                         "avg_total": 0.0}]
+                                         "avg_per_service": 0.0}]
 
 
-def test_summary_counts_absent_keys_as_zero(tmp_path):
+def test_polled_service_without_slots_records_explicit_zero(tmp_path):
+    conn = _conn(tmp_path)
+    record_availability(conn, {"leipzig": []}, {"leipzig": {"S1"}})
+    row = conn.execute("SELECT service_uuid, location_uuid, n_slots "
+                       "FROM availability_samples").fetchone()
+    assert (row["service_uuid"], row["location_uuid"], row["n_slots"]) == ("S1", "", 0)
+    (r,) = availability_summary(conn)
+    assert r["location_uuid"] == ""
+    assert r["avg_slots"] == 0.0 and r["coverage"] == 100 and r["zero_rate"] == 100
+
+
+def test_summary_separates_scarcity_from_coverage(tmp_path):
     conn = _conn(tmp_path)
     now = datetime.utcnow()
-    record_availability(conn, {"leipzig": [_slot()]}, now=now - timedelta(minutes=40))
-    record_availability(conn, {"leipzig": []}, now=now - timedelta(minutes=20))
-    record_availability(conn, {"leipzig": []}, now=now)
+    # Polled 3 of 4 samples; slots in 1 of the 3 polled ones.
+    record_availability(conn, {"leipzig": [_slot(), _slot(t="09:30")]},
+                        {"leipzig": {"S1"}}, now=now - timedelta(minutes=60))
+    record_availability(conn, {"leipzig": []}, {"leipzig": {"S1"}},
+                        now=now - timedelta(minutes=40))
+    record_availability(conn, {"leipzig": []}, {"leipzig": {"S1"}},
+                        now=now - timedelta(minutes=20))
+    record_availability(conn, {"leipzig": []}, now=now)  # poll failed: not polled
     (r,) = availability_summary(conn)
-    assert r["avg_slots"] == 1.0 and r["samples"] == 1
-    assert r["zero_rate"] == 67  # present in 1 of 3 samples
+    assert r["samples"] == 1
+    assert r["avg_slots"] == 0.7           # 2 slots over 3 polled samples
+    assert r["coverage"] == 75             # polled in 3 of 4 city samples
+    assert r["zero_rate"] == 67            # empty in 2 of 3 polled samples
+
+
+def test_daily_mean_is_per_polled_service(tmp_path):
+    conn = _conn(tmp_path)
+    now = datetime.utcnow()
+    # One sample: S1 floods 3 slots, S2 polled but empty → (3+0)/2 services.
+    record_availability(conn, {"leipzig": [
+        _slot(), _slot(t="09:30"), _slot(t="10:00"),
+    ]}, {"leipzig": {"S1", "S2"}}, now=now)
+    (d,) = availability_daily(conn)
+    assert d["avg_per_service"] == 1.5
 
 
 def test_prune_drops_old_samples(tmp_path):
