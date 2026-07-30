@@ -263,7 +263,7 @@
   {% endif %}
 
   <section class="adm-section">
-    <details class="adm-collapse">
+    <details class="adm-collapse" open>
       <summary><h2>Daily mean free slots <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· per city, last 14 days</span></h2></summary>
       {% if s.availability_daily %}
         {% for c in s.cities %}
@@ -291,7 +291,7 @@
   </section>
 
   <section class="adm-section">
-    <details class="adm-collapse">
+    <details class="adm-collapse" open>
       <summary><h2>Usage <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· signups per UTC day, last 30 days</span></h2></summary>
       {% if s.usage_daily %}
         {% set days = s.usage_daily|reverse|list %}
@@ -332,22 +332,23 @@
   <section class="adm-section">
     <h2>Availability <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· free slots per office &amp; type, sampled every ~15 min · last 7 days</span></h2>
     {% if s.availability %}
-      {# One collapsible block per city, in the same subs-first order as the
-         table above; open only where someone is actually subscribed or the
-         city is mostly empty. Bar length = avg free slots, scaled to that
+      {# One collapsible block per city (collapsed by default), in the same
+         subs-first order as the table above; the summary line carries the
+         at-a-glance numbers. Bar length = avg free slots, scaled to that
          city's busiest office; colour flags scarcity by empty-sample rate. #}
       {% for c in s.cities %}
         {% set rows = s.availability|selectattr('city', 'equalto', c.key)|list %}
         {% if rows %}
-          {% set worst = rows|map(attribute='zero_rate')|max %}
           {% set avmax = (rows|map(attribute='avg_slots')|max) or 1 %}
-          <details class="av-city"{% if c.subs or worst >= 80 %} open{% endif %}>
+          {% set n_empty = rows|selectattr('zero_rate', 'ge', 80)|list|length %}
+          {% set n_scarce = rows|selectattr('zero_rate', 'ge', 40)|list|length - n_empty %}
+          <details class="av-city">
             <summary title="{{ c.label }}">
               <span class="av-name">{{ c.name }}</span>
               {% if c.sub %}<span class="av-meta">{{ c.sub }}</span>{% endif %}
-              <span class="av-meta">{{ rows|length }} office/type row{{ 's' if rows|length != 1 }} · {{ c.subs }} sub{{ 's' if c.subs != 1 }}</span>
-              {% if worst >= 80 %}<span class="av-flag" style="color:#dc2626">≥1 mostly empty</span>
-              {% elif worst >= 40 %}<span class="av-flag" style="color:#d97706">≥1 scarce</span>{% endif %}
+              <span class="av-meta">{{ rows|length }} office/type row{{ 's' if rows|length != 1 }} · {{ c.subs }} sub{{ 's' if c.subs != 1 }} · Ø {{ rows|map(attribute='avg_slots')|sum|round|int }} free</span>
+              {% if n_empty %}<span class="av-flag" style="color:#dc2626">{{ n_empty }} mostly empty</span>{% endif %}
+              {% if n_scarce %}<span class="av-flag" style="color:#d97706">{{ n_scarce }} scarce</span>{% endif %}
             </summary>
             <div class="hbars">
               {% for r in rows %}
