@@ -27,19 +27,24 @@ RETENTION_DAYS = int(os.environ.get("ANALYTICS_RETENTION_DAYS", "90"))
 
 
 def record_availability(conn: sqlite3.Connection, slots_by_city: dict,
+                        polled_by_city: dict | None = None,
                         *, now: datetime | None = None) -> None:
     """Persist one availability sample per due tenant.
 
     `slots_by_city` maps city → list[Slot] (all slots seen this cycle, already
-    deduped). Counts are grouped by (service_uuid, location_uuid). A tenant
-    that was polled but returned nothing still gets rows only if it has none —
-    scarcity is visible as an *absence* of rows for that (type, office), which
-    the reader treats as zero.
+    deduped). Counts are grouped by (service_uuid, location_uuid).
+
+    `polled_by_city` maps city → set of service_uuids whose poll *succeeded*
+    this cycle. A polled service with no slot anywhere gets an explicit
+    (service_uuid, '', 0) row — that is what lets the reader tell "we looked
+    and found nothing" (scarcity) apart from "nobody was subscribed, so we
+    never looked" (coverage). A failed poll records nothing for the service.
 
     Never raises: analytics must not be able to break a polling cycle.
     """
     now = now or datetime.utcnow()
     now_iso = now.isoformat()
+    polled_by_city = polled_by_city or {}
     try:
         for city, slots in slots_by_city.items():
             row = conn.execute(
@@ -58,9 +63,13 @@ def record_availability(conn: sqlite3.Connection, slots_by_city: dict,
             for s in slots:
                 key = (s.service_uuid, s.location_uuid)
                 counts[key] = counts.get(key, 0) + 1
+            seen_services = {svc for svc, _ in counts}
+            for svc in polled_by_city.get(city, ()):
+                if svc not in seen_services:
+                    counts[(svc, "")] = 0
             if not counts:
-                # Still record the sample point, so "we looked and found zero"
-                # is distinguishable from "we never looked". Empty uuids mark it.
+                # Still record the sample point, so the city-level time series
+                # has no hole even when every poll failed. Empty uuids mark it.
                 counts[("", "")] = 0
             conn.executemany(
                 "INSERT INTO availability_samples "
@@ -80,11 +89,20 @@ def prune_availability(conn: sqlite3.Connection) -> None:
 
 
 def availability_summary(conn: sqlite3.Connection, *, days: int = 7) -> list[dict]:
-    """Per (city, type, office) averages over `days`, newest sample included.
+    """Per (city, type, office) stats over `days`, newest sample included.
 
-    `avg_slots` averages over the *samples that included this key*; `zero_rate`
-    is the share of that tenant's samples where the key had no slots at all —
-    the scarcity number that actually matters to a subscriber.
+    Every number is relative to the samples where the service was actually
+    *polled* (someone was subscribed and the scrape succeeded), so scarcity
+    and coverage don't get conflated:
+
+    - `coverage`: % of the city's samples in which this service was polled.
+    - `avg_slots`: mean free slots over polled samples, absence counted as 0.
+    - `zero_rate`: % of polled samples where this office had nothing — real
+      scarcity, the number that matters to a subscriber.
+
+    A polled service that never had a slot at any office surfaces as one row
+    with an empty location_uuid. Samples from before the polled-marker existed
+    undercount coverage (presence is the floor), never scarcity.
     """
     try:
         samples_per_city = {
@@ -95,43 +113,75 @@ def availability_summary(conn: sqlite3.Connection, *, days: int = 7) -> list[dic
                 "GROUP BY city"
             ).fetchall()
         }
+        # Any row for a service in a sample — slots seen, or the explicit
+        # (service, '', 0) marker — means the service was polled then.
+        polled = {
+            (r["city"], r["service_uuid"]): r["n"] for r in conn.execute(
+                "SELECT city, service_uuid, COUNT(DISTINCT sampled_at) AS n "
+                "FROM availability_samples "
+                f"WHERE sampled_at > datetime('now','-{int(days)} days') "
+                "  AND service_uuid != '' "
+                "GROUP BY city, service_uuid"
+            ).fetchall()
+        }
         rows = conn.execute(
             "SELECT city, service_uuid, location_uuid, "
-            "  COUNT(*) AS samples, AVG(n_slots) AS avg_slots, "
+            "  COUNT(*) AS samples, SUM(n_slots) AS sum_slots, "
             "  MAX(n_slots) AS max_slots, "
             "  SUM(CASE WHEN n_slots = 0 THEN 1 ELSE 0 END) AS zero_samples "
             "FROM availability_samples "
             f"WHERE sampled_at > datetime('now','-{int(days)} days') "
-            "  AND service_uuid != '' "
-            "GROUP BY city, service_uuid, location_uuid "
-            "ORDER BY city, avg_slots DESC"
+            "  AND service_uuid != '' AND location_uuid != '' "
+            "GROUP BY city, service_uuid, location_uuid"
         ).fetchall()
     except sqlite3.Error:
         return []
     out = []
+    seen_services = set()
     for r in rows:
-        total = samples_per_city.get(r["city"], r["samples"]) or r["samples"]
-        # Samples where this key was absent entirely count as zeros too.
-        zeros = (total - r["samples"]) + r["zero_samples"]
+        key = (r["city"], r["service_uuid"])
+        seen_services.add(key)
+        n_polled = polled.get(key, r["samples"]) or r["samples"]
+        total = samples_per_city.get(r["city"], n_polled) or n_polled
+        zeros = (n_polled - r["samples"]) + r["zero_samples"]
         out.append({
             "city": r["city"],
             "service_uuid": r["service_uuid"],
             "location_uuid": r["location_uuid"],
-            "avg_slots": round(r["avg_slots"] or 0, 1),
+            "avg_slots": round((r["sum_slots"] or 0) / n_polled, 1),
             "max_slots": r["max_slots"] or 0,
             "samples": r["samples"],
-            "zero_rate": round(100 * zeros / total) if total else 0,
+            "coverage": round(100 * n_polled / total),
+            "zero_rate": round(100 * zeros / n_polled),
         })
+    # Polled services that never produced a single slot at any office.
+    for (city, svc), n_polled in polled.items():
+        if (city, svc) in seen_services:
+            continue
+        total = samples_per_city.get(city, n_polled) or n_polled
+        out.append({
+            "city": city, "service_uuid": svc, "location_uuid": "",
+            "avg_slots": 0.0, "max_slots": 0, "samples": 0,
+            "coverage": round(100 * n_polled / total), "zero_rate": 100,
+        })
+    out.sort(key=lambda r: (r["city"], -r["avg_slots"]))
     return out
 
 
 def availability_daily(conn: sqlite3.Connection, *, days: int = 14) -> list[dict]:
-    """Per-city daily mean of total free slots per sample — the trend line."""
+    """Per-city daily mean of free slots *per polled service* — the trend line.
+
+    Normalising by the number of services polled in each sample keeps the
+    series comparable across subscription churn: a subscriber appearing for a
+    slot-flooded service no longer spikes the whole city's line. The all-failed
+    marker sample ('' service) divides 0 by 1 and correctly reads as 0.
+    """
     try:
         rows = conn.execute(
-            "SELECT city, day, AVG(total) AS avg_total FROM ("
+            "SELECT city, day, AVG(per_service) AS avg_per_service FROM ("
             "  SELECT city, date(sampled_at) AS day, sampled_at, "
-            "         SUM(n_slots) AS total "
+            "         CAST(SUM(n_slots) AS REAL) "
+            "           / COUNT(DISTINCT service_uuid) AS per_service "
             "  FROM availability_samples "
             f"  WHERE sampled_at > datetime('now','-{int(days)} days') "
             "  GROUP BY city, sampled_at"
@@ -140,7 +190,7 @@ def availability_daily(conn: sqlite3.Connection, *, days: int = 14) -> list[dict
     except sqlite3.Error:
         return []
     return [{"city": r["city"], "day": r["day"],
-             "avg_total": round(r["avg_total"] or 0, 1)} for r in rows]
+             "avg_per_service": round(r["avg_per_service"] or 0, 1)} for r in rows]
 
 
 def usage_daily(conn: sqlite3.Connection, *, days: int = 30) -> list[dict]:

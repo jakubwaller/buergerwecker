@@ -157,6 +157,7 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
     # last_polled_at stay untouched, and its subscribers simply see no new
     # candidates this cycle.
     due = _due_cities(conn, {p.city for p in plans})
+    polled_ok: dict[str, set[str]] = {}
     for p in plans:
         if p.city not in due:
             continue
@@ -167,6 +168,9 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
         before = getattr(http, "request_count", None)
         try:
             slots_by_plan[p.key()] = get_scraper(p.city).poll(p, http=http)
+            # Only a poll that didn't raise proves the service was looked at —
+            # the availability series must not read a failed scrape as "empty".
+            polled_ok.setdefault(p.city, set()).add(p.appointment_type)
             if slots_by_plan[p.key()]:
                 cities_with_any_slot.add(p.city)
         except Exception:
@@ -235,7 +239,7 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
                 continue
             seen_hashes[p.city].add(h)
             slots_by_city[p.city].append(slot)
-    record_availability(conn, slots_by_city)
+    record_availability(conn, slots_by_city, polled_ok)
 
     now = datetime.utcnow()
     max_multiplier = getattr(cfg, "adaptive_rate_limit_max_multiplier",
