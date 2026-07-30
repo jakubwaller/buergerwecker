@@ -71,6 +71,17 @@
   .av-flag { font-size: 0.82rem; font-weight: 600; }
   details.av-city > .hbars { margin: 0 0 0.8rem 1.1rem; }
 
+  /* Collapsible whole sections (same affordance as the per-city blocks) */
+  details.adm-collapse > summary {
+    cursor: pointer; list-style: none;
+    display: flex; align-items: baseline; gap: 0.5rem;
+  }
+  details.adm-collapse > summary::before { content: "▸"; color: var(--text-muted); font-size: 0.9rem; }
+  details.adm-collapse[open] > summary::before { content: "▾"; }
+  details.adm-collapse > summary::-webkit-details-marker { display: none; }
+  details.adm-collapse > summary h2 { margin: 0; }
+  details.adm-collapse[open] > summary { margin-bottom: 0.6rem; }
+
   .dot {
     width: 0.55rem; height: 0.55rem; border-radius: 999px;
     margin-right: 0.45rem; display: inline-block; flex: none;
@@ -252,6 +263,73 @@
   {% endif %}
 
   <section class="adm-section">
+    <details class="adm-collapse">
+      <summary><h2>Daily mean free slots <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· per city, last 14 days</span></h2></summary>
+      {% if s.availability_daily %}
+        {% for c in s.cities %}
+          {% set rows = s.availability_daily|selectattr('city', 'equalto', c.key)|list %}
+          {% if rows %}
+            {% set dmax = (rows|map(attribute='avg_total')|max) or 1 %}
+            <div class="spark-row">
+              <div class="spark-city" title="{{ c.label }}">{{ c.name }}{% if c.sub %}<br><span class="adm-muted" style="font-size:0.72rem;font-weight:400;">{{ c.sub|truncate(24) }}</span>{% endif %}</div>
+              <div class="spark">
+                {% for r in rows %}
+                  <i class="{% if r.avg_total == 0 %}zero{% elif loop.last %}last{% endif %}"
+                     style="height: {{ (100 * r.avg_total / dmax)|round(1) if r.avg_total else 0 }}%"
+                     title="{{ r.day }} · {{ r.avg_total }} avg free"></i>
+                {% endfor %}
+              </div>
+              {% set latest = rows|last %}
+              <div class="spark-now"><strong>{{ latest.avg_total }}</strong> <span class="adm-muted">now</span></div>
+            </div>
+          {% endif %}
+        {% endfor %}
+      {% else %}
+        <p class="adm-muted">No samples yet — the first one lands within ~15 minutes of the next poll.</p>
+      {% endif %}
+    </details>
+  </section>
+
+  <section class="adm-section">
+    <details class="adm-collapse">
+      <summary><h2>Usage <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· signups per UTC day, last 30 days</span></h2></summary>
+      {% if s.usage_daily %}
+        {% set days = s.usage_daily|reverse|list %}
+        {% set umax = (s.usage_daily|map(attribute='signups')|max) or 1 %}
+        <div class="mini-stats">
+          <div><div class="ms-num">{{ s.usage_daily|sum(attribute='signups') }}</div><div class="ms-lbl">Signups · 30d</div></div>
+          <div><div class="ms-num">{{ s.usage_daily|sum(attribute='confirmed') }}</div><div class="ms-lbl">Confirmed</div></div>
+          <div><div class="ms-num">{{ s.usage_daily|sum(attribute='deleted') }}</div><div class="ms-lbl">Cancelled</div></div>
+        </div>
+        {# Stacked column: confirmed (solid) at the base, still-pending (light) on
+           top. Hover a day for the exact split and the per-city breakdown. #}
+        <div class="bars">
+          {% for d in days %}
+            {% set bycity = d.by_city|dictsort|map('join', ' ')|join(' · ') %}
+            <div class="bar-col" title="{{ d.day }} · {{ d.signups }} signups ({{ d.confirmed }} confirmed, {{ d.deleted }} cancelled){% if bycity %} · {{ bycity }}{% endif %}">
+              {% if d.signups %}
+                <div class="bar" style="height: {{ (100 * d.signups / umax)|round(1) }}%">
+                  <div class="bar-fill" style="height: {{ (100 * d.confirmed / d.signups)|round(1) }}%"></div>
+                </div>
+              {% else %}
+                <div class="bar empty"></div>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+        {% set first_day = days|first %}{% set last_day = days|last %}
+        <div class="bar-axis"><span>{{ first_day.day }}</span><span>{{ last_day.day }}</span></div>
+        <div class="legend">
+          <span><span class="swatch" style="background:var(--accent)"></span>Confirmed</span>
+          <span><span class="swatch" style="background:color-mix(in srgb, var(--accent) 26%, transparent)"></span>Pending confirmation</span>
+        </div>
+      {% else %}
+        <p class="adm-muted">No signups in the last 30 days.</p>
+      {% endif %}
+    </details>
+  </section>
+
+  <section class="adm-section">
     <h2>Availability <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· free slots per office &amp; type, sampled every ~15 min · last 7 days</span></h2>
     {% if s.availability %}
       {# One collapsible block per city, in the same subs-first order as the
@@ -294,66 +372,8 @@
         <span><span class="swatch" style="background:#d97706"></span>Scarce (≥40% empty)</span>
         <span><span class="swatch" style="background:#dc2626"></span>Mostly empty (≥80%)</span>
       </div>
-      {% if s.availability_daily %}
-        <h3 style="margin-top:1.4rem;font-size:1rem;">Daily mean free slots per city <span class="adm-muted" style="font-weight:400;">· last 14 days</span></h3>
-        {% for c in s.cities %}
-          {% set rows = s.availability_daily|selectattr('city', 'equalto', c.key)|list %}
-          {% if rows %}
-            {% set dmax = (rows|map(attribute='avg_total')|max) or 1 %}
-            <div class="spark-row">
-              <div class="spark-city" title="{{ c.label }}">{{ c.name }}{% if c.sub %}<br><span class="adm-muted" style="font-size:0.72rem;font-weight:400;">{{ c.sub|truncate(24) }}</span>{% endif %}</div>
-              <div class="spark">
-                {% for r in rows %}
-                  <i class="{% if r.avg_total == 0 %}zero{% elif loop.last %}last{% endif %}"
-                     style="height: {{ (100 * r.avg_total / dmax)|round(1) if r.avg_total else 0 }}%"
-                     title="{{ r.day }} · {{ r.avg_total }} avg free"></i>
-                {% endfor %}
-              </div>
-              {% set latest = rows|last %}
-              <div class="spark-now"><strong>{{ latest.avg_total }}</strong> <span class="adm-muted">now</span></div>
-            </div>
-          {% endif %}
-        {% endfor %}
-      {% endif %}
     {% else %}
       <p class="adm-muted">No samples yet — the first one lands within ~15 minutes of the next poll.</p>
-    {% endif %}
-  </section>
-
-  <section class="adm-section">
-    <h2>Usage <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· signups per UTC day, last 30 days</span></h2>
-    {% if s.usage_daily %}
-      {% set days = s.usage_daily|reverse|list %}
-      {% set umax = (s.usage_daily|map(attribute='signups')|max) or 1 %}
-      <div class="mini-stats">
-        <div><div class="ms-num">{{ s.usage_daily|sum(attribute='signups') }}</div><div class="ms-lbl">Signups · 30d</div></div>
-        <div><div class="ms-num">{{ s.usage_daily|sum(attribute='confirmed') }}</div><div class="ms-lbl">Confirmed</div></div>
-        <div><div class="ms-num">{{ s.usage_daily|sum(attribute='deleted') }}</div><div class="ms-lbl">Cancelled</div></div>
-      </div>
-      {# Stacked column: confirmed (solid) at the base, still-pending (light) on
-         top. Hover a day for the exact split and the per-city breakdown. #}
-      <div class="bars">
-        {% for d in days %}
-          {% set bycity = d.by_city|dictsort|map('join', ' ')|join(' · ') %}
-          <div class="bar-col" title="{{ d.day }} · {{ d.signups }} signups ({{ d.confirmed }} confirmed, {{ d.deleted }} cancelled){% if bycity %} · {{ bycity }}{% endif %}">
-            {% if d.signups %}
-              <div class="bar" style="height: {{ (100 * d.signups / umax)|round(1) }}%">
-                <div class="bar-fill" style="height: {{ (100 * d.confirmed / d.signups)|round(1) }}%"></div>
-              </div>
-            {% else %}
-              <div class="bar empty"></div>
-            {% endif %}
-          </div>
-        {% endfor %}
-      </div>
-      {% set first_day = days|first %}{% set last_day = days|last %}
-      <div class="bar-axis"><span>{{ first_day.day }}</span><span>{{ last_day.day }}</span></div>
-      <div class="legend">
-        <span><span class="swatch" style="background:var(--accent)"></span>Confirmed</span>
-        <span><span class="swatch" style="background:color-mix(in srgb, var(--accent) 26%, transparent)"></span>Pending confirmation</span>
-      </div>
-    {% else %}
-      <p class="adm-muted">No signups in the last 30 days.</p>
     {% endif %}
   </section>
 
