@@ -3,6 +3,10 @@
     "de": "Leipzig",
     "en": "Leipzig"
   },
+  "office": {
+    "de": "Ausländerbehörde",
+    "en": "Foreigners' office"
+  },
   "label": {
     "de": "Leipzig: Ausländerbehörde, Abholung Aufenthaltsdokument",
     "en": "Leipzig: foreigners' office, residence document pickup"

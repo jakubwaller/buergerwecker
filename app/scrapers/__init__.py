@@ -57,6 +57,17 @@ _REGISTRY: dict[str, ModuleType] = {
     "saarbruecken": tevis,
     "salzgitter": tevis,
     "trier": tevis,
+    # Münster Fachämter, added 2026-08 at the city's own request: separate
+    # Mandanten (md) on the same TEVIS instance as the Bürgeramt, so one
+    # tenant each. The Gesundheitsamt (md 23) is deliberately absent — its
+    # single Anliegen is STI counselling, i.e. Art. 9 GDPR data, and waits for
+    # the explicit-consent flow.
+    "muenster-einbuergerung": tevis,
+    "muenster-energieberatung": tevis,
+    "muenster-gewerbe": tevis,
+    "muenster-kfz": tevis,
+    "muenster-rente": tevis,
+    "muenster-standesamt": tevis,
 }
 
 def get_scraper(city: str) -> ModuleType:

@@ -1,0 +1,7 @@
+{
+  "vendor": "tevis",
+  "base_url": "https://termine.stadt-muenster.de",
+  "md": 41,
+  "mdt": 209,
+  "poll_interval_seconds": 300
+}

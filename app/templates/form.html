@@ -55,6 +55,18 @@
     {% else %}Nie wieder freie Bürgerbüro-Termine verpassen{% endif %}
   </h1>
 
+  {% if sibling_offices %}
+    <nav class="office-switch" aria-label="{% if lang == 'en' %}Choose office{% else %}Amt wählen{% endif %}">
+      <span class="office-switch-label">
+        {% if lang == 'en' %}Offices in {{ city_name }}:{% else %}Ämter in {{ city_name }}:{% endif %}
+      </span>
+      {% for label, url in sibling_offices %}
+        {% if url %}<a href="{{ url }}">{{ label }}</a>
+        {% else %}<span class="current" aria-current="page">{{ label }}</span>{% endif %}
+      {% endfor %}
+    </nav>
+  {% endif %}
+
   {% if other_cities %}
     <details class="city-switch" {% if other_cities|length <= 4 %}open{% endif %}>
       <summary>
@@ -62,8 +74,19 @@
         {% else %}Weitere Städte &amp; Ämter ({{ other_cities|length }}){% endif %}
       </summary>
       <nav class="city-grid" aria-label="{% if lang == 'en' %}Switch city{% else %}Stadt wechseln{% endif %}">
-        {% for label, url in other_cities %}
-          <a href="{{ url }}" title="{{ label }}">{{ label }}</a>
+        {% for cname, url, offices in other_cities %}
+          {% if url %}
+            <a href="{{ url }}" title="{{ cname }}">{{ cname }}</a>
+          {% else %}
+            <div class="city-cell">
+              <span class="city-cell-name">{{ cname }}</span>
+              <span class="city-cell-offices">
+                {% for olabel, ourl in offices %}
+                  <a href="{{ ourl }}" title="{{ cname }}: {{ olabel }}">{{ olabel }}</a>
+                {% endfor %}
+              </span>
+            </div>
+          {% endif %}
         {% endfor %}
       </nav>
     </details>

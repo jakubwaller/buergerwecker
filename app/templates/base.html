@@ -246,10 +246,13 @@
     .city-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+      /* Without this a tall multi-Amt cell (Münster: seven) stretches every
+         other cell in its row into an empty box. */
+      align-items: start;
       gap: 0.4rem 0.6rem;
       margin-top: 0.6rem;
     }
-    .city-grid a {
+    .city-grid > a, .city-cell {
       display: block;
       padding: 0.3rem 0.6rem;
       background: var(--bg);
@@ -261,7 +264,32 @@
       text-overflow: ellipsis;
       transition: border-color 0.15s;
     }
-    .city-grid a:hover { border-color: var(--accent); }
+    .city-grid > a:hover, .city-cell:hover { border-color: var(--accent); }
+    /* A city with several Ämter keeps one cell and lists them inside it, so
+       the grid stays one-entry-per-city and no label has to ellipsise. */
+    .city-cell { white-space: normal; }
+    .city-cell-name { display: block; color: var(--text); font-weight: 500; }
+    .city-cell-offices {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.1rem 0.5rem;
+      margin-top: 0.1rem;
+      font-size: 0.875rem;
+    }
+    .city-cell-offices a { text-decoration: none; }
+    .city-cell-offices a:hover { text-decoration: underline; }
+    .office-switch {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0.3rem 0.7rem;
+      font-size: 0.9375rem;
+      margin: -0.5rem 0 1.25rem;
+    }
+    .office-switch-label { color: var(--text-muted); }
+    .office-switch a { text-decoration: none; }
+    .office-switch a:hover { text-decoration: underline; }
+    .office-switch .current { color: var(--text); font-weight: 600; }
     .faq {
       margin-top: 2.75rem;
       padding-top: 1.5rem;

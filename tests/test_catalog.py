@@ -112,3 +112,42 @@ def test_labels_fall_back_to_uuid_when_unknown():
     cat = _label_catalog()
     assert cat.appointment_type_label("ghost-uuid", "de") == "ghost-uuid"
     assert cat.location_label("ghost-uuid", "en") == "ghost-uuid"
+
+
+def test_excluded_services_are_never_offered(tmp_path, monkeypatch):
+    """`exclude_services` must hold on read too, not just during sync: a stale
+    or hand-edited appointment_type.json can otherwise put an Anliegen back on
+    the sign-up form."""
+    import json
+    from app import catalog as catalog_mod
+    city = tmp_path / "testcity"
+    city.mkdir()
+    (city / "scraper_config.json").write_text(json.dumps(
+        {"vendor": "tevis", "base_url": "https://x", "md": 13, "mdt": 217,
+         "exclude_services": ["2471", "2472"]}), encoding="utf-8")
+    (city / "appointment_type.json").write_text(json.dumps(
+        {"Eheschließung": "2431", "SBGG-Erklärung": "2471"}), encoding="utf-8")
+    (city / "locations.json").write_text(json.dumps({"Standesamt": "254"}),
+                                         encoding="utf-8")
+    (city / "service_locations.json").write_text(json.dumps(
+        {"2431": ["254"], "2471": ["254"]}), encoding="utf-8")
+    monkeypatch.setattr(catalog_mod, "CATALOG_ROOT", tmp_path)
+    catalog_mod.load_catalog.cache_clear()
+    try:
+        cat = catalog_mod.load_catalog("testcity")
+        assert cat.appointment_types == {"Eheschließung": "2431"}
+        assert "2471" not in cat.service_locations
+    finally:
+        catalog_mod.load_catalog.cache_clear()
+
+
+def test_shipped_muenster_standesamt_excludes_the_sbgg_anliegen():
+    """The two Selbstbestimmungsgesetz Anliegen are Art. 9 GDPR data and wait
+    for the explicit-consent flow — they must not be subscribable today."""
+    from app.catalog import load_catalog
+    cat = load_catalog("muenster-standesamt")
+    assert set(cat.scraper_config["exclude_services"]) == {"2471", "2472"}
+    assert "2471" not in cat.appointment_types.values()
+    assert "2472" not in cat.appointment_types.values()
+    assert not any("Selbstbestimmungsgesetz" in name
+                   for name in cat.appointment_types)

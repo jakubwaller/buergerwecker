@@ -13,6 +13,21 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # ---------- public API ----------
 
+def _drop_excluded(name_to_id: dict[str, str], scfg: dict) -> dict[str, str]:
+    """Remove services the tenant deliberately does not offer.
+
+    `exclude_services` in scraper_config.json holds service ids we refuse to
+    carry — currently the Münster Standesamt's two Selbstbestimmungsgesetz
+    Anliegen, whose selection would be Art. 9 GDPR data (see the tenant's
+    display.json). Sync must honour it or the daily drift run would re-add
+    them within a day; app.catalog.load_catalog filters again on read so a
+    stale file can't surface them either.
+    """
+    excluded = {str(s) for s in (scfg.get("exclude_services") or ())}
+    if not excluded:
+        return name_to_id
+    return {name: sid for name, sid in name_to_id.items() if sid not in excluded}
+
 def fetch_services(http: requests.Session,
                    base_url: str, uid: str) -> tuple[dict[str, str], dict[str, str]]:
     """Return (german, english) name→uuid maps.
@@ -105,6 +120,8 @@ def sync_city(city: str,
 
     try:
         live_services, live_services_en = fetch_services(http, scfg["base_url"], scfg["uid"])
+        live_services = _drop_excluded(live_services, scfg)
+        live_services_en = _drop_excluded(live_services_en, scfg)
         if has_locations_step(scfg):
             live_locations, service_map = fetch_locations_with_map(
                 http, scfg["base_url"], scfg["uid"],
@@ -154,8 +171,8 @@ def fetch_tevis_services(http: requests.Session,
                          base_url: str, md: str) -> dict[str, str]:
     """Parse the Anliegen page (`/select2?md=`) into a name→id map.
 
-    Services render as `cnc-<id>` amount inputs with a label keyed to the
-    input's element id. This GET also mints the session cookie the
+    Services render as `cnc-<id>` inputs; see _tevis_service_label for how the
+    display name is recovered. This GET also mints the session cookie the
     `/location` probes below need. An empty result means the page layout
     changed (or a help page was served) — callers must treat it as an error,
     not as "the city deleted every service".
@@ -168,11 +185,39 @@ def fetch_tevis_services(http: requests.Session,
         if not name.startswith("cnc-"):
             continue
         sid = name[len("cnc-"):].strip()
-        lbl = soup.find("label", attrs={"for": inp.get("id")})
-        label = " ".join(lbl.get_text(" ", strip=True).split()) if lbl else ""
-        if sid and label:
+        if not sid:
+            continue
+        label = _tevis_service_label(soup, inp, sid)
+        if label:
             out[label] = sid
     return dict(sorted(out.items()))
+
+
+def _tevis_service_label(soup, inp, sid: str) -> str:
+    """Display name for one `cnc-` input, from the most reliable source available.
+
+    Mandanten with several Anliegen render a numeric amount input carrying
+    `id="input-<sid>"`, and the name lives in the label bound to that id.
+    Single-Anliegen Mandanten (Münster md 23/25/41) instead render a *hidden*
+    input with no `id` at all, the name in `data-tevis-cncname`, and a label
+    bound to the field name rather than an element id. Looking up
+    `label[for=None]` on those pages matches the first unrelated label in the
+    document — which is how the Gesundheitsamt's one service came out named
+    "en_EN" — so the id lookup must never run with a missing id.
+    """
+    cncname = " ".join((inp.get("data-tevis-cncname") or "").split())
+    if cncname:
+        return cncname
+    for key in (inp.get("id"), f"cnc-{sid}"):
+        if not key:
+            continue
+        lbl = soup.find("label", attrs={"for": key})
+        if lbl is None:
+            continue
+        text = " ".join(lbl.get_text(" ", strip=True).split())
+        if text:
+            return text
+    return ""
 
 
 def fetch_tevis_locations(http: requests.Session, base_url: str, mdt: str,
@@ -249,6 +294,7 @@ def _sync_tevis(city: str, city_dir: Path, scfg: dict,
     if not live_services:
         return {"error": "no services parsed from select2 page",
                 "service_drift": {}, "location_drift": {}}
+    live_services = _drop_excluded(live_services, scfg)
 
     # Probe locations for every live service so a brand-new service's offices
     # are seen too. Union across catalog + live ids is unnecessary: an id

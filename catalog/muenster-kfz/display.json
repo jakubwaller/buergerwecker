@@ -1,0 +1,22 @@
+{
+  "city_name": {
+    "de": "Münster",
+    "en": "Münster"
+  },
+  "office": {
+    "de": "KFZ-Zulassungsstelle",
+    "en": "Vehicle registration office"
+  },
+  "label": {
+    "de": "Münster: KFZ-Zulassungsstelle & Führerscheine",
+    "en": "Münster: vehicle registration & driving licences"
+  },
+  "heading": {
+    "de": "Nie wieder freie Termine bei der KFZ-Zulassungsstelle Münster verpassen",
+    "en": "Never miss a free slot at Münster's vehicle registration office"
+  },
+  "note": {
+    "de": "Hinweis: Dieser Dienst meldet den jeweils frühesten freien Termin (so zeigt es auch die Terminseite der Stadt an). Gebucht wird weiterhin selbst auf der offiziellen Terminseite der Stadt Münster.",
+    "en": "Note: this service reports the earliest free slot (matching what the city's appointment page shows). You still book yourself on the City of Münster's official appointment page."
+  }
+}

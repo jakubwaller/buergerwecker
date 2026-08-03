@@ -1,0 +1,22 @@
+{
+  "city_name": {
+    "de": "Münster",
+    "en": "Münster"
+  },
+  "office": {
+    "de": "Einbürgerung (Infoveranstaltung)",
+    "en": "Naturalisation (information event)"
+  },
+  "label": {
+    "de": "Münster: Einbürgerung (Infoveranstaltung)",
+    "en": "Münster: naturalisation (information event)"
+  },
+  "heading": {
+    "de": "Nie wieder freie Plätze der Einbürgerungs-Infoveranstaltung in Münster verpassen",
+    "en": "Never miss a free place at Münster's naturalisation information event"
+  },
+  "note": {
+    "de": "Hinweis: Dieser Dienst meldet den jeweils frühesten freien Termin (so zeigt es auch die Terminseite der Stadt an). Gebucht wird weiterhin selbst auf der offiziellen Terminseite der Stadt Münster.",
+    "en": "Note: this service reports the earliest free slot (matching what the city's appointment page shows). You still book yourself on the City of Münster's official appointment page."
+  }
+}
