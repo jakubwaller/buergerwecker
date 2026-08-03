@@ -4,14 +4,37 @@ from datetime import datetime, timedelta
 from app.models import Filter, Subscription
 
 def insert_pending(conn: sqlite3.Connection, *, email: str, city: str,
-                   language: str, filter_: Filter, ttl_days: int) -> int:
+                   language: str, filter_: Filter, ttl_days: int,
+                   consent_special: bool = False) -> int:
+    """Stage an unconfirmed sign-up.
+
+    `consent_special` records the separate Art. 9(2)(a) consent a sensitive
+    service needs. It is stamped here rather than at confirmation time because
+    that is when it was actually given; the double opt-in on top is what makes
+    it verifiable (Art. 7(1)).
+    """
     expires_at = (datetime.utcnow() + timedelta(days=ttl_days)).isoformat()
     cur = conn.execute(
-        "INSERT INTO subscriptions (email, city, language, filters_json, expires_at) "
-        "VALUES (?,?,?,?,?)",
-        (email, city, language, filter_.to_json(), expires_at),
+        "INSERT INTO subscriptions (email, city, language, filters_json, "
+        "expires_at, consent_special_at) VALUES (?,?,?,?,?,?)",
+        (email, city, language, filter_.to_json(), expires_at,
+         datetime.utcnow().isoformat() if consent_special else None),
     )
     return cur.lastrowid
+
+
+def set_special_consent(conn: sqlite3.Connection, sub_id: int,
+                        given: bool) -> None:
+    """Record (or clear) the Art. 9 consent on an existing subscription.
+
+    Cleared when someone edits their filter back to an ordinary service: the
+    consent covered that one selection, so keeping the stamp would overstate
+    what they agreed to.
+    """
+    conn.execute(
+        "UPDATE subscriptions SET consent_special_at=? WHERE id=?",
+        (datetime.utcnow().isoformat() if given else None, sub_id),
+    )
 
 def confirm(conn: sqlite3.Connection, sub_id: int) -> None:
     conn.execute(

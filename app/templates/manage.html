@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_fields.html" import max_days_select %}
+{% from "_fields.html" import max_days_select, special_consent %}
 {% block content %}
   <h1>
     {% if lang == 'en' %}Manage your subscription{% else %}Abonnement verwalten{% endif %}
@@ -17,6 +17,8 @@
         {% endfor %}
       </select>
     </label>
+
+    {{ special_consent(lang, sensitive_services, sensitive_ttl_days, consent_special) }}
 
     <label>
       <input type="checkbox" name="all_locations" value="1" {% if all_locations %}checked{% endif %}>

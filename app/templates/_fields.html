@@ -1,5 +1,79 @@
 {# Shared form fields used by both the sign-up form and the manage page. #}
 
+{# Separate, explicit Art. 9(2)(a) consent for special-category services (an
+   STI-counselling appointment is health data; an SBGG declaration is
+   gender-identity data). Rendered only for tenants that actually offer one,
+   and — where scripting is available — shown only while such a service is
+   selected. It degrades to always-visible without JS, and /subscribe and
+   /manage reject the POST regardless, so the box is never the enforcement. #}
+{% macro special_consent(lang, sensitive_services, ttl_days, checked=False) %}
+  {% if sensitive_services %}
+    <script id="sensitive-services" type="application/json">{{ sensitive_services | tojson }}</script>
+    <div class="consent-block" id="consent-special">
+      <strong>
+        {% if lang == 'en' %}Sensitive appointment type — separate consent
+        {% else %}Besonders geschütztes Anliegen — gesonderte Einwilligung{% endif %}
+      </strong>
+      <p>
+        {% if lang == 'en' %}
+          Choosing this appointment type means storing information that counts
+          as a special category of personal data under Art. 9 GDPR. That needs
+          your explicit consent, in addition to the confirmation email.
+        {% else %}
+          Mit diesem Anliegen speichern wir eine Angabe, die zu den besonderen
+          Kategorien personenbezogener Daten nach Art. 9 DSGVO gehört. Dafür
+          brauchen wir deine ausdrückliche Einwilligung — zusätzlich zur
+          Bestätigungs-E-Mail.
+        {% endif %}
+      </p>
+      <label>
+        <input type="checkbox" name="consent_special" value="1" {% if checked %}checked{% endif %}>
+        {% if lang == 'en' %}
+          I explicitly consent to my email address being stored and processed
+          together with the appointment type I selected, for the sole purpose
+          of notifying me about free slots (Art. 9(2)(a) GDPR). I can withdraw
+          this at any time via the unsubscribe link.
+        {% else %}
+          Ich willige ausdrücklich ein, dass meine E-Mail-Adresse zusammen mit
+          dem gewählten Anliegen gespeichert und verarbeitet wird, allein um
+          mich über freie Termine zu benachrichtigen (Art. 9 Abs. 2 lit. a
+          DSGVO). Ich kann das jederzeit über den Abmeldelink widerrufen.
+        {% endif %}
+      </label>
+      <p class="consent-note">
+        {% if lang == 'en' %}
+          The notification emails never name the appointment type or the
+          office, and this subscription expires automatically after
+          {{ ttl_days }} days instead of the usual 90. Details in the
+          <a href="/datenschutz?lang=en">privacy notice</a>.
+        {% else %}
+          Die Benachrichtigungen nennen weder das Anliegen noch das Amt, und
+          diese Anmeldung läuft automatisch nach {{ ttl_days }} Tagen ab statt
+          nach 90. Näheres in der
+          <a href="/datenschutz">Datenschutzerklärung</a>.
+        {% endif %}
+      </p>
+    </div>
+    <script>
+      // Only ask for the extra consent while it is actually needed. The block
+      // starts visible, so with scripting off it simply stays there.
+      (function () {
+        var sensitive = JSON.parse(
+          document.getElementById('sensitive-services').textContent);
+        var block = document.getElementById('consent-special');
+        var select = document.querySelector('select[name="appointment_type"]');
+        if (!block || !select) return;
+        function apply() {
+          block.style.display =
+            sensitive.indexOf(select.value) !== -1 ? '' : 'none';
+        }
+        select.addEventListener('change', apply);
+        apply();
+      })();
+    </script>
+  {% endif %}
+{% endmacro %}
+
 {% macro max_days_select(lang, mda=None) %}
   {% set day_options = [3, 7, 14, 30] %}
   <label>{% if lang == 'en' %}Only appointments within the next …{% else %}Nur Termine innerhalb der nächsten …{% endif %}
