@@ -18,5 +18,7 @@
   "digest.kofi": "Did this notification help? You can buy me a coffee: {kofi_url} (only if you want — the service stays free.)",
   "digest.selection_window_label": "Window",
   "digest.window_days": "within the next {n} days",
-  "digest.more_available": "… and {n} more matching appointments are currently bookable online — the soonest are listed above."
+  "digest.more_available": "… and {n} more matching appointments are currently bookable online — the soonest are listed above.",
+  "digest.sensitive_redacted": "(withheld for privacy)",
+  "digest.book_instructions_redacted": "Select your appointment type there again — for privacy reasons we don't name it in this email."
 }

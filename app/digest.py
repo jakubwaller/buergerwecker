@@ -32,7 +32,8 @@ def _format_date(date_str: str, lang: str) -> str:
 
 def render_digest_text(sub: Subscription, slots: list[Slot], *,
                        unsubscribe_url: str, public_base_url: str,
-                       kofi_url: str, catalog=None) -> str:
+                       kofi_url: str, catalog=None,
+                       booking_url: str | None = None) -> str:
     lang = sub.language
     # Resolve the catalog for uuid->name lookups. This must never block a
     # notification: an unknown city or missing catalog files degrades to
@@ -44,19 +45,35 @@ def render_digest_text(sub: Subscription, slots: list[Slot], *,
         except Exception:
             catalog = None
 
+    # A subscription to a special-category service (Art. 9 GDPR — STI
+    # counselling, an SBGG declaration) must not have that service named back
+    # to the subscriber in a mail sitting in an inbox, and neither may the
+    # office, which for a single-purpose Amt gives away exactly the same thing.
+    # Dates, times and the booking link are unaffected.
+    redacted = catalog is not None and any(
+        catalog.is_sensitive(u) for u in sub.sub_filter.appointment_types)
+    redaction = t(lang, "digest.sensitive_redacted")
+
     def svc_label(uuid: str) -> str:
+        if redacted:
+            return redaction
         return catalog.appointment_type_label(uuid, lang) if catalog else uuid
 
     def loc_label(uuid: str) -> str:
+        if redacted:
+            return redaction
         return catalog.location_label(uuid, lang) if catalog else uuid
 
     lines = [t(lang, "digest.greeting"), "", t(lang, "digest.intro"), ""]
 
     # "Deine Auswahl" — echo the subscriber's filter (what they selected).
     f = sub.sub_filter
-    services = ", ".join(svc_label(u) for u in f.appointment_types)
+    services = (redaction if redacted
+                else ", ".join(svc_label(u) for u in f.appointment_types))
     if f.locations == "all":
         locations = t(lang, "digest.all_locations")
+    elif redacted:
+        locations = redaction
     else:
         locations = ", ".join(loc_label(u) for u in f.locations)
     city_name = catalog.display_text("city_name", lang) if catalog else None
@@ -97,12 +114,15 @@ def render_digest_text(sub: Subscription, slots: list[Slot], *,
     # booking to a browser session (see catalog.booking_start_url), so a
     # per-slot link could only ever land on the start page while looking
     # like a deep link; one honest booking link below the list replaces it.
-    multi_service = len(f.appointment_types) > 1
+    # Redacted digests drop the grouping entirely rather than repeat one
+    # placeholder as every office header — a flat list of dates and times.
+    multi_service = len(f.appointment_types) > 1 and not redacted
     by_office: dict[str, list[Slot]] = {}
     for s in slots:
-        by_office.setdefault(s.location_uuid, []).append(s)
+        by_office.setdefault("" if redacted else s.location_uuid, []).append(s)
     for office_uuid in sorted(by_office, key=loc_label):
-        lines.append(loc_label(office_uuid))
+        if not redacted:
+            lines.append(loc_label(office_uuid))
         for s in sorted(by_office[office_uuid], key=lambda s: (s.date, s.time_str)):
             date_str = _format_date(s.date, lang)
             if multi_service:
@@ -120,11 +140,16 @@ def render_digest_text(sub: Subscription, slots: list[Slot], *,
     # selection so they can re-select it there; single-location tenants
     # (e.g. leipzig-abh) have no location step, so the location clause is
     # dropped for them.
-    go_url = f"{public_base_url}/go/{sub.city}"
+    # `/go/<city>` spells the tenant slug out in the URL, which for a
+    # special-category Amt undoes the redaction above — those digests get an
+    # opaque `booking_url` from the caller instead.
+    go_url = booking_url or f"{public_base_url}/go/{sub.city}"
     if lang == "en":
         go_url += "?lang=en"
     lines.append(t(lang, "digest.book_link", url=go_url))
-    if catalog is not None and len(catalog.locations) <= 1:
+    if redacted:
+        lines.append(t(lang, "digest.book_instructions_redacted"))
+    elif catalog is not None and len(catalog.locations) <= 1:
         lines.append(t(lang, "digest.book_instructions_service_only",
                        services=services))
     else:
@@ -168,10 +193,28 @@ def send_digest(*, conn: sqlite3.Connection, subscription: Subscription,
                        primary=cfg.token_secret_primary,
                        previous=cfg.token_secret_previous)
     unsub_url = f"{cfg.public_base_url}/unsubscribe/{unsub_token}"
+    # Special-category subscriptions get a booking link that carries only a
+    # signed subscription id, so the Amt isn't spelled out in the URL either.
+    catalog = None
+    try:
+        from app.catalog import load_catalog
+        catalog = load_catalog(subscription.city)
+    except Exception:
+        pass
+    booking_url = None
+    if catalog is not None and any(
+            catalog.is_sensitive(u)
+            for u in subscription.sub_filter.appointment_types):
+        goto = sign(subscription.id, "goto",
+                    primary=cfg.token_secret_primary,
+                    previous=cfg.token_secret_previous)
+        booking_url = f"{cfg.public_base_url}/go/sub/{goto}"
     body = render_digest_text(subscription, matched_slots,
                               unsubscribe_url=unsub_url,
                               public_base_url=cfg.public_base_url,
-                              kofi_url=cfg.kofi_url)
+                              kofi_url=cfg.kofi_url,
+                              catalog=catalog,
+                              booking_url=booking_url)
     from app.catalog import city_display_name
     city_name = city_display_name(subscription.city, subscription.language)
     subj = (t(subscription.language, "digest.subject_city", city=city_name)

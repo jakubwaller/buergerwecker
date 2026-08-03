@@ -182,6 +182,18 @@ _RESULT_MESSAGES: dict[str, dict] = {
                "Your message couldn't be delivered just now. Please try again "
                "in a few minutes, or send an email directly."),
     },
+    "consent_required": {
+        "kind": "error",
+        "de": ("Einwilligung fehlt", "Für dieses Anliegen fehlt noch deine Einwilligung",
+               "Das gewählte Anliegen gehört zu einer besonders geschützten "
+               "Kategorie (Art. 9 DSGVO). Dafür brauchen wir deine "
+               "ausdrückliche Einwilligung — bitte gehe zurück und setze das "
+               "zusätzliche Häkchen."),
+        "en": ("Consent missing", "This appointment type needs your explicit consent",
+               "The appointment type you chose falls into a special category "
+               "under Art. 9 GDPR. We need your explicit consent for it — "
+               "please go back and tick the additional box."),
+    },
     "missing_type": {
         "kind": "error",
         "de": ("Anliegen fehlt", "Bitte wähle ein Anliegen",
@@ -332,6 +344,18 @@ def _tenant_switcher(city: str, lang: str):
     return other_cities, sibling_offices
 
 
+def _offered_sensitive(catalog) -> list[str]:
+    """Uuids of this tenant's *offered* special-category services.
+
+    Empty for every ordinary tenant, which is what keeps the extra consent box
+    off their forms. Handed to the template as JSON so the box can be hidden
+    again while an ordinary service is selected — enforcement is server-side,
+    this is only so the page doesn't ask for consent it doesn't need.
+    """
+    return sorted(u for u in catalog.appointment_types.values()
+                  if catalog.is_sensitive(u))
+
+
 def create_app() -> Flask:
     app = Flask(__name__,
                 template_folder="templates",
@@ -339,6 +363,16 @@ def create_app() -> Flask:
     # Load config ONCE at startup. Missing env vars surface here, not on
     # the first real request.
     app.config["TERMINE_CONFIG"] = load_config()
+
+    @app.after_request
+    def _privacy_headers(resp):
+        # The URL of a sign-up page names the Amt (?city=muenster-…), which for
+        # a special-category tenant is itself the sensitive fact. Without this,
+        # every outbound click — the Ko-fi link, the source-code link, the
+        # /go/<city> redirect to the city's booking page — would hand that URL
+        # to the destination in the Referer header.
+        resp.headers.setdefault("Referrer-Policy", "no-referrer")
+        return resp
 
     @app.context_processor
     def _template_helpers():
@@ -409,6 +443,9 @@ def create_app() -> Flask:
                                appointment_types=catalog.appointment_types_for(lang),
                                locations=catalog.locations_for(lang),
                                service_locations=catalog.service_locations,
+                               sensitive_services=_offered_sensitive(catalog),
+                               sensitive_ttl_days=app.config["TERMINE_CONFIG"]
+                               .sensitive_subscription_ttl_days,
                                kofi_url=app.config["TERMINE_CONFIG"].kofi_url)
 
     @app.route("/subscribe", methods=["POST"])
@@ -440,6 +477,16 @@ def create_app() -> Flask:
         atype = request.form.get("appointment_type", "").strip()
         if not atype:
             return _result_page("missing_type", lang, status=400)
+        # Special-category services (Art. 9 GDPR) need the separate explicit
+        # consent on top of the double opt-in. Enforced here rather than in the
+        # form because the box is hidden by script while an ordinary service is
+        # selected — and because a POST need never have rendered the page.
+        try:
+            sensitive = load_catalog(city).is_sensitive(atype)
+        except CatalogError:
+            sensitive = False
+        if sensitive and request.form.get("consent_special") != "1":
+            return _result_page("consent_required", lang, status=400)
         all_locs = request.form.get("all_locations") == "1"
         loc_list = request.form.getlist("locations")
         locations = "all" if all_locs or not loc_list else loc_list
@@ -465,7 +512,10 @@ def create_app() -> Flask:
                 return _result_page("waitlist_full", lang, status=503)
             sub_id = insert_pending(conn, email=email, city=city,
                                     language=lang, filter_=f,
-                                    ttl_days=cfg.subscription_ttl_days)
+                                    ttl_days=(cfg.sensitive_subscription_ttl_days
+                                              if sensitive
+                                              else cfg.subscription_ttl_days),
+                                    consent_special=sensitive)
         # Try to send the confirmation now. If the daily email quota is
         # exhausted (or the send errors), we KEEP the pending sign-up and the
         # poller's retry pass sends the confirmation on a later cycle — so the
@@ -540,12 +590,21 @@ def create_app() -> Flask:
                                 request.args.get("lang", "de"), status=400)
         conn = connect(cfg.db_path)
         if request.method == "POST":
+            owner = conn.execute(
+                "SELECT city, language FROM subscriptions WHERE id=?",
+                (sub_id,)).fetchone()
+            lang = owner["language"] if owner else "de"
             atype = request.form.get("appointment_type", "").strip()
             if not atype:
-                row = conn.execute("SELECT language FROM subscriptions WHERE id=?",
-                                   (sub_id,)).fetchone()
-                return _result_page("missing_type",
-                                    row["language"] if row else "de", status=400)
+                return _result_page("missing_type", lang, status=400)
+            # Editing a filter is a second way to select a special-category
+            # service, so it carries the same Art. 9 consent gate as sign-up.
+            try:
+                sensitive = load_catalog(owner["city"]).is_sensitive(atype) if owner else False
+            except CatalogError:
+                sensitive = False
+            if sensitive and request.form.get("consent_special") != "1":
+                return _result_page("consent_required", lang, status=400)
             all_locs = request.form.get("all_locations") == "1"
             loc_list = request.form.getlist("locations")
             locations = "all" if all_locs or not loc_list else loc_list
@@ -566,9 +625,18 @@ def create_app() -> Flask:
                          "last_match_count=NULL, consecutive_digests=0 "
                          "WHERE id=?",
                          (f.to_json(), sub_id))
-            row = conn.execute("SELECT language FROM subscriptions WHERE id=?",
-                               (sub_id,)).fetchone()
-            lang = row["language"] if row else "de"
+            from app.repo import set_special_consent
+            set_special_consent(conn, sub_id, sensitive)
+            if sensitive:
+                # Switching into a special-category service also pulls the
+                # expiry in to the shorter retention — never pushes it out, so
+                # this can't be used to extend an ordinary subscription.
+                conn.execute(
+                    "UPDATE subscriptions SET expires_at=datetime('now', ?) "
+                    "WHERE id=? AND expires_at > datetime('now', ?)",
+                    (f"+{cfg.sensitive_subscription_ttl_days} days", sub_id,
+                     f"+{cfg.sensitive_subscription_ttl_days} days"),
+                )
             back_label = ("Zurück zu den Einstellungen" if lang == "de"
                           else "Back to your settings")
             return _result_page("updated", lang,
@@ -584,6 +652,10 @@ def create_app() -> Flask:
                                lang=lang, city=row["city"],
                                appointment_types=catalog.appointment_types_for(lang),
                                locations=catalog.locations_for(lang), token=token,
+                               sensitive_services=_offered_sensitive(catalog),
+                               sensitive_ttl_days=cfg.sensitive_subscription_ttl_days,
+                               consent_special=("consent_special_at" in row.keys()
+                                                and row["consent_special_at"] is not None),
                                current=Filter.from_json(row["filters_json"]))
 
     @app.route("/renew/<token>")
@@ -597,15 +669,49 @@ def create_app() -> Flask:
             return _result_page("invalid_token",
                                 request.args.get("lang", "de"), status=400)
         conn = connect(cfg.db_path)
+        row = conn.execute(
+            "SELECT language, consent_special_at FROM subscriptions WHERE id=?",
+            (sid,)).fetchone()
+        # A special-category subscription renews for its own shorter term —
+        # otherwise the renewal link would quietly promote it to 90 days.
+        ttl = (cfg.sensitive_subscription_ttl_days
+               if row and row["consent_special_at"] is not None
+               else cfg.subscription_ttl_days)
         conn.execute(
             "UPDATE subscriptions SET expires_at=datetime('now', ?) "
             "WHERE id=? AND deleted_at IS NULL",
-            (f"+{cfg.subscription_ttl_days} days", sid),
+            (f"+{ttl} days", sid),
         )
-        row = conn.execute("SELECT language FROM subscriptions WHERE id=?",
-                           (sid,)).fetchone()
         lang = request.args.get("lang") or (row["language"] if row else "de")
         return _result_page("renewed", lang)
+
+    @app.route("/go/sub/<token>")
+    def go_sub_route(token):
+        """Booking link for a special-category subscription.
+
+        `/go/<city>` names the Amt in the URL, which for a single-purpose Amt
+        gives away exactly what the redacted digest withholds. This variant
+        carries a signed subscription id only and resolves the tenant here.
+        """
+        cfg = app.config["TERMINE_CONFIG"]
+        lang = "en" if request.args.get("lang") == "en" else "de"
+        try:
+            sid = verify(token, "goto",
+                         primary=cfg.token_secret_primary,
+                         previous=cfg.token_secret_previous)
+        except InvalidToken:
+            return _result_page("invalid_token", lang, status=400)
+        conn = connect(cfg.db_path)
+        row = conn.execute(
+            "SELECT city FROM subscriptions WHERE id=? AND deleted_at IS NULL",
+            (sid,)).fetchone()
+        if not row:
+            return _result_page("not_found", lang, status=404)
+        try:
+            scfg = load_catalog(row["city"]).scraper_config
+        except CatalogError:
+            return _result_page("link_expired", lang, status=410)
+        return redirect(booking_start_url(scfg, lang), code=302)
 
     @app.route("/go/<slot_token>")
     def go_route(slot_token):

@@ -25,6 +25,7 @@ class Config:
     rate_limit_minutes: int
     adaptive_rate_limit_max_multiplier: int
     subscription_ttl_days: int
+    sensitive_subscription_ttl_days: int
     renewal_reminder_days_before: int
     max_plans_per_city: int
     parser_canary_threshold_hours: int
@@ -91,6 +92,12 @@ def load_config() -> Config:
         adaptive_rate_limit_max_multiplier=int(
             os.environ.get("ADAPTIVE_RATE_LIMIT_MAX_MULTIPLIER", "8")),
         subscription_ttl_days=_req_int("SUBSCRIPTION_TTL_DAYS"),
+        # Special-category subscriptions (Art. 9 GDPR) expire sooner than
+        # ordinary ones: the data is more sensitive, so it should exist for
+        # less time. Optional with a default so existing deploys need no new
+        # env var; the renewal link still works, it just renews for 30 days.
+        sensitive_subscription_ttl_days=int(
+            os.environ.get("SENSITIVE_SUBSCRIPTION_TTL_DAYS", "30")),
         renewal_reminder_days_before=_req_int("RENEWAL_REMINDER_DAYS_BEFORE"),
         max_plans_per_city=_req_int("MAX_PLANS_PER_CITY"),
         parser_canary_threshold_hours=_req_int("PARSER_CANARY_THRESHOLD_HOURS"),

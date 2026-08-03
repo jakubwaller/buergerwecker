@@ -3,7 +3,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS subscriptions (
@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   deleted_at        TIMESTAMP,
   confirmation_sent_at TIMESTAMP,
   last_match_count  INTEGER,
-  consecutive_digests INTEGER NOT NULL DEFAULT 0
+  consecutive_digests INTEGER NOT NULL DEFAULT 0,
+  consent_special_at TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_active_subs
   ON subscriptions(deleted_at, confirmed_at, expires_at, city);
@@ -168,10 +169,16 @@ def init_schema(conn: sqlite3.Connection) -> None:
     # adaptive rate limit. NULL on existing rows means "not measured yet",
     # which the ladder treats as the base interval — so a migrated DB keeps
     # today's cadence until each subscriber's first digest re-measures it.
+    # consent_special_at: when the subscriber gave the separate, explicit
+    # Art. 9(2)(a) consent for a special-category service. NULL means they
+    # never did — which is also the only legal state for a subscription to a
+    # sensitive service, so the column doubles as the Art. 7(1) record of
+    # consent and as the marker for the shorter retention.
     _add_missing_columns(conn, "subscriptions", {
         "confirmation_sent_at": "TIMESTAMP",
         "last_match_count": "INTEGER",
         "consecutive_digests": "INTEGER NOT NULL DEFAULT 0",
+        "consent_special_at": "TIMESTAMP",
     })
     # Durable per-day send counters power the admin page's provider-quota view.
     # sent_idempotency only lives 14 days (housekeeping prune), so month-to-date

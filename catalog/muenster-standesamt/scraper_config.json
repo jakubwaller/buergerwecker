@@ -5,6 +5,10 @@
   "mdt": 217,
   "poll_interval_seconds": 300,
   "max_plans": 40,
+  "sensitive_services": [
+    "2471",
+    "2472"
+  ],
   "exclude_services": [
     "2471",
     "2472"

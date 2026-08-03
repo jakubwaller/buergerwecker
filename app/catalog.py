@@ -52,6 +52,36 @@ class Catalog:
     # the selected service. Empty/missing service key = unknown coverage —
     # the form then shows every location for that service.
     service_locations: dict = field(default_factory=dict)
+    # Services whose mere selection reveals special-category data under Art. 9
+    # GDPR — an STI-counselling appointment is health data, an SBGG declaration
+    # is gender-identity data. Subscribing to one needs separate explicit
+    # consent (Art. 9(2)(a)), and the service is never named back to the
+    # subscriber by email. Declared as `sensitive_services` in
+    # scraper_config.json; the ids are the vendor's, same space as
+    # `exclude_services`. Such a tenant's display.json `city_name` must stay
+    # the bare city — it is the one label that still reaches mail subjects
+    # (confirmation, digest), so folding the Amt into it would give the game
+    # away there.
+    sensitive_services: frozenset = field(default_factory=frozenset)
+
+    def is_sensitive(self, uuid: str) -> bool:
+        """Does subscribing to this service reveal special-category data?
+
+        Answered from the declaration alone, not from what the catalog
+        currently offers, so a subscription taken before a service was
+        withdrawn keeps its protection in the digest.
+        """
+        return uuid in self.sensitive_services
+
+    @property
+    def has_sensitive(self) -> bool:
+        """Is any service currently *offered* by this tenant a sensitive one?
+
+        This is what decides whether the sign-up form shows the extra consent
+        box: a tenant whose sensitive services are all excluded needs no box.
+        """
+        return any(u in self.sensitive_services
+                   for u in self.appointment_types.values())
 
     def display_text(self, key: str, lang: str) -> str | None:
         """Localized display.json text for `key`; falls back to German; None if unset."""
@@ -115,10 +145,12 @@ def load_catalog(city: str) -> Catalog:
         ats = {n: u for n, u in ats.items() if u not in excluded}
         ats_en = {n: u for n, u in ats_en.items() if u not in excluded}
         svc_locs = {u: v for u, v in svc_locs.items() if u not in excluded}
+    sensitive = frozenset(str(s) for s in (scfg.get("sensitive_services") or ()))
     return Catalog(city=city, appointment_types=ats, locations=locs,
                    scraper_config=scfg,
                    appointment_types_en=ats_en, locations_en=locs_en,
-                   display=display, service_locations=svc_locs)
+                   display=display, service_locations=svc_locs,
+                   sensitive_services=sensitive)
 
 
 def city_display_name(city: str, lang: str) -> str | None:

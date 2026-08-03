@@ -290,6 +290,30 @@
     .office-switch a { text-decoration: none; }
     .office-switch a:hover { text-decoration: underline; }
     .office-switch .current { color: var(--text); font-weight: 600; }
+    /* Art. 9 consent: deliberately looks like a notice rather than another
+       form row, so it can't be ticked past as if it were "all locations". */
+    .consent-block {
+      background: var(--bg);
+      border: 1px solid var(--border-strong);
+      border-left: 3px solid var(--accent);
+      border-radius: var(--radius-input);
+      padding: 0.9rem 1.1rem 1rem;
+      margin: 1.15rem 0 0;
+      font-size: 0.9375rem;
+    }
+    .consent-block p { margin: 0.4rem 0 0.6rem; color: var(--text-muted); }
+    .consent-block label {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.15rem;
+      font-weight: 400;
+      margin: 0;
+    }
+    .consent-block input[type="checkbox"] { margin-top: 0.3rem; flex: none; }
+    .consent-block .consent-note {
+      margin: 0.6rem 0 0;
+      font-size: 0.875rem;
+    }
     .faq {
       margin-top: 2.75rem;
       padding-top: 1.5rem;

@@ -151,3 +151,59 @@ def test_shipped_muenster_standesamt_excludes_the_sbgg_anliegen():
     assert "2472" not in cat.appointment_types.values()
     assert not any("Selbstbestimmungsgesetz" in name
                    for name in cat.appointment_types)
+
+
+def test_shipped_muenster_standesamt_declares_the_sbgg_anliegen_sensitive():
+    """Both ids carry the Art. 9 marking as well as the exclusion. Offering
+    them is then one edit — deleting them from `exclude_services` — which is
+    what happens once the wording is agreed with Münster's data-protection
+    officer; the consent flow itself is already in place."""
+    from app.catalog import load_catalog
+    cat = load_catalog("muenster-standesamt")
+    assert cat.sensitive_services == frozenset({"2471", "2472"})
+    assert cat.is_sensitive("2471") and cat.is_sensitive("2472")
+    # Excluded today, so nothing on the form needs the extra consent box yet.
+    assert not cat.has_sensitive
+
+
+def test_sensitive_services_survive_a_service_being_withdrawn(tmp_path,
+                                                              monkeypatch):
+    """`is_sensitive` answers from the declaration, not from what is currently
+    offered: a subscription taken before the Anliegen was withdrawn must keep
+    its redaction in the digest."""
+    import json
+    from app import catalog as catalog_mod
+    city = tmp_path / "testcity"
+    city.mkdir()
+    (city / "scraper_config.json").write_text(json.dumps(
+        {"vendor": "tevis", "base_url": "https://x", "md": 13, "mdt": 217,
+         "sensitive_services": ["2471"], "exclude_services": ["2471"]}),
+        encoding="utf-8")
+    (city / "appointment_type.json").write_text(json.dumps(
+        {"Eheschließung": "2431", "SBGG-Erklärung": "2471"}), encoding="utf-8")
+    (city / "locations.json").write_text(json.dumps({"Standesamt": "254"}),
+                                         encoding="utf-8")
+    monkeypatch.setattr(catalog_mod, "CATALOG_ROOT", tmp_path)
+    catalog_mod.load_catalog.cache_clear()
+    try:
+        cat = catalog_mod.load_catalog("testcity")
+        assert cat.is_sensitive("2471")     # still protected
+        assert not cat.has_sensitive        # but no longer offered
+        assert not cat.is_sensitive("2431")
+    finally:
+        catalog_mod.load_catalog.cache_clear()
+
+
+def test_no_shipped_tenant_offers_a_sensitive_service_yet():
+    """Guards the promise made to Stadt Münster: the special-category Anliegen
+    go live only after the wording has been agreed with their data-protection
+    officer. Flipping this test is part of that change, not a side effect."""
+    from app.catalog import available_cities, load_catalog, CatalogError
+    offering = []
+    for city in available_cities():
+        try:
+            if load_catalog(city).has_sensitive:
+                offering.append(city)
+        except CatalogError:
+            continue
+    assert offering == []

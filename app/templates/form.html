@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_fields.html" import max_days_select %}
+{% from "_fields.html" import max_days_select, special_consent %}
 {% block content %}
   {% if confirmed == 'pending' %}
     <div class="notice notice-success" role="status">
@@ -125,6 +125,8 @@
         {% endfor %}
       </select>
     </label>
+
+    {{ special_consent(lang, sensitive_services, sensitive_ttl_days) }}
 
     <label>
       <input type="checkbox" name="all_locations" value="1" checked>
