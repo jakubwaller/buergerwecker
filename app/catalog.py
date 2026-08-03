@@ -107,6 +107,14 @@ def load_catalog(city: str) -> Catalog:
     locs_en = _read_optional_json(city_dir / "locations.en.json")
     display = _read_optional_json(city_dir / "display.json")
     svc_locs = _read_optional_json(city_dir / "service_locations.json")
+    # Services the tenant refuses to carry (Art. 9 GDPR selections, see
+    # catalog_sync._drop_excluded). Filtering on read as well as on sync means
+    # a hand-edited or stale catalog file still can't offer them.
+    excluded = {str(s) for s in (scfg.get("exclude_services") or ())}
+    if excluded:
+        ats = {n: u for n, u in ats.items() if u not in excluded}
+        ats_en = {n: u for n, u in ats_en.items() if u not in excluded}
+        svc_locs = {u: v for u, v in svc_locs.items() if u not in excluded}
     return Catalog(city=city, appointment_types=ats, locations=locs,
                    scraper_config=scfg,
                    appointment_types_en=ats_en, locations_en=locs_en,

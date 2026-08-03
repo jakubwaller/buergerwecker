@@ -3,6 +3,10 @@
     "de": "Münster",
     "en": "Münster"
   },
+  "office": {
+    "de": "Bürgeramt",
+    "en": "Citizens' office"
+  },
   "label": {
     "de": "Münster: Bürgeramt-Termine",
     "en": "Münster: citizens' office appointments"

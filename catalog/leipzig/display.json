@@ -3,6 +3,10 @@
     "de": "Leipzig",
     "en": "Leipzig"
   },
+  "office": {
+    "de": "Bürgerbüro",
+    "en": "Citizens' office"
+  },
   "label": {
     "de": "Leipzig: Bürgerbüro-Termine (Anmeldung, Ausweise u. a.)",
     "en": "Leipzig: citizen office appointments (registration, ID cards, …)"

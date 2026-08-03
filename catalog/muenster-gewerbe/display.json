@@ -1,0 +1,22 @@
+{
+  "city_name": {
+    "de": "Münster",
+    "en": "Münster"
+  },
+  "office": {
+    "de": "Ordnungsamt – Gewerbe",
+    "en": "Public order office – trade"
+  },
+  "label": {
+    "de": "Münster: Ordnungsamt – Gewerbe",
+    "en": "Münster: public order office – trade"
+  },
+  "heading": {
+    "de": "Nie wieder freie Termine beim Ordnungsamt – Gewerbe in Münster verpassen",
+    "en": "Never miss a free slot at Münster's public order office – trade"
+  },
+  "note": {
+    "de": "Hinweis: Dieser Dienst meldet den jeweils frühesten freien Termin (so zeigt es auch die Terminseite der Stadt an). Gebucht wird weiterhin selbst auf der offiziellen Terminseite der Stadt Münster.",
+    "en": "Note: this service reports the earliest free slot (matching what the city's appointment page shows). You still book yourself on the City of Münster's official appointment page."
+  }
+}

@@ -163,17 +163,43 @@ def test_unknown_city_redirects_to_default(client):
     assert r.headers["Location"].endswith("/")
 
 
-def test_city_switcher_uses_bare_names_except_multi_tenant_cities(client):
-    """The switcher lists single-tenant cities by bare city name; only cities
-    with several tenants (Leipzig: Bürgerbüro + Ausländerbehörde) keep the
-    full per-tenant label to disambiguate. Rendered as a collapsible
-    <details> so it scales to dozens of cities."""
+def test_city_switcher_groups_a_multi_tenant_city_into_one_cell(client):
+    """One entry per city, not per tenant: a single-tenant city stays a bare
+    link, a city with several Ämter becomes one cell listing them by short
+    name. The long "Leipzig: …" tenant labels must not reach the grid — they
+    are what forced the ellipsis that made the old flat list unreadable."""
     body = client.get("/?city=dresden").data.decode()
     assert '<details class="city-switch"' in body
     assert '>Bochum</a>' in body                       # bare name
     assert 'Bochum: ' not in body                      # not the long label
-    assert 'Leipzig: Bürgerbüro-Termine' in body       # multi-tenant keeps label
-    assert 'Leipzig: Ausländerbehörde' in body
+    assert '<div class="city-cell">' in body
+    assert 'Leipzig: Bürgerbüro-Termine' not in body   # long label stays out
+    assert '>Bürgerbüro</a>' in body                   # short office names
+    assert '>Ausländerbehörde</a>' in body
+
+
+def test_city_switcher_counts_cities_not_tenants(client):
+    """The summary count is what the visitor scans past — it must count places,
+    not rows. Münster alone contributes seven tenants and one entry."""
+    import re
+    from app.catalog import available_cities
+    body = client.get("/?city=dresden").data.decode()
+    shown = int(re.search(r"Weitere Städte &amp; Ämter \((\d+)\)", body).group(1))
+    assert shown < len(available_cities()) - 1
+    assert body.count('<div class="city-cell">') >= 2   # Leipzig and Münster
+
+
+def test_current_city_offices_get_their_own_row(client):
+    """Landing on one Amt of a multi-Amt city offers its siblings directly,
+    with the current one unlinked — the second step of city → Amt."""
+    body = client.get("/?city=muenster").data.decode()
+    assert 'class="office-switch"' in body
+    assert "Ämter in Münster:" in body
+    assert '<span class="current" aria-current="page">Bürgeramt</span>' in body
+    assert 'href="/?city=muenster-standesamt"' in body
+    # A city with one tenant has no such row, and never lists itself twice.
+    single = client.get("/?city=dresden").data.decode()
+    assert 'class="office-switch"' not in single
 
 def test_form_has_fairness_faq_in_both_languages(client):
     de = client.get("/?lang=de").data.decode()

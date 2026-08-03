@@ -1,0 +1,22 @@
+{
+  "city_name": {
+    "de": "Münster",
+    "en": "Münster"
+  },
+  "office": {
+    "de": "Standesamt",
+    "en": "Registry office"
+  },
+  "label": {
+    "de": "Münster: Standesamt",
+    "en": "Münster: registry office"
+  },
+  "heading": {
+    "de": "Nie wieder freie Termine beim Standesamt Münster verpassen",
+    "en": "Never miss a free slot at Münster's registry office"
+  },
+  "note": {
+    "de": "Hinweis: Dieser Dienst meldet den jeweils frühesten freien Termin (so zeigt es auch die Terminseite der Stadt an). Gebucht wird weiterhin selbst auf der offiziellen Terminseite der Stadt Münster.",
+    "en": "Note: this service reports the earliest free slot (matching what the city's appointment page shows). You still book yourself on the City of Münster's official appointment page."
+  }
+}

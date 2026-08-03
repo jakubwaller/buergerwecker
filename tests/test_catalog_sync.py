@@ -562,3 +562,59 @@ def test_tevis_office_label_ignores_dl_row_labels():
             '<dt>Anschrift</dt><dd>Tattenbachstr. 15</dd></dl></form>')
     form = BeautifulSoup(html, "html.parser").find("form")
     assert catalog_sync._tevis_office_label(form) == "Bürgerbüro Haunstetten"
+
+
+def _tevis_single_anliegen_html(sid: str, name: str) -> str:
+    """A one-Anliegen Mandant, as Münster md 23/25/41 actually render it: the
+    concern is a HIDDEN input with no id, the name sits in data-tevis-cncname,
+    and the only label is bound to the field name. The unrelated language
+    label is what `label[for=None]` used to match."""
+    return ("<html><body>"
+            '<label for="lang_select">en_EN</label>'
+            f'<form><input type="hidden" class="cnc-item" name="cnc-{sid}" '
+            f'value="1" data-tevis-cncname="{name}"/>'
+            f'<label for="cnc-{sid}"><b>1 - {name}</b></label></form>'
+            "</body></html>")
+
+
+def test_tevis_services_read_single_anliegen_mandant():
+    """Regression: Münster's Gesundheitsamt came out named "en_EN" because the
+    hidden input has no id and BeautifulSoup happily matched label[for=None]."""
+    http = MagicMock()
+    http.get.return_value = MagicMock(
+        status_code=200,
+        text=_tevis_single_anliegen_html("2395", "Beratungstermin STI"))
+    services = catalog_sync.fetch_tevis_services(http, TEVIS_BASE, "23")
+    assert services == {"Beratungstermin STI": "2395"}
+
+
+def test_tevis_services_still_read_multi_anliegen_mandant():
+    """The id-bound label path (every existing tenant) must be untouched."""
+    http = MagicMock()
+    http.get.return_value = MagicMock(
+        status_code=200,
+        text=_tevis_select2_html({"Personalausweis": "623", "Reisepass": "624"}))
+    services = catalog_sync.fetch_tevis_services(http, TEVIS_BASE, "1")
+    assert services == {"Personalausweis": "623", "Reisepass": "624"}
+
+
+def test_sync_tevis_never_readds_an_excluded_service(tmp_tevis_root):
+    """`exclude_services` has to survive the daily sync: these are the Anliegen
+    the tenant refuses to carry (Münster's SBGG declarations), so a drift run
+    that re-added them would quietly undo the promise made to the city."""
+    city = tmp_tevis_root / "kiel"
+    scfg = json.loads((city / "scraper_config.json").read_text())
+    scfg["exclude_services"] = ["999"]
+    (city / "scraper_config.json").write_text(json.dumps(scfg))
+    http = _build_tevis_http(
+        {"Personalausweis": "623", "Geheimsache": "999"},
+        {"623": {"78": "Rathaus"}, "999": {"78": "Rathaus"}})
+    alerts = []
+    catalog_sync.sync_city("kiel", http, catalog_root=tmp_tevis_root,
+                           alert_fn=lambda **kw: alerts.append(kw))
+    services = json.loads((city / "appointment_type.json").read_text())
+    assert services == {"Personalausweis": "623"}
+    assert alerts == []
+    # and it is never even probed for offices
+    probed = [c.kwargs.get("params", {}) for c in http.get.call_args_list]
+    assert not any("cnc-999" in p for p in probed)

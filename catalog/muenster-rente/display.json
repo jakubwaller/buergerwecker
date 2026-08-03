@@ -1,0 +1,22 @@
+{
+  "city_name": {
+    "de": "Münster",
+    "en": "Münster"
+  },
+  "office": {
+    "de": "Infobüro Rente",
+    "en": "Pension information office"
+  },
+  "label": {
+    "de": "Münster: Infobüro Rente",
+    "en": "Münster: pension information office"
+  },
+  "heading": {
+    "de": "Nie wieder freie Termine im Infobüro Rente Münster verpassen",
+    "en": "Never miss a free slot at Münster's pension information office"
+  },
+  "note": {
+    "de": "Hinweis: Dieser Dienst meldet den jeweils frühesten freien Termin (so zeigt es auch die Terminseite der Stadt an). Gebucht wird weiterhin selbst auf der offiziellen Terminseite der Stadt Münster.",
+    "en": "Note: this service reports the earliest free slot (matching what the city's appointment page shows). You still book yourself on the City of Münster's official appointment page."
+  }
+}

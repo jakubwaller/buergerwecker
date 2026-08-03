@@ -267,6 +267,71 @@ def _send_manage_link_email(conn, sub_id: int, cfg) -> None:
     mail_send(conn, row["email"], subj, body, idem_key=key)
 
 
+def _office_label(cat, cname: str, lang: str, fallback: str) -> str:
+    """Short Amt name for a tenant: display.json `office`, else the tenant
+    label with its redundant "<Stadt>: " prefix stripped."""
+    office = cat.display_text("office", lang)
+    if office:
+        return office
+    label = cat.display_text("label", lang) or fallback
+    prefix = f"{cname}: "
+    return label[len(prefix):] if label.startswith(prefix) else label
+
+
+def _tenant_switcher(city: str, lang: str):
+    """(other-city entries, sibling Ämter of the current city) for the form page.
+
+    Two levels, because a city can now offer many Ämter: Münster alone has
+    seven. The switcher lists one entry per *city* — a single-tenant city stays
+    a plain link, a multi-tenant city carries its Ämter as sub-links — and the
+    Ämter of the city being viewed get their own row above it, which is where
+    someone who landed on Münster's Bürgeramt looks for the Standesamt.
+
+    Entries are (city_name, url_or_None, [(office_label, url), …]); the url is
+    None exactly when the city has several tenants and no single target.
+    """
+    def url_for_tenant(slug: str) -> str:
+        return f"/?city={slug}" + ("&lang=en" if lang == "en" else "")
+
+    tenants = []
+    for other in available_cities():
+        try:
+            ocat = load_catalog(other)
+        except CatalogError:
+            # An incomplete tenant dir (e.g. a scaffold with only a
+            # scraper_config.json) must not take down every tenant's page.
+            continue
+        cname = ocat.display_text("city_name", lang) or other
+        tenants.append((cname, ocat, other))
+    tenants_per_city = Counter(cname for cname, _, _ in tenants)
+    current_city_name = next((cname for cname, _, slug in tenants if slug == city), None)
+
+    by_city: dict[str, list[tuple[str, str]]] = {}
+    sibling_offices: list[tuple[str, str | None]] = []
+    for cname, ocat, slug in tenants:
+        office = _office_label(ocat, cname, lang, slug)
+        if cname == current_city_name and tenants_per_city[cname] > 1:
+            # The current city's own Ämter get the dedicated row instead; the
+            # tenant being viewed is listed too, unlinked, so the row reads as
+            # a picker rather than a list of somewhere-else.
+            sibling_offices.append((office, None if slug == city else url_for_tenant(slug)))
+        if slug == city:
+            continue
+        by_city.setdefault(cname, []).append((office, url_for_tenant(slug)))
+
+    other_cities = []
+    for cname in sorted(by_city, key=str.casefold):
+        if cname == current_city_name:
+            continue  # already covered by the sibling row
+        offices = sorted(by_city[cname], key=lambda pair: pair[0].casefold())
+        if tenants_per_city[cname] > 1:
+            other_cities.append((cname, None, offices))
+        else:
+            other_cities.append((cname, offices[0][1], []))
+    sibling_offices.sort(key=lambda pair: pair[0].casefold())
+    return other_cities, sibling_offices
+
+
 def create_app() -> Flask:
     app = Flask(__name__,
                 template_folder="templates",
@@ -330,33 +395,7 @@ def create_app() -> Flask:
         except CatalogError:
             # Unknown/garbage ?city= — land on the default tenant, not a 500.
             return redirect("/?lang=en" if lang == "en" else "/")
-        # Cross-links to the other tenants. A city with a single tenant is
-        # listed by bare city name; only where one city has several tenants
-        # (e.g. Leipzig Bürgerbüro + Ausländerbehörde) does the full label
-        # disambiguate — with ~30 tenants the switcher can't afford the long
-        # per-tenant labels everywhere.
-        tenants = []
-        for other in available_cities():
-            try:
-                ocat = load_catalog(other)
-            except CatalogError:
-                # An incomplete tenant dir (e.g. a scaffold with only a
-                # scraper_config.json) must not take down every tenant's page.
-                continue
-            cname = ocat.display_text("city_name", lang) or other
-            label = ocat.display_text("label", lang) or other
-            tenants.append((cname, label, other))
-        tenants_per_city = Counter(cname for cname, _, _ in tenants)
-        other_cities = []
-        for cname, label, other in tenants:
-            if other == city:
-                continue
-            display = label if tenants_per_city[cname] > 1 else cname
-            url = f"/?city={other}" + ("&lang=en" if lang == "en" else "")
-            other_cities.append((display, url))
-        # Labels start with the city name, so a label sort orders the links
-        # by city, then service.
-        other_cities.sort(key=lambda pair: pair[0].casefold())
+        other_cities, sibling_offices = _tenant_switcher(city, lang)
         return render_template("form.html",
                                lang=lang,
                                city=city,
@@ -366,6 +405,7 @@ def create_app() -> Flask:
                                city_name=catalog.display_text("city_name", lang),
                                note=catalog.display_text("note", lang),
                                other_cities=other_cities,
+                               sibling_offices=sibling_offices,
                                appointment_types=catalog.appointment_types_for(lang),
                                locations=catalog.locations_for(lang),
                                service_locations=catalog.service_locations,

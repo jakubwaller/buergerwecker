@@ -1,0 +1,22 @@
+{
+  "city_name": {
+    "de": "Münster",
+    "en": "Münster"
+  },
+  "office": {
+    "de": "Energieberatung",
+    "en": "Energy advice"
+  },
+  "label": {
+    "de": "Münster: Energieberatung",
+    "en": "Münster: energy advice"
+  },
+  "heading": {
+    "de": "Nie wieder freie Termine der Energieberatung Münster verpassen",
+    "en": "Never miss a free energy-advice slot in Münster"
+  },
+  "note": {
+    "de": "Hinweis: Dieser Dienst meldet den jeweils frühesten freien Termin (so zeigt es auch die Terminseite der Stadt an). Gebucht wird weiterhin selbst auf der offiziellen Terminseite der Stadt Münster.",
+    "en": "Note: this service reports the earliest free slot (matching what the city's appointment page shows). You still book yourself on the City of Münster's official appointment page."
+  }
+}
