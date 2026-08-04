@@ -1,10 +1,15 @@
 from __future__ import annotations
 import json
+import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
 CATALOG_ROOT = Path(__file__).parent.parent / "catalog"
+
+# The shape of every tenant directory name, and the only thing load_catalog
+# will look up. Notably excludes "/", "\" and "." — see load_catalog.
+_SLUG_RE = re.compile(r"[a-z0-9][a-z0-9-]*")
 
 class CatalogError(Exception):
     pass
@@ -122,6 +127,13 @@ class Catalog:
 
 @lru_cache(maxsize=8)
 def load_catalog(city: str) -> Catalog:
+    # A tenant slug arrives straight from a URL, so validate its shape before
+    # it is joined onto a path: "../.." would walk out of the catalog root, and
+    # the lru_cache would then key on whatever was passed. Every tenant
+    # directory is lowercase letters, digits and hyphens (test_catalog asserts
+    # it), so anything else is not a city we have.
+    if not _SLUG_RE.fullmatch(city or ""):
+        raise CatalogError(f"Unknown city: {city}")
     city_dir = CATALOG_ROOT / city
     if not city_dir.is_dir():
         raise CatalogError(f"Unknown city: {city}")

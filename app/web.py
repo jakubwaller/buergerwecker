@@ -197,6 +197,15 @@ _RESULT_MESSAGES: dict[str, dict] = {
                "under Art. 9 GDPR. We need your explicit consent for it — "
                "please go back and tick the additional box."),
     },
+    "unknown_city": {
+        "kind": "error",
+        "de": ("Stadt unbekannt", "Diese Stadt gibt es hier nicht",
+               "Die Anmeldung nennt eine Stadt, die wir nicht anbieten. Bitte "
+               "wähle sie auf der Startseite aus."),
+        "en": ("Unknown city", "We don't cover that city",
+               "The sign-up named a city we don't offer. Please pick one from "
+               "the home page."),
+    },
     "missing_type": {
         "kind": "error",
         "de": ("Anliegen fehlt", "Bitte wähle ein Anliegen",
@@ -387,6 +396,22 @@ def _tenant_switcher(city: str | None, lang: str):
     return other_cities, sibling_offices
 
 
+def _is_tenant(city: str | None) -> bool:
+    """True only for a slug we actually serve.
+
+    The gate for every request-supplied city that ends up in a URL or a
+    subscription row. load_catalog validates the slug's shape; this also
+    requires the tenant to exist.
+    """
+    if not city:
+        return False
+    try:
+        load_catalog(city)
+    except CatalogError:
+        return False
+    return True
+
+
 def _offered_sensitive(catalog) -> list[str]:
     """Uuids of this tenant's *offered* special-category services.
 
@@ -537,6 +562,13 @@ def create_app() -> Flask:
         # the search engines fold the two together instead of ranking neither.
         city = request.args.get("city")
         if city is not None:
+            # Only ever redirect to a tenant we actually have. `city` is user
+            # input and lands in a Location header: "/" + "/evil.example.com"
+            # is "//evil.example.com", a protocol-relative URL that browsers
+            # follow off-site. Anything unknown falls through to city_page,
+            # which 404s with the picker.
+            if not _is_tenant(city):
+                return city_page(city)
             args = request.args.to_dict(flat=True)
             args.pop("city")
             query = f"?{urlencode(args)}" if args else ""
@@ -623,6 +655,11 @@ def create_app() -> Flask:
             return _result_page("rate_limited", lang, status=429)
         # 4. parse filter from form
         city = request.form.get("city", _DEFAULT_CITY)
+        # An unknown city used to be stored anyway — a subscription no poller
+        # would ever match — and since the redirect below builds "/{city}", it
+        # also let a posted form choose the Location header.
+        if not _is_tenant(city):
+            return _result_page("unknown_city", lang, status=400)
         atype = request.form.get("appointment_type", "").strip()
         if not atype:
             return _result_page("missing_type", lang, status=400)
