@@ -33,6 +33,17 @@ def _meta(html: str, prop: str) -> str | None:
     return m.group(1) if m else None
 
 
+def test_root_previews_city_neutral(client):
+    # The bare domain is the one link that gets posted to 29 different city
+    # subreddits, so it must not name a city.
+    html = client.get("/").get_data(as_text=True)
+    assert _meta(html, "og:title") == ("Bürgerwecker – nie wieder freie "
+                                       "Bürgerbüro-Termine verpassen")
+    assert "Leipzig" not in _meta(html, "og:title")
+    assert "Leipzig" not in _meta(html, "og:description")
+    assert _meta(html, "og:url") == "https://buergerwecker.de/"
+
+
 def test_home_has_the_full_preview_set(client):
     html = client.get("/").get_data(as_text=True)
     assert _meta(html, "og:type") == "website"
@@ -45,6 +56,12 @@ def test_home_has_the_full_preview_set(client):
     assert '<meta name="description" content="Wir gucken' in html
 
 
+def test_city_page_previews_that_city(client):
+    html = client.get("/?city=bonn").get_data(as_text=True)
+    assert "Bonn" in _meta(html, "og:title")
+    assert _meta(html, "og:url") == "https://buergerwecker.de/?city=bonn"
+
+
 def test_title_and_description_name_the_city(client):
     html = client.get("/?city=nuernberg").get_data(as_text=True)
     assert _meta(html, "og:title") == "Bürgerwecker – freie Termine in Nürnberg"
@@ -54,7 +71,7 @@ def test_title_and_description_name_the_city(client):
 
 
 def test_english_pages_preview_in_english(client):
-    html = client.get("/?lang=en").get_data(as_text=True)
+    html = client.get("/?city=leipzig&lang=en").get_data(as_text=True)
     assert _meta(html, "og:locale") == "en_GB"
     assert _meta(html, "og:title").startswith("Bürgerwecker – free appointment slots")
 

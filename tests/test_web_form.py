@@ -37,14 +37,27 @@ def test_healthz(client):
     assert r.status_code == 200
 
 def test_form_renders(client):
-    r = client.get("/")
+    r = client.get("/?city=leipzig")
     assert r.status_code == 200
     assert b"E-Mail" in r.data
     assert b"website" in r.data  # honeypot field name
 
+def test_root_is_the_city_picker_not_one_citys_form(client):
+    """/ lists the cities and offers no form — no city is the default."""
+    body = client.get("/").data.decode()
+    assert 'name="email"' not in body                 # no sign-up form here
+    assert "class=\"city-grid\"" in body
+    assert "city=leipzig" in body and "city=nuernberg" in body
+    assert "Wähle deine Stadt" in body
+
+def test_root_picker_speaks_english_too(client):
+    body = client.get("/?lang=en").data.decode()
+    assert "Pick your city" in body
+    assert 'name="email"' not in body
+
 def test_form_offers_de_and_en(client):
-    r_de = client.get("/?lang=de")
-    r_en = client.get("/?lang=en")
+    r_de = client.get("/?city=leipzig&lang=de")
+    r_en = client.get("/?city=leipzig&lang=en")
     assert r_de.status_code == 200 and r_en.status_code == 200
     assert b"Anmelden" in r_de.data or b"abonnieren" in r_de.data.lower()
 
@@ -84,15 +97,15 @@ def test_pending_banner_shown_after_subscribe(client):
 def test_no_pending_banner_on_bare_form(client):
     """The pending banner must only appear after subscribing, not on the
     bare form."""
-    body = client.get("/").data.decode().lower()
+    body = client.get("/?city=leipzig").data.decode().lower()
     assert "fast geschafft" not in body
-    body_en = client.get("/?lang=en").data.decode().lower()
+    body_en = client.get("/?city=leipzig&lang=en").data.decode().lower()
     assert "almost done" not in body_en
 
 def test_form_en_shows_english_service_and_location_labels(client):
     """The English form must render Leipzig's English service/location labels,
     not the German ones (regression: EN page showed a German dropdown)."""
-    body = client.get("/?lang=en").data.decode()
+    body = client.get("/?city=leipzig&lang=en").data.decode()
     assert "Applying for an identity card" in body          # EN service label
     assert "Resident Services Office Otto-Schill-Straße" in body  # EN location label
     assert "Personalausweis beantragen" not in body         # German label gone
@@ -100,7 +113,7 @@ def test_form_en_shows_english_service_and_location_labels(client):
 
 
 def test_form_de_still_shows_german_labels(client):
-    body = client.get("/?lang=de").data.decode()
+    body = client.get("/?city=leipzig&lang=de").data.decode()
     assert "Personalausweis beantragen" in body
     assert "Bürgerbüro Otto-Schill-Straße (Zentrum)" in body
     assert "Applying for an identity card" not in body
@@ -138,9 +151,9 @@ def test_subscribe_error_banner_shown(client):
     assert "try again" in r_en.data.decode().lower()
 
 def test_no_error_banner_on_bare_form(client):
-    body = client.get("/").data.decode().lower()
+    body = client.get("/?city=leipzig").data.decode().lower()
     assert "leider nicht geklappt" not in body
-    body_en = client.get("/?lang=en").data.decode().lower()
+    body_en = client.get("/?city=leipzig&lang=en").data.decode().lower()
     assert "didn't go through" not in body_en
 
 
@@ -202,8 +215,8 @@ def test_current_city_offices_get_their_own_row(client):
     assert 'class="office-switch"' not in single
 
 def test_form_has_fairness_faq_in_both_languages(client):
-    de = client.get("/?lang=de").data.decode()
-    en = client.get("/?lang=en").data.decode()
+    de = client.get("/?city=leipzig&lang=de").data.decode()
+    en = client.get("/?city=leipzig&lang=en").data.decode()
     assert "Ist das fair?" in de
     assert "Bucht das Tool Termine?" in de
     assert "Is this fair?" in en
@@ -227,7 +240,7 @@ def test_form_embeds_service_locations_map_when_present(client, tmp_path, monkey
     monkeypatch.setattr(catalog_mod, "CATALOG_ROOT", root)
     catalog_mod.load_catalog.cache_clear()
     try:
-        body = client.get("/").data.decode()
+        body = client.get("/?city=leipzig").data.decode()
     finally:
         catalog_mod.load_catalog.cache_clear()
     assert 'id="service-locations"' in body
@@ -244,7 +257,7 @@ def test_form_omits_filter_script_without_map(client, tmp_path, monkeypatch):
     monkeypatch.setattr(catalog_mod, "CATALOG_ROOT", root)
     catalog_mod.load_catalog.cache_clear()
     try:
-        body = client.get("/").data.decode()
+        body = client.get("/?city=leipzig").data.decode()
     finally:
         catalog_mod.load_catalog.cache_clear()
     assert 'id="service-locations"' not in body

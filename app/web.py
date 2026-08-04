@@ -324,8 +324,11 @@ def _office_label(cat, cname: str, lang: str, fallback: str) -> str:
     return label[len(prefix):] if label.startswith(prefix) else label
 
 
-def _tenant_switcher(city: str, lang: str):
+def _tenant_switcher(city: str | None, lang: str):
     """(other-city entries, sibling Ämter of the current city) for the form page.
+
+    `city=None` means there is no current tenant — nothing is excluded and the
+    first element is simply every city. That is what the picker at / renders.
 
     Two levels, because a city can now offer many Ämter: Münster alone has
     seven. The switcher lists one entry per *city* — a single-tenant city stays
@@ -472,12 +475,21 @@ def create_app() -> Flask:
         lang = request.args.get("lang", "de")
         if lang not in ("de", "en"):
             lang = "de"
-        city = request.args.get("city", _DEFAULT_CITY)
+        city = request.args.get("city")
         # `confirmed=pending` / `subscribe_error=mail` are set by the /subscribe
         # redirect so the form can show a "check your inbox" banner or a
         # retryable error instead of silently re-rendering.
         confirmed = request.args.get("confirmed")
         error = request.args.get("subscribe_error")
+        if city is None:
+            # No city chosen: show the picker, not one city's form. Leipzig was
+            # the default for the first 28 launches, which meant every visitor
+            # from the other 28 cities — and every link preview of the bare
+            # domain — was told about Leipzig.
+            all_cities, _ = _tenant_switcher(None, lang)
+            return render_template("cities.html", lang=lang, cities=all_cities,
+                                   confirmed=confirmed, error=error,
+                                   kofi_url=app.config["TERMINE_CONFIG"].kofi_url)
         try:
             catalog = load_catalog(city)
         except CatalogError:
@@ -592,8 +604,12 @@ def create_app() -> Flask:
         except Exception:
             log.exception("confirmation email errored for sub %s; will retry", sub_id)
             delivered = False
-        return redirect("/?confirmed=pending" if delivered
-                        else "/?confirmed=queued")
+        # Carry the city and language back, or the banner would land on the
+        # picker in German no matter who just signed up for what.
+        args = {"city": city, "confirmed": "pending" if delivered else "queued"}
+        if lang == "en":
+            args["lang"] = lang
+        return redirect(f"/?{urlencode(args)}")
 
     @app.route("/confirm/<token>")
     def confirm_route(token):

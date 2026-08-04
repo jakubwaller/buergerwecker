@@ -44,6 +44,18 @@ def test_subscribe_success_with_mocked_mail(client):
     assert "confirmed=pending" in r.headers.get("Location", "")
     send.assert_called_once()
 
+
+def test_subscribe_redirect_returns_to_the_city_and_language(client):
+    """The post-subscribe banner has to land back on the tenant that was just
+    signed up for — the root is the city picker, not anyone's form."""
+    from unittest.mock import patch
+    form = _form("bob@example.com") | {"city": "bonn", "lang": "en"}
+    with patch("app.web._send_confirmation_email", return_value=True):
+        r = client.post("/subscribe", data=form,
+                        headers={"X-Forwarded-For": "203.0.113.9"})
+    loc = r.headers["Location"]
+    assert "city=bonn" in loc and "lang=en" in loc and "confirmed=pending" in loc
+
 def test_subscribe_quota_deferral_keeps_registration_and_shows_queued(client):
     """When the confirmation email is deferred (daily quota exhausted), the
     sign-up must stay a valid pending row — NOT be discarded — and the user is

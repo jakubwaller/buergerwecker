@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% from "_parts.html" import city_grid, faq, banners %}
+{% block content %}
+  {{ banners(confirmed, error, lang) }}
+
+  <h1>
+    {% if lang == 'en' %}Never miss a free Amt appointment
+    {% else %}Nie wieder freie Bürgerbüro-Termine verpassen{% endif %}
+  </h1>
+
+  <p>
+    {% if lang == 'en' %}
+      We watch your city's booking site and email you as soon as a matching
+      slot shows up. You book it yourself, on the city's own page. It's free
+      and there's no account.
+    {% else %}
+      Wir gucken für dich auf der Terminseite deiner Stadt nach und schicken
+      dir eine E-Mail, sobald ein passender Termin frei wird. Buchen musst du
+      selbst, auf der Seite der Stadt. Kostenlos, ohne Konto.
+    {% endif %}
+  </p>
+
+  <h2 id="staedte">
+    {% if lang == 'en' %}Pick your city ({{ cities|length }})
+    {% else %}Wähle deine Stadt ({{ cities|length }}){% endif %}
+  </h2>
+  {{ city_grid(cities, lang) }}
+
+  <p class="disclaimer" style="margin-top:1.75rem">
+    {% if lang == 'en' %}
+      This website is not officially affiliated with any of these cities or
+      their authorities. We are an independent service that only informs about
+      available appointments.
+    {% else %}
+      Diese Website ist nicht offiziell mit diesen Städten oder ihren Behörden
+      verbunden. Wir sind ein unabhängiger Dienst, der ausschließlich über
+      verfügbare Termine informiert.
+    {% endif %}
+  </p>
+
+  {{ faq(lang) }}
+{% endblock %}
