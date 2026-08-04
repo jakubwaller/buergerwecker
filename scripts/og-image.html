@@ -8,8 +8,8 @@
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
       --headless --disable-gpu --hide-scrollbars \
       --force-device-scale-factor=2 --window-size=1200,630 \
-      --screenshot=/tmp/og@2x.png scripts/og-image.html
-    sips -z 630 1200 /tmp/og@2x.png --out app/static/og-image.png
+      --screenshot=/tmp/og-2x.png scripts/og-image.html
+    sips -z 630 1200 /tmp/og-2x.png --out app/static/og-image.png
 
   Colours and fonts are the ones from templates/base.html, so the card and the
   page look like the same product.
