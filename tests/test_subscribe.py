@@ -54,7 +54,8 @@ def test_subscribe_redirect_returns_to_the_city_and_language(client):
         r = client.post("/subscribe", data=form,
                         headers={"X-Forwarded-For": "203.0.113.9"})
     loc = r.headers["Location"]
-    assert "city=bonn" in loc and "lang=en" in loc and "confirmed=pending" in loc
+    assert loc.startswith("/bonn?")
+    assert "lang=en" in loc and "confirmed=pending" in loc
 
 def test_subscribe_quota_deferral_keeps_registration_and_shows_queued(client):
     """When the confirmation email is deferred (daily quota exhausted), the

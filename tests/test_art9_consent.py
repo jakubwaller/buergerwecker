@@ -132,12 +132,12 @@ def _days_until(expires_at: str) -> int:
 def test_ordinary_tenant_form_has_no_consent_box(client):
     """The extra box appears only where it is needed — asking every subscriber
     to consent to Art. 9 processing that never happens would be noise."""
-    body = client.get("/?city=leipzig").data.decode()
+    body = client.get("/leipzig").data.decode()
     assert "consent_special" not in body
 
 
 def test_sensitive_tenant_form_asks_for_explicit_consent(client):
-    body = client.get(f"/?city={SENSITIVE_CITY}").data.decode()
+    body = client.get(f"/{SENSITIVE_CITY}").data.decode()
     assert 'name="consent_special"' in body
     assert "Art. 9" in body
     # Explicit consent means opt-in: never pre-ticked.
@@ -148,7 +148,7 @@ def test_sensitive_tenant_form_asks_for_explicit_consent(client):
 
 
 def test_english_form_offers_the_consent_in_english(client):
-    body = client.get(f"/?city={SENSITIVE_CITY}&lang=en").data.decode()
+    body = client.get(f"/{SENSITIVE_CITY}?lang=en").data.decode()
     assert "I explicitly consent" in body
     assert "Art. 9(2)(a) GDPR" in body
 
@@ -364,7 +364,7 @@ def test_go_sub_link_dies_with_the_subscription(client):
 
 # ---------- referrer ----------
 
-@pytest.mark.parametrize("path", ["/", f"/?city={SENSITIVE_CITY}",
+@pytest.mark.parametrize("path", ["/", f"/{SENSITIVE_CITY}",
                                   "/datenschutz", "/impressum"])
 def test_pages_send_no_referrer(client, path):
     """The URL of a sign-up page names the Amt; without this every outbound

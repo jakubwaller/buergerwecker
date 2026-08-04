@@ -37,7 +37,7 @@ def test_healthz(client):
     assert r.status_code == 200
 
 def test_form_renders(client):
-    r = client.get("/?city=leipzig")
+    r = client.get("/leipzig")
     assert r.status_code == 200
     assert b"E-Mail" in r.data
     assert b"website" in r.data  # honeypot field name
@@ -47,7 +47,7 @@ def test_root_is_the_city_picker_not_one_citys_form(client):
     body = client.get("/").data.decode()
     assert 'name="email"' not in body                 # no sign-up form here
     assert "class=\"city-grid\"" in body
-    assert "city=leipzig" in body and "city=nuernberg" in body
+    assert 'href="/leipzig"' in body and 'href="/nuernberg"' in body
     assert "Wähle deine Stadt" in body
 
 def test_root_picker_speaks_english_too(client):
@@ -56,8 +56,8 @@ def test_root_picker_speaks_english_too(client):
     assert 'name="email"' not in body
 
 def test_form_offers_de_and_en(client):
-    r_de = client.get("/?city=leipzig&lang=de")
-    r_en = client.get("/?city=leipzig&lang=en")
+    r_de = client.get("/leipzig?lang=de")
+    r_en = client.get("/leipzig?lang=en")
     assert r_de.status_code == 200 and r_en.status_code == 200
     assert b"Anmelden" in r_de.data or b"abonnieren" in r_de.data.lower()
 
@@ -97,15 +97,15 @@ def test_pending_banner_shown_after_subscribe(client):
 def test_no_pending_banner_on_bare_form(client):
     """The pending banner must only appear after subscribing, not on the
     bare form."""
-    body = client.get("/?city=leipzig").data.decode().lower()
+    body = client.get("/leipzig").data.decode().lower()
     assert "fast geschafft" not in body
-    body_en = client.get("/?city=leipzig&lang=en").data.decode().lower()
+    body_en = client.get("/leipzig?lang=en").data.decode().lower()
     assert "almost done" not in body_en
 
 def test_form_en_shows_english_service_and_location_labels(client):
     """The English form must render Leipzig's English service/location labels,
     not the German ones (regression: EN page showed a German dropdown)."""
-    body = client.get("/?city=leipzig&lang=en").data.decode()
+    body = client.get("/leipzig?lang=en").data.decode()
     assert "Applying for an identity card" in body          # EN service label
     assert "Resident Services Office Otto-Schill-Straße" in body  # EN location label
     assert "Personalausweis beantragen" not in body         # German label gone
@@ -113,7 +113,7 @@ def test_form_en_shows_english_service_and_location_labels(client):
 
 
 def test_form_de_still_shows_german_labels(client):
-    body = client.get("/?city=leipzig&lang=de").data.decode()
+    body = client.get("/leipzig?lang=de").data.decode()
     assert "Personalausweis beantragen" in body
     assert "Bürgerbüro Otto-Schill-Straße (Zentrum)" in body
     assert "Applying for an identity card" not in body
@@ -151,29 +151,42 @@ def test_subscribe_error_banner_shown(client):
     assert "try again" in r_en.data.decode().lower()
 
 def test_no_error_banner_on_bare_form(client):
-    body = client.get("/?city=leipzig").data.decode().lower()
+    body = client.get("/leipzig").data.decode().lower()
     assert "leider nicht geklappt" not in body
-    body_en = client.get("/?city=leipzig&lang=en").data.decode().lower()
+    body_en = client.get("/leipzig?lang=en").data.decode().lower()
     assert "didn't go through" not in body_en
 
 
 def test_abh_tenant_form_renders_with_own_copy_and_cross_links(client):
-    """/?city=leipzig-abh renders the Ausländerbehörde tenant: its display.json
+    """/leipzig-abh renders the Ausländerbehörde tenant: its display.json
     heading, the Termin-Code note, its service, and a cross-link back to the
     Bürgerbüro tenant (and vice versa)."""
-    abh = client.get("/?city=leipzig-abh").data.decode()
+    abh = client.get("/leipzig-abh").data.decode()
     assert "Abhol-Termine bei der Leipziger Ausländerbehörde" in abh
     assert "Termin-Code" in abh
     assert "Ausgabe  Aufenthaltsdokument" in abh
-    assert 'city=leipzig' in abh                      # link back
+    assert 'href="/leipzig"' in abh                  # link back
     ba = client.get("/").data.decode()
-    assert "city=leipzig-abh" in ba                   # link over
+    assert 'href="/leipzig-abh"' in ba               # link over
 
 
-def test_unknown_city_redirects_to_default(client):
-    r = client.get("/?city=nope-nothing-here")
-    assert r.status_code == 302
-    assert r.headers["Location"].endswith("/")
+def test_unknown_city_is_a_404_with_the_picker(client):
+    """A retired or mistyped city must be a real 404, not a soft one that
+    redirects to a 200 — but still show the list, which is the way out."""
+    r = client.get("/nope-nothing-here")
+    assert r.status_code == 404
+    body = r.data.decode()
+    assert "nope-nothing-here" in body and "Wähle deine Stadt" in body
+
+
+def test_old_query_urls_redirect_permanently(client):
+    """/?city=x is in the press article, on Reddit and in old previews."""
+    r = client.get("/?city=nuernberg")
+    assert r.status_code == 301
+    assert r.headers["Location"] == "/nuernberg"
+    r_en = client.get("/?city=nuernberg&lang=en")
+    assert r_en.status_code == 301
+    assert r_en.headers["Location"] == "/nuernberg?lang=en"
 
 
 def test_city_switcher_groups_a_multi_tenant_city_into_one_cell(client):
@@ -181,7 +194,7 @@ def test_city_switcher_groups_a_multi_tenant_city_into_one_cell(client):
     link, a city with several Ämter becomes one cell listing them by short
     name. The long "Leipzig: …" tenant labels must not reach the grid — they
     are what forced the ellipsis that made the old flat list unreadable."""
-    body = client.get("/?city=dresden").data.decode()
+    body = client.get("/dresden").data.decode()
     assert '<details class="city-switch"' in body
     assert '>Bochum</a>' in body                       # bare name
     assert 'Bochum: ' not in body                      # not the long label
@@ -196,7 +209,7 @@ def test_city_switcher_counts_cities_not_tenants(client):
     not rows. Münster alone contributes seven tenants and one entry."""
     import re
     from app.catalog import available_cities
-    body = client.get("/?city=dresden").data.decode()
+    body = client.get("/dresden").data.decode()
     shown = int(re.search(r"Weitere Städte &amp; Ämter \((\d+)\)", body).group(1))
     assert shown < len(available_cities()) - 1
     assert body.count('<div class="city-cell">') >= 2   # Leipzig and Münster
@@ -205,18 +218,18 @@ def test_city_switcher_counts_cities_not_tenants(client):
 def test_current_city_offices_get_their_own_row(client):
     """Landing on one Amt of a multi-Amt city offers its siblings directly,
     with the current one unlinked — the second step of city → Amt."""
-    body = client.get("/?city=muenster").data.decode()
+    body = client.get("/muenster").data.decode()
     assert 'class="office-switch"' in body
     assert "Ämter in Münster:" in body
     assert '<span class="current" aria-current="page">Bürgeramt</span>' in body
-    assert 'href="/?city=muenster-standesamt"' in body
+    assert 'href="/muenster-standesamt"' in body
     # A city with one tenant has no such row, and never lists itself twice.
-    single = client.get("/?city=dresden").data.decode()
+    single = client.get("/dresden").data.decode()
     assert 'class="office-switch"' not in single
 
 def test_form_has_fairness_faq_in_both_languages(client):
-    de = client.get("/?city=leipzig&lang=de").data.decode()
-    en = client.get("/?city=leipzig&lang=en").data.decode()
+    de = client.get("/leipzig?lang=de").data.decode()
+    en = client.get("/leipzig?lang=en").data.decode()
     assert "Ist das fair?" in de
     assert "Bucht das Tool Termine?" in de
     assert "Is this fair?" in en
@@ -240,7 +253,7 @@ def test_form_embeds_service_locations_map_when_present(client, tmp_path, monkey
     monkeypatch.setattr(catalog_mod, "CATALOG_ROOT", root)
     catalog_mod.load_catalog.cache_clear()
     try:
-        body = client.get("/?city=leipzig").data.decode()
+        body = client.get("/leipzig").data.decode()
     finally:
         catalog_mod.load_catalog.cache_clear()
     assert 'id="service-locations"' in body
@@ -257,7 +270,7 @@ def test_form_omits_filter_script_without_map(client, tmp_path, monkeypatch):
     monkeypatch.setattr(catalog_mod, "CATALOG_ROOT", root)
     catalog_mod.load_catalog.cache_clear()
     try:
-        body = client.get("/?city=leipzig").data.decode()
+        body = client.get("/leipzig").data.decode()
     finally:
         catalog_mod.load_catalog.cache_clear()
     assert 'id="service-locations"' not in body

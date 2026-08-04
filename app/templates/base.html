@@ -8,6 +8,16 @@
      come from the context processor in web.py; the form page overrides title
      and description with the city it is showing. #}
   <meta name="description" content="{{ og_description }}">
+  {% if indexable %}
+    <link rel="canonical" href="{{ canonical_url }}">
+    <link rel="alternate" hreflang="de" href="{{ alternate_de }}">
+    <link rel="alternate" hreflang="en" href="{{ alternate_en }}">
+    <link rel="alternate" hreflang="x-default" href="{{ alternate_de }}">
+  {% else %}
+    {# Token and admin URLs: keep them out of the index entirely. One shared
+       /manage/<token> link in a forum post is enough to get one crawled. #}
+    <meta name="robots" content="noindex, nofollow">
+  {% endif %}
   <meta property="og:site_name" content="Bürgerwecker">
   <meta property="og:type" content="website">
   <meta property="og:title" content="{{ og_title }}">
