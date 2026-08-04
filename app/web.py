@@ -8,8 +8,10 @@ import time as time_mod
 from collections import Counter
 from datetime import time as time_cls
 from urllib.parse import urlencode
+from html import escape
 from pathlib import Path
-from flask import Flask, request, render_template, redirect, send_from_directory
+from flask import (Flask, Response, request, render_template, redirect,
+                   send_from_directory)
 from app.config import load_config
 from app.db import connect, transaction
 from app.catalog import (load_catalog, available_cities, booking_start_url,
@@ -235,19 +237,23 @@ _EMAIL_RE = re.compile(r"[^@\s<>,;\"]+@[^@\s<>,;\"]+\.[A-Za-z]{2,}")
 # The tenant a bare buergerwecker.de lands on.
 _DEFAULT_CITY = "leipzig"
 
-# Link previews. Only these paths may appear in og:url — every other route
-# carries a token in the path (/manage/<token>, /go/<slot_token>), and a
-# preview card is exactly the wrong place for one. Anything else points at the
-# site root, which is also the more useful thing to open.
-_PREVIEWABLE_PATHS = frozenset(("/", "/impressum", "/datenschutz", "/kontakt"))
+# The pages a search engine or a link preview may point at. Everything else —
+# /manage/<token>, /go/<slot_token>, /admin — carries a token or private data
+# in its URL, so those get noindex and a canonical pointing at the site root
+# instead of at themselves. Keyed on endpoint rather than path because the
+# tenant pages are now /<city> and would be indistinguishable from a token.
+_PUBLIC_ENDPOINTS = frozenset(("index", "city_page", "impressum_route",
+                               "datenschutz_route", "kontakt_route"))
 
 _OG_DEFAULT_TITLE = {
     "de": "Bürgerwecker – nie wieder freie Bürgerbüro-Termine verpassen",
     "en": "Bürgerwecker – never miss a free Amt appointment",
 }
+# City first: it is the word that distinguishes this page from the other 28,
+# and titles are truncated from the right in a result list.
 _OG_CITY_TITLE = {
-    "de": "Bürgerwecker – freie Termine in {city}",
-    "en": "Bürgerwecker – free appointment slots in {city}",
+    "de": "{city}: freie Termine beim Amt – Bürgerwecker",
+    "en": "{city}: free appointment slots – Bürgerwecker",
 }
 _OG_DEFAULT_DESC = {
     "de": ("Wir gucken für dich nach freien Terminen und schicken dir eine "
@@ -340,7 +346,7 @@ def _tenant_switcher(city: str | None, lang: str):
     None exactly when the city has several tenants and no single target.
     """
     def url_for_tenant(slug: str) -> str:
-        return f"/?city={slug}" + ("&lang=en" if lang == "en" else "")
+        return f"/{slug}" + ("?lang=en" if lang == "en" else "")
 
     tenants = []
     for other in available_cities():
@@ -429,11 +435,20 @@ def create_app() -> Flask:
         lang = request.args.get("lang")
         lang = lang if lang in ("de", "en") else "de"
         base = app.config["TERMINE_CONFIG"].public_base_url.rstrip("/")
-        path = request.path if request.path in _PREVIEWABLE_PATHS else "/"
+        indexable = request.endpoint in _PUBLIC_ENDPOINTS
+        path = request.path if indexable else "/"
+        # Each language version canonicalises to itself and declares the other
+        # as its alternate. Without the ?lang=en on the English canonical,
+        # Google folds the two into the German one and drops the English page.
+        suffix = "?lang=en" if lang == "en" else ""
         return {"switch_lang_url": switch_lang_url,
                 "og_title": _OG_DEFAULT_TITLE[lang],
                 "og_description": _OG_DEFAULT_DESC[lang],
-                "og_url": base + path,
+                "og_url": f"{base}{path}{suffix}",
+                "canonical_url": f"{base}{path}{suffix}",
+                "alternate_de": f"{base}{path}",
+                "alternate_en": f"{base}{path}?lang=en",
+                "indexable": indexable,
                 "og_image": f"{base}/og-image.png"}
 
     def _result_page(key: str, lang: str, *, status: int = 200,
@@ -463,6 +478,43 @@ def create_app() -> Flask:
         return send_from_directory(Path(__file__).resolve().parent / "static",
                                    "og-image.png", max_age=604800)
 
+    @app.route("/sitemap.xml")
+    def sitemap():
+        """Every indexable URL, both languages, cross-declared with hreflang.
+
+        Cloudflare serves this zone's robots.txt from its own managed content,
+        so this file cannot be advertised there — submit it in Search Console.
+        """
+        base = app.config["TERMINE_CONFIG"].public_base_url.rstrip("/")
+        # Skip a tenant whose catalog doesn't load — a scaffold directory with
+        # only a scraper_config.json is a 404, and a sitemap full of those is
+        # how a site teaches a crawler to distrust it.
+        slugs = []
+        for slug in sorted(available_cities()):
+            try:
+                load_catalog(slug)
+            except CatalogError:
+                continue
+            slugs.append(slug)
+        paths = ["/"] + [f"/{slug}" for slug in slugs] \
+            + ["/impressum", "/datenschutz", "/kontakt"]
+        urls = []
+        for path in paths:
+            de, en = f"{base}{path}", f"{base}{path}?lang=en"
+            for loc, alt_self in ((de, "de"), (en, "en")):
+                urls.append(
+                    f"  <url>\n    <loc>{escape(loc)}</loc>\n"
+                    f'    <xhtml:link rel="alternate" hreflang="de" href="{escape(de)}"/>\n'
+                    f'    <xhtml:link rel="alternate" hreflang="en" href="{escape(en)}"/>\n'
+                    f'    <xhtml:link rel="alternate" hreflang="x-default" href="{escape(de)}"/>\n'
+                    f"    <priority>{'0.8' if alt_self == 'de' else '0.5'}</priority>\n"
+                    f"  </url>")
+        body = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+                '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"\n'
+                '        xmlns:xhtml="http://www.w3.org/1999/xhtml">\n'
+                + "\n".join(urls) + "\n</urlset>\n")
+        return Response(body, mimetype="application/xml")
+
     @app.route("/healthz")
     def healthz():
         cfg = app.config["TERMINE_CONFIG"]
@@ -475,37 +527,57 @@ def create_app() -> Flask:
         lang = request.args.get("lang", "de")
         if lang not in ("de", "en"):
             lang = "de"
-        city = request.args.get("city")
         # `confirmed=pending` / `subscribe_error=mail` are set by the /subscribe
         # redirect so the form can show a "check your inbox" banner or a
         # retryable error instead of silently re-rendering.
         confirmed = request.args.get("confirmed")
         error = request.args.get("subscribe_error")
-        if city is None:
-            # No city chosen: show the picker, not one city's form. Leipzig was
-            # the default for the first 28 launches, which meant every visitor
-            # from the other 28 cities — and every link preview of the bare
-            # domain — was told about Leipzig.
-            all_cities, _ = _tenant_switcher(None, lang)
-            return render_template("cities.html", lang=lang, cities=all_cities,
-                                   confirmed=confirmed, error=error,
-                                   kofi_url=app.config["TERMINE_CONFIG"].kofi_url)
+        # `/?city=x` was the tenant URL until 2026-08-04 and is all over Reddit,
+        # the press article and already-sent emails. Send it to /x for good so
+        # the search engines fold the two together instead of ranking neither.
+        city = request.args.get("city")
+        if city is not None:
+            args = request.args.to_dict(flat=True)
+            args.pop("city")
+            query = f"?{urlencode(args)}" if args else ""
+            return redirect(f"/{city}{query}", code=301)
+        # No city chosen: show the picker, not one city's form. Leipzig was the
+        # default for the first 28 launches, which meant every visitor from the
+        # other 28 cities — and every link preview of the bare domain — was
+        # told about Leipzig.
+        all_cities, _ = _tenant_switcher(None, lang)
+        return render_template("cities.html", lang=lang, cities=all_cities,
+                               confirmed=confirmed, error=error,
+                               kofi_url=app.config["TERMINE_CONFIG"].kofi_url)
+
+    @app.route("/<city>")
+    def city_page(city):
+        """A tenant's sign-up form. Werkzeug ranks static rules above this one,
+        so /impressum and friends keep their own handlers."""
+        lang = request.args.get("lang", "de")
+        if lang not in ("de", "en"):
+            lang = "de"
+        confirmed = request.args.get("confirmed")
+        error = request.args.get("subscribe_error")
         try:
             catalog = load_catalog(city)
         except CatalogError:
-            # Unknown/garbage ?city= — land on the default tenant, not a 500.
-            return redirect("/?lang=en" if lang == "en" else "/")
+            # Not a tenant. 404 rather than redirect to /, so a mistyped or
+            # retired city is not a soft 404 in the index — but render the
+            # picker with it, because the useful next step is choosing a city.
+            all_cities, _ = _tenant_switcher(None, lang)
+            return render_template("cities.html", lang=lang, cities=all_cities,
+                                   unknown_city=city,
+                                   kofi_url=app.config["TERMINE_CONFIG"].kofi_url), 404
         other_cities, sibling_offices = _tenant_switcher(city, lang)
         # A shared city link should preview as that city. The Amt deliberately
         # stays out of it: for a special-category tenant the office name is the
         # sensitive fact, and it would end up on the card of whoever posts it.
         city_name = catalog.display_text("city_name", lang)
-        base = app.config["TERMINE_CONFIG"].public_base_url.rstrip("/")
-        query = f"?{urlencode({'city': city})}" if city != _DEFAULT_CITY else ""
-        og = {"og_url": f"{base}/{query}"}
+        og = {}
         if city_name:
-            og |= {"og_title": _OG_CITY_TITLE[lang].format(city=city_name),
-                   "og_description": _OG_CITY_DESC[lang].format(city=city_name)}
+            og = {"og_title": _OG_CITY_TITLE[lang].format(city=city_name),
+                  "og_description": _OG_CITY_DESC[lang].format(city=city_name)}
         return render_template("form.html",
                                lang=lang,
                                city=city,
@@ -606,10 +678,10 @@ def create_app() -> Flask:
             delivered = False
         # Carry the city and language back, or the banner would land on the
         # picker in German no matter who just signed up for what.
-        args = {"city": city, "confirmed": "pending" if delivered else "queued"}
+        args = {"confirmed": "pending" if delivered else "queued"}
         if lang == "en":
             args["lang"] = lang
-        return redirect(f"/?{urlencode(args)}")
+        return redirect(f"/{city}?{urlencode(args)}")
 
     @app.route("/confirm/<token>")
     def confirm_route(token):

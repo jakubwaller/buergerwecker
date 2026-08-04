@@ -3,6 +3,19 @@
 {% block content %}
   {{ banners(confirmed, error, lang) }}
 
+  {% if unknown_city %}
+    <div class="notice notice-error" role="alert">
+      {% if lang == 'en' %}
+        <strong>We don't have that one.</strong> There's no
+        <code>{{ unknown_city }}</code> here. Pick a city from the list.
+      {% else %}
+        <strong>Die haben wir nicht.</strong> Für
+        <code>{{ unknown_city }}</code> gibt es hier nichts. Such dir eine
+        Stadt aus der Liste aus.
+      {% endif %}
+    </div>
+  {% endif %}
+
   <h1>
     {% if lang == 'en' %}Never miss a free Amt appointment
     {% else %}Nie wieder freie Bürgerbüro-Termine verpassen{% endif %}

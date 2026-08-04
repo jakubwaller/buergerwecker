@@ -57,30 +57,30 @@ def test_home_has_the_full_preview_set(client):
 
 
 def test_city_page_previews_that_city(client):
-    html = client.get("/?city=bonn").get_data(as_text=True)
+    html = client.get("/bonn").get_data(as_text=True)
     assert "Bonn" in _meta(html, "og:title")
-    assert _meta(html, "og:url") == "https://buergerwecker.de/?city=bonn"
+    assert _meta(html, "og:url") == "https://buergerwecker.de/bonn"
 
 
 def test_title_and_description_name_the_city(client):
-    html = client.get("/?city=nuernberg").get_data(as_text=True)
-    assert _meta(html, "og:title") == "Bürgerwecker – freie Termine in Nürnberg"
+    html = client.get("/nuernberg").get_data(as_text=True)
+    assert _meta(html, "og:title") == "Nürnberg: freie Termine beim Amt – Bürgerwecker"
     assert "Nürnberg" in _meta(html, "og:description")
-    assert "<title>Bürgerwecker – freie Termine in Nürnberg</title>" in html
-    assert _meta(html, "og:url") == "https://buergerwecker.de/?city=nuernberg"
+    assert "<title>Nürnberg: freie Termine beim Amt – Bürgerwecker</title>" in html
+    assert _meta(html, "og:url") == "https://buergerwecker.de/nuernberg"
 
 
 def test_english_pages_preview_in_english(client):
-    html = client.get("/?city=leipzig&lang=en").get_data(as_text=True)
+    html = client.get("/leipzig?lang=en").get_data(as_text=True)
     assert _meta(html, "og:locale") == "en_GB"
-    assert _meta(html, "og:title").startswith("Bürgerwecker – free appointment slots")
+    assert _meta(html, "og:title").startswith("Leipzig: free appointment slots")
 
 
 def test_amt_of_a_special_category_tenant_stays_off_the_card(client):
     # The office name is the sensitive fact for these tenants, and a preview
     # card ends up in whatever chat the link was pasted into.
-    html = client.get("/?city=muenster-standesamt").get_data(as_text=True)
-    assert _meta(html, "og:title") == "Bürgerwecker – freie Termine in Münster"
+    html = client.get("/muenster-standesamt").get_data(as_text=True)
+    assert _meta(html, "og:title") == "Münster: freie Termine beim Amt – Bürgerwecker"
     assert "Standesamt" not in _meta(html, "og:title")
     assert "Standesamt" not in _meta(html, "og:description")
 
@@ -88,6 +88,68 @@ def test_amt_of_a_special_category_tenant_stays_off_the_card(client):
 def test_token_paths_never_put_their_token_in_og_url(client):
     html = client.get("/manage/not-a-real-token").get_data(as_text=True)
     assert _meta(html, "og:url") == "https://buergerwecker.de/"
+
+
+def _link(html: str, rel: str, hreflang: str | None = None) -> str | None:
+    attr = f' hreflang="{hreflang}"' if hreflang else ""
+    m = re.search(rf'<link rel="{rel}"{attr} href="([^"]*)"', html)
+    return m.group(1) if m else None
+
+
+def test_pages_canonicalise_to_themselves_per_language(client):
+    de = client.get("/nuernberg").get_data(as_text=True)
+    assert _link(de, "canonical") == "https://buergerwecker.de/nuernberg"
+    assert _link(de, "alternate", "en") == "https://buergerwecker.de/nuernberg?lang=en"
+    # The English page must NOT canonicalise to the German one, or Google
+    # folds the two and the English version stops being indexed.
+    en = client.get("/nuernberg?lang=en").get_data(as_text=True)
+    assert _link(en, "canonical") == "https://buergerwecker.de/nuernberg?lang=en"
+    assert _link(en, "alternate", "x-default") == "https://buergerwecker.de/nuernberg"
+
+
+def test_token_and_admin_pages_are_noindex(client):
+    for path in ("/manage/not-a-real-token", "/admin?token=" + "a" * 32):
+        html = client.get(path).get_data(as_text=True)
+        assert '<meta name="robots" content="noindex, nofollow">' in html, path
+        assert '<link rel="canonical"' not in html, path
+
+
+def test_public_pages_are_not_noindex(client):
+    for path in ("/", "/leipzig", "/impressum", "/datenschutz"):
+        html = client.get(path).get_data(as_text=True)
+        assert "noindex" not in html, path
+
+
+def test_sitemap_lists_every_tenant_in_both_languages(client):
+    from app.catalog import available_cities
+    r = client.get("/sitemap.xml")
+    assert r.status_code == 200
+    assert r.mimetype == "application/xml"
+    body = r.get_data(as_text=True)
+    assert "<loc>https://buergerwecker.de/</loc>" in body
+    assert "/manage/" not in body and "/admin" not in body
+    for slug in available_cities():
+        assert f"<loc>https://buergerwecker.de/{slug}</loc>" in body, slug
+        assert f"<loc>https://buergerwecker.de/{slug}?lang=en</loc>" in body, slug
+
+
+def test_every_sitemap_url_actually_resolves(client):
+    """A sitemap that lists 404s is worse than no sitemap."""
+    body = client.get("/sitemap.xml").get_data(as_text=True)
+    locs = re.findall(r"<loc>https://buergerwecker\.de(.*?)</loc>", body)
+    assert len(locs) > 50
+    for path in locs:
+        assert client.get(path.replace("&amp;", "&")).status_code == 200, path
+
+
+def test_no_tenant_slug_shadows_a_real_route(client):
+    """A city called 'kontakt' would be unreachable: Werkzeug matches the
+    static rule first, so the tenant would silently never render."""
+    from app.catalog import available_cities
+    reserved = {"admin", "impressum", "datenschutz", "kontakt", "subscribe",
+                "healthz", "sitemap.xml", "og-image.png", "confirm",
+                "unsubscribe", "manage", "renew", "go", "static"}
+    assert reserved.isdisjoint(set(available_cities()))
 
 
 def test_og_image_is_served(client):
