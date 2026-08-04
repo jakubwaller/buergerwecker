@@ -8,7 +8,8 @@ import time as time_mod
 from collections import Counter
 from datetime import time as time_cls
 from urllib.parse import urlencode
-from flask import Flask, request, render_template, redirect
+from pathlib import Path
+from flask import Flask, request, render_template, redirect, send_from_directory
 from app.config import load_config
 from app.db import connect, transaction
 from app.catalog import (load_catalog, available_cities, booking_start_url,
@@ -231,6 +232,39 @@ _CONTACT_MESSAGE_MAX = 5000
 _EMAIL_RE = re.compile(r"[^@\s<>,;\"]+@[^@\s<>,;\"]+\.[A-Za-z]{2,}")
 
 
+# The tenant a bare buergerwecker.de lands on.
+_DEFAULT_CITY = "leipzig"
+
+# Link previews. Only these paths may appear in og:url — every other route
+# carries a token in the path (/manage/<token>, /go/<slot_token>), and a
+# preview card is exactly the wrong place for one. Anything else points at the
+# site root, which is also the more useful thing to open.
+_PREVIEWABLE_PATHS = frozenset(("/", "/impressum", "/datenschutz", "/kontakt"))
+
+_OG_DEFAULT_TITLE = {
+    "de": "Bürgerwecker – nie wieder freie Bürgerbüro-Termine verpassen",
+    "en": "Bürgerwecker – never miss a free Amt appointment",
+}
+_OG_CITY_TITLE = {
+    "de": "Bürgerwecker – freie Termine in {city}",
+    "en": "Bürgerwecker – free appointment slots in {city}",
+}
+_OG_DEFAULT_DESC = {
+    "de": ("Wir gucken für dich nach freien Terminen und schicken dir eine "
+           "E-Mail, sobald einer frei wird. Kostenlos, ohne Konto. Buchen "
+           "musst du selbst."),
+    "en": ("We watch the city's booking site for you and send an email as "
+           "soon as a slot opens up. Free, no account. You book it yourself."),
+}
+_OG_CITY_DESC = {
+    "de": ("Wir gucken für dich nach freien Terminen in {city} und schicken "
+           "dir eine E-Mail, sobald einer frei wird. Kostenlos, ohne Konto. "
+           "Buchen musst du selbst."),
+    "en": ("We watch {city}'s booking site for you and send an email as soon "
+           "as a slot opens up. Free, no account. You book it yourself."),
+}
+
+
 def _parse_hhmm(s: str) -> time_cls:
     h, m = s.split(":")
     return time_cls(int(h), int(m))
@@ -384,7 +418,20 @@ def create_app() -> Flask:
             args = request.args.to_dict(flat=True)
             args["lang"] = target_lang
             return f"{request.path}?{urlencode(args)}"
-        return {"switch_lang_url": switch_lang_url}
+
+        # Defaults for the link-preview tags in base.html. A route that knows
+        # better — the form page knows its city — passes og_title/og_description
+        # to render_template, and those win: Flask re-applies the explicit
+        # context after the context processors.
+        lang = request.args.get("lang")
+        lang = lang if lang in ("de", "en") else "de"
+        base = app.config["TERMINE_CONFIG"].public_base_url.rstrip("/")
+        path = request.path if request.path in _PREVIEWABLE_PATHS else "/"
+        return {"switch_lang_url": switch_lang_url,
+                "og_title": _OG_DEFAULT_TITLE[lang],
+                "og_description": _OG_DEFAULT_DESC[lang],
+                "og_url": base + path,
+                "og_image": f"{base}/og-image.png"}
 
     def _result_page(key: str, lang: str, *, status: int = 200,
                      action_url: str | None = None,
@@ -406,6 +453,13 @@ def create_app() -> Flask:
             kofi_url=app.config["TERMINE_CONFIG"].kofi_url,
         ), status
 
+    @app.route("/og-image.png")
+    def og_image_route():
+        # The one static file the app serves (Flask's own static folder stays
+        # off). Crawlers refetch it rarely, so cache it for a week.
+        return send_from_directory(Path(__file__).resolve().parent / "static",
+                                   "og-image.png", max_age=604800)
+
     @app.route("/healthz")
     def healthz():
         cfg = app.config["TERMINE_CONFIG"]
@@ -418,7 +472,7 @@ def create_app() -> Flask:
         lang = request.args.get("lang", "de")
         if lang not in ("de", "en"):
             lang = "de"
-        city = request.args.get("city", "leipzig")
+        city = request.args.get("city", _DEFAULT_CITY)
         # `confirmed=pending` / `subscribe_error=mail` are set by the /subscribe
         # redirect so the form can show a "check your inbox" banner or a
         # retryable error instead of silently re-rendering.
@@ -430,13 +484,24 @@ def create_app() -> Flask:
             # Unknown/garbage ?city= — land on the default tenant, not a 500.
             return redirect("/?lang=en" if lang == "en" else "/")
         other_cities, sibling_offices = _tenant_switcher(city, lang)
+        # A shared city link should preview as that city. The Amt deliberately
+        # stays out of it: for a special-category tenant the office name is the
+        # sensitive fact, and it would end up on the card of whoever posts it.
+        city_name = catalog.display_text("city_name", lang)
+        base = app.config["TERMINE_CONFIG"].public_base_url.rstrip("/")
+        query = f"?{urlencode({'city': city})}" if city != _DEFAULT_CITY else ""
+        og = {"og_url": f"{base}/{query}"}
+        if city_name:
+            og |= {"og_title": _OG_CITY_TITLE[lang].format(city=city_name),
+                   "og_description": _OG_CITY_DESC[lang].format(city=city_name)}
         return render_template("form.html",
                                lang=lang,
                                city=city,
+                               **og,
                                confirmed=confirmed,
                                error=error,
                                heading=catalog.display_text("heading", lang),
-                               city_name=catalog.display_text("city_name", lang),
+                               city_name=city_name,
                                note=catalog.display_text("note", lang),
                                other_cities=other_cities,
                                sibling_offices=sibling_offices,
@@ -473,7 +538,7 @@ def create_app() -> Flask:
                                    cfg.subscribe_ratelimit_per_email_per_day):
             return _result_page("rate_limited", lang, status=429)
         # 4. parse filter from form
-        city = request.form.get("city", "leipzig")
+        city = request.form.get("city", _DEFAULT_CITY)
         atype = request.form.get("appointment_type", "").strip()
         if not atype:
             return _result_page("missing_type", lang, status=400)
