@@ -285,6 +285,10 @@
     /* A city with several Ämter keeps one cell and lists them inside it, so
        the grid stays one-entry-per-city and no label has to ellipsise. */
     .city-cell { white-space: normal; }
+    /* …and it takes its own full-width row. In one grid column Münster's seven
+       Ämter stack vertically and leave a hole beside them the height of the
+       whole cell. Across the row they flow horizontally and the hole is gone. */
+    .city-grid > .city-cell { grid-column: 1 / -1; }
     .city-cell-name { display: block; color: var(--text); font-weight: 500; }
     .city-cell-offices {
       display: flex;

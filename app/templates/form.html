@@ -1,53 +1,8 @@
 {% extends "base.html" %}
 {% from "_fields.html" import max_days_select, special_consent %}
+{% from "_parts.html" import city_grid, faq, banners %}
 {% block content %}
-  {% if confirmed == 'pending' %}
-    <div class="notice notice-success" role="status">
-      {% if lang == 'en' %}
-        <strong>Almost done!</strong> We've sent a confirmation email to your
-        inbox. Please open it and click the confirmation link to activate your
-        subscription — you won't receive any appointment alerts until you do.
-        (Check your spam folder if it hasn't arrived.)
-      {% else %}
-        <strong>Fast geschafft!</strong> Wir haben dir eine Bestätigungs-E-Mail
-        geschickt. Bitte öffne dein Postfach und klicke auf den
-        Bestätigungslink, um dein Abonnement zu aktivieren — vorher erhältst du
-        keine Termin-Benachrichtigungen. (Schau ggf. im Spam-Ordner nach.)
-      {% endif %}
-    </div>
-  {% endif %}
-
-  {% if confirmed == 'queued' %}
-    <div class="notice notice-success" role="status">
-      {% if lang == 'en' %}
-        <strong>You're registered!</strong> Due to high demand we've hit
-        today's email limit, so your confirmation email will arrive a little
-        later — possibly not until tomorrow. Your sign-up is saved and the
-        email will be sent automatically; there's no need to register again.
-        (Please check your spam folder too.)
-      {% else %}
-        <strong>Du bist registriert!</strong> Wegen hoher Nachfrage ist das
-        heutige E-Mail-Limit erreicht. Deine Bestätigungs-E-Mail kommt daher
-        etwas später — möglicherweise erst morgen. Deine Anmeldung ist
-        gespeichert und die E-Mail wird automatisch verschickt; du musst dich
-        nicht erneut anmelden. (Schau bitte auch im Spam-Ordner nach.)
-      {% endif %}
-    </div>
-  {% endif %}
-
-  {% if error == 'mail' %}
-    <div class="notice notice-error" role="alert">
-      {% if lang == 'en' %}
-        <strong>Hmm, that didn't go through.</strong> We couldn't send the
-        confirmation email just now. Please check your address and try again in
-        a few minutes.
-      {% else %}
-        <strong>Das hat leider nicht geklappt.</strong> Wir konnten gerade
-        keine Bestätigungs-E-Mail senden. Bitte überprüfe deine Adresse und
-        versuche es in ein paar Minuten erneut.
-      {% endif %}
-    </div>
-  {% endif %}
+  {{ banners(confirmed, error, lang) }}
 
   <h1>
     {% if heading %}{{ heading }}
@@ -73,22 +28,7 @@
         {% if lang == 'en' %}Other cities &amp; offices ({{ other_cities|length }})
         {% else %}Weitere Städte &amp; Ämter ({{ other_cities|length }}){% endif %}
       </summary>
-      <nav class="city-grid" aria-label="{% if lang == 'en' %}Switch city{% else %}Stadt wechseln{% endif %}">
-        {% for cname, url, offices in other_cities %}
-          {% if url %}
-            <a href="{{ url }}" title="{{ cname }}">{{ cname }}</a>
-          {% else %}
-            <div class="city-cell">
-              <span class="city-cell-name">{{ cname }}</span>
-              <span class="city-cell-offices">
-                {% for olabel, ourl in offices %}
-                  <a href="{{ ourl }}" title="{{ cname }}: {{ olabel }}">{{ olabel }}</a>
-                {% endfor %}
-              </span>
-            </div>
-          {% endif %}
-        {% endfor %}
-      </nav>
+      {{ city_grid(other_cities, lang) }}
     </details>
   {% endif %}
 
@@ -194,45 +134,5 @@
     </script>
   {% endif %}
 
-  <section class="faq">
-    <h2 id="fair">FAQ</h2>
-    {% if lang == 'en' %}
-      <h3>Does this book appointments?</h3>
-      <p>
-        No. It checks and sends you an email. Booking is on you, on the
-        city's own site.
-      </p>
-      <h3>Is this fair?</h3>
-      <p>
-        Fairer than the status quo. Without it, appointments go to whoever
-        hits F5 all day or pays a slot reseller. This is free and the
-        <a href="https://github.com/jakubwaller/buergerwecker">code is
-        public</a> (AGPLv3).
-      </p>
-      <h3>Do the cities know?</h3>
-      <p>
-        Yes, all of them got an email. Polling is deliberately slow and
-        subscriptions expire after 90 days.
-      </p>
-    {% else %}
-      <h3>Bucht das Tool Termine?</h3>
-      <p>
-        Nein. Es schaut nach und schickt dir eine Mail. Buchen musst du
-        selbst, auf der Seite der Stadt.
-      </p>
-      <h3>Ist das fair?</h3>
-      <p>
-        Fairer als der Status quo. Ohne das Tool bekommt die Termine, wer
-        den ganzen Tag F5 drückt oder einen Termin-Weiterverkäufer bezahlt.
-        Das hier ist kostenlos und der
-        <a href="https://github.com/jakubwaller/buergerwecker">Code ist
-        öffentlich</a> (AGPLv3).
-      </p>
-      <h3>Wissen die Städte davon?</h3>
-      <p>
-        Ja, alle wurden angeschrieben. Die Abfrage-Intervalle sind bewusst
-        zurückhaltend und Anmeldungen laufen nach 90 Tagen automatisch aus.
-      </p>
-    {% endif %}
-  </section>
+  {{ faq(lang) }}
 {% endblock %}
