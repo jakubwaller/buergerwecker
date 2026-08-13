@@ -141,29 +141,28 @@ def test_excluded_services_are_never_offered(tmp_path, monkeypatch):
         catalog_mod.load_catalog.cache_clear()
 
 
-def test_shipped_muenster_standesamt_excludes_the_sbgg_anliegen():
-    """The two Selbstbestimmungsgesetz Anliegen are Art. 9 GDPR data and wait
-    for the explicit-consent flow — they must not be subscribable today."""
+def test_shipped_muenster_standesamt_offers_only_the_approved_sbgg_anliegen():
+    """Stadt Münster's ruling of 2026-08-13: the Anmeldung (2471) may be
+    listed, the Abgabe (2472) must not — it carries special statutory
+    deadlines, per the Standesamt. 2472's exclusion is a decision by the
+    city, not a pending approval."""
     from app.catalog import load_catalog
     cat = load_catalog("muenster-standesamt")
-    assert set(cat.scraper_config["exclude_services"]) == {"2471", "2472"}
-    assert "2471" not in cat.appointment_types.values()
+    assert set(cat.scraper_config["exclude_services"]) == {"2472"}
+    assert "2471" in cat.appointment_types.values()
     assert "2472" not in cat.appointment_types.values()
-    assert not any("Selbstbestimmungsgesetz" in name
-                   for name in cat.appointment_types)
 
 
 def test_shipped_muenster_standesamt_declares_the_sbgg_anliegen_sensitive():
-    """Both ids carry the Art. 9 marking as well as the exclusion. Offering
-    them is then one edit — deleting them from `exclude_services` — which is
-    what happens once the wording is agreed with Münster's data-protection
-    officer; the consent flow itself is already in place."""
+    """Both ids carry the Art. 9 marking — 2472 too, so a subscription from
+    before its withdrawal keeps its redaction, and so does 2471's consent
+    box on the form."""
     from app.catalog import load_catalog
     cat = load_catalog("muenster-standesamt")
     assert cat.sensitive_services == frozenset({"2471", "2472"})
     assert cat.is_sensitive("2471") and cat.is_sensitive("2472")
-    # Excluded today, so nothing on the form needs the extra consent box yet.
-    assert not cat.has_sensitive
+    # 2471 is offered, so the form needs the extra consent box.
+    assert cat.has_sensitive
 
 
 def test_sensitive_services_survive_a_service_being_withdrawn(tmp_path,
@@ -194,10 +193,11 @@ def test_sensitive_services_survive_a_service_being_withdrawn(tmp_path,
         catalog_mod.load_catalog.cache_clear()
 
 
-def test_no_shipped_tenant_offers_a_sensitive_service_yet():
-    """Guards the promise made to Stadt Münster: the special-category Anliegen
-    go live only after the wording has been agreed with their data-protection
-    officer. Flipping this test is part of that change, not a side effect."""
+def test_only_city_approved_tenants_offer_a_sensitive_service():
+    """Guards the promise made to the cities: a special-category Anliegen goes
+    live only after the city has agreed. Münster approved the Standesamt's
+    SBGG-Anmeldung on 2026-08-13; every other tenant (including the still
+    unbuilt Gesundheitsamt) needs its own approval before joining this list."""
     from app.catalog import available_cities, load_catalog, CatalogError
     offering = []
     for city in available_cities():
@@ -206,4 +206,4 @@ def test_no_shipped_tenant_offers_a_sensitive_service_yet():
                 offering.append(city)
         except CatalogError:
             continue
-    assert offering == []
+    assert offering == ["muenster-standesamt"]

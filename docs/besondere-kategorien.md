@@ -4,7 +4,7 @@ Kurzbeschreibung der Verarbeitung für Anliegen, deren bloße Auswahl eine
 besondere Kategorie personenbezogener Daten offenbart. Gedacht als Grundlage
 für die Abstimmung mit den Datenschutzbeauftragten der beteiligten Städte.
 
-Stand: 2026-08-03. Verantwortlicher: siehe Impressum auf
+Stand: 2026-08-13. Verantwortlicher: siehe Impressum auf
 <https://buergerwecker.de/impressum>.
 
 ## Worum es geht
@@ -81,6 +81,13 @@ Die technische Umsetzung ist vollständig vorhanden. Freigeschaltet werden die
 betroffenen Anliegen erst nach Abstimmung mit dem Datenschutz der jeweiligen
 Stadt; bis dahin sind sie im Katalog als nicht buchbar hinterlegt
 (`exclude_services`) und erscheinen nicht im Formular.
+
+Ergebnis der Abstimmung mit der Stadt Münster (2026-08-13): die „Anmeldung zur
+Abgabe einer Erklärung nach dem Selbstbestimmungsgesetz" wird angeboten, mit
+allen oben beschriebenen Maßnahmen. Die „Abgabe der Erklärung nach dem
+Selbstbestimmungsgesetz (SBGG)" bleibt auf Wunsch des Standesamts dauerhaft
+ausgenommen, da sie mit besonderen Fristen verbunden ist. Die STI-Beratung des
+Gesundheitsamts ist weiterhin nicht angebunden.
 
 Der Quellcode ist offen: <https://github.com/jakubwaller/buergerwecker>
 (AGPLv3).
