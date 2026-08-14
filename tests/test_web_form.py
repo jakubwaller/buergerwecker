@@ -196,12 +196,17 @@ def test_city_switcher_groups_a_multi_tenant_city_into_one_cell(client):
     are what forced the ellipsis that made the old flat list unreadable."""
     body = client.get("/dresden").data.decode()
     assert '<details class="city-switch"' in body
-    assert '>Bochum</a>' in body                       # bare name
-    assert 'Bochum: ' not in body                      # not the long label
+    assert '>Bonn</a>' in body                         # bare name
+    assert 'Bonn: ' not in body                        # not the long label
     assert '<div class="city-cell">' in body
     assert 'Leipzig: Bürgerbüro-Termine' not in body   # long label stays out
     assert '>Bürgerbüro</a>' in body                   # short office names
     assert '>Ausländerbehörde</a>' in body
+    # Bochum grew from one tenant to three (Straßenverkehrsamt request), so it
+    # is a cell now, not a bare link.
+    assert '>Bochum</a>' not in body
+    assert '>Kfz-Zulassungsstelle</a>' in body
+    assert '>Führerscheinstelle</a>' in body
 
 
 def test_city_switcher_counts_cities_not_tenants(client):

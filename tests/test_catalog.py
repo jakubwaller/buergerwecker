@@ -207,3 +207,24 @@ def test_only_city_approved_tenants_offer_a_sensitive_service():
         except CatalogError:
             continue
     assert offering == ["muenster-standesamt"]
+
+
+def test_shipped_bochum_kfz_tenants_protect_the_shared_host():
+    """The Straßenverkehrsamt tenants share termine.bochum.de with a
+    Bürgerbüro that already 429s at 180s, so both must poll at the slow
+    cadence; and the Führerscheinstelle's 15 Anliegen at one office sit a
+    single upstream addition away from the global cap of 16, so it carries
+    its own headroom (the per-type "all" collapse frees nothing there)."""
+    from urllib.parse import urlsplit
+    from app.catalog import load_catalog
+    buergerbuero_host = urlsplit(
+        load_catalog("bochum").scraper_config["base_url"]).netloc
+    for slug in ("bochum-kfz", "bochum-fuehrerschein"):
+        cat = load_catalog(slug)
+        scfg = cat.scraper_config
+        assert urlsplit(scfg["base_url"]).netloc == buergerbuero_host
+        assert scfg["poll_interval_seconds"] >= 300
+        assert "locations" not in scfg["steps"]   # single-office flow
+        assert len(cat.locations) == 1
+    fs = load_catalog("bochum-fuehrerschein")
+    assert fs.scraper_config["max_plans"] > len(fs.appointment_types)

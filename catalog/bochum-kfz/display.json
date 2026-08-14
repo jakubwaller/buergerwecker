@@ -1,0 +1,18 @@
+{
+  "city_name": {
+    "de": "Bochum",
+    "en": "Bochum"
+  },
+  "office": {
+    "de": "Kfz-Zulassungsstelle",
+    "en": "Vehicle registration office"
+  },
+  "label": {
+    "de": "Bochum: Kfz-Zulassungsstelle (An-, Um- und Abmeldung u. a.)",
+    "en": "Bochum: vehicle registration (registration, deregistration, …)"
+  },
+  "heading": {
+    "de": "Nie wieder freie Termine bei der Kfz-Zulassungsstelle Bochum verpassen",
+    "en": "Never miss a free slot at Bochum's vehicle registration office"
+  }
+}
