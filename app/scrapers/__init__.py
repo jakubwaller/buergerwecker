@@ -29,6 +29,12 @@ _REGISTRY: dict[str, ModuleType] = {
     "leipzig-abh": smartcjm,
     "dresden": tevis,
     "bochum": smartcjm,
+    # Bochum Straßenverkehrsamt (today the Büro für Kfz-Angelegenheiten),
+    # added 2026-08 on an r/bochum request: two calendars on the same
+    # Smart-CJM host as the Bürgerbüro, Mandant /m/kfz-angelegenheiten/,
+    # no locations step (one office each).
+    "bochum-fuehrerschein": smartcjm,
+    "bochum-kfz": smartcjm,
     "bonn": smartcjm,
     # TEVIS wave 2026-07 (vendor survey Tier 1): per-city config lives in
     # catalog/<slug>/; all share the Dresden scraper.

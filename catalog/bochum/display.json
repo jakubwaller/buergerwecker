@@ -3,6 +3,10 @@
     "de": "Bochum",
     "en": "Bochum"
   },
+  "office": {
+    "de": "Bürgerbüro",
+    "en": "Citizens' office"
+  },
   "label": {
     "de": "Bochum: Bürgerbüro-Termine (Anmeldung, Ausweise u. a.)",
     "en": "Bochum: citizen office appointments (registration, ID cards, …)"

@@ -1,0 +1,7 @@
+{
+  "vendor": "smartcjm",
+  "base_url": "https://termine.bochum.de/m/kfz-angelegenheiten/extern/calendar",
+  "uid": "bffa082e-0640-40b4-ad60-4a98355850ff",
+  "steps": "servicessearch_resultsbookingfinish",
+  "poll_interval_seconds": 300
+}
