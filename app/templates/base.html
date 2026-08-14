@@ -8,6 +8,9 @@
      come from the context processor in web.py; the form page overrides title
      and description with the city it is showing. #}
   <meta name="description" content="{{ og_description }}">
+  {# Mastodon link verification: the profile lists buergerwecker.de, this is
+     the required backlink. #}
+  <link rel="me" href="https://hostux.social/@aloissiola">
   {% if indexable %}
     <link rel="canonical" href="{{ canonical_url }}">
     <link rel="alternate" hreflang="de" href="{{ alternate_de }}">
