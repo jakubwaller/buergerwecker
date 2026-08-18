@@ -35,11 +35,10 @@ pickup slot is free.
 
 ## How it works
 
-A Raspberry Pi in Germany runs a small Docker Compose project: a Caddy
-reverse proxy, a Flask web app for subscriptions, a Python poller that
-checks the cities' booking sites every one to three minutes (depending on
-the city), and a backup
-container that snapshots the SQLite database to an external HDD.
+A small Docker Compose project on a server in Germany: a Caddy reverse
+proxy, a Flask web app for subscriptions, a Python poller that checks the
+cities' booking sites every one to three minutes (depending on the city),
+and a backup container that snapshots the SQLite database daily.
 
 ## Not affiliated with any city
 
