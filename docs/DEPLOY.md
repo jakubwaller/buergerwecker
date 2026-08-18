@@ -2,10 +2,16 @@
 
 ## Prerequisites
 
-- Raspberry Pi running Docker + Docker Compose.
-- Web domain `buergerwecker.de` (or replacement) pointing to the Pi's
-  public IP. Ports 80 and 443 forwarded to the Pi.
-- USB HDD mounted at `/mnt/backup` (auto-mount via `/etc/fstab`).
+- A Linux host running Docker + Docker Compose. The live deployment is a
+  netcup VPS; anything always-on works.
+- Web domain `buergerwecker.de` (or replacement) resolving to that host. The
+  live records are proxied through Cloudflare. On a home server you would also
+  have to forward ports 80 and 443 on the router; on a VPS they are simply open.
+- A backup directory at `/mnt/backup`. **On the VPS this is a plain directory on
+  the root filesystem, so the snapshots sit on the same disk as the live
+  database** — it protects against a bad write or a bad deploy, not against
+  losing the disk. The off-host copy is what covers that; see "Off-host backup"
+  below. (On the Pi this used to be a USB HDD auto-mounted via `/etc/fstab`.)
 - Mailjet and Resend accounts with verified sender domain.
 - SPF / DKIM / DMARC records configured on `buergerwecker.de` and the domain
   validated in **both** Mailjet and Resend before any send — an unverified
@@ -15,14 +21,15 @@
 
 ## First deploy
 
-1. Clone the repo to the Pi.
+1. Clone the repo to the host.
 2. Copy `.env.example` to `.env` and fill in real secrets:
    - 32-byte `TOKEN_SECRET_PRIMARY` and `ADMIN_TOKEN` (e.g., `openssl rand -hex 32`).
    - Mailjet and Resend API keys.
    - Review the email-delivery settings (`EMAIL_PROVIDER_ORDER`,
      `RESEND_DAILY_QUOTA`, `MAILJET_HOURLY_QUOTA`, `MAILJET_DAILY_QUOTA`,
      `QUOTA_ALERT_THRESHOLD_PCT`) — see "Email delivery & quotas" below.
-3. Verify the USB HDD is mounted at `/mnt/backup`.
+3. Verify `/mnt/backup` exists (and, where it is a separate device, that it is
+   mounted) — the compose backup service bind-mounts it.
 4. `docker compose up -d`.
 5. Watch logs: `docker compose logs -f`.
 6. Verify healthz: `curl https://buergerwecker.de/healthz`.
@@ -93,6 +100,11 @@ python scripts/loadtest.py --subs 50000    # single size
 
 ## SMART monitoring (host-side systemd timer)
 
+Only for a host with a real disk to read — this was set up on the Raspberry Pi
+and is **not installed on the VPS**, whose virtual disk exposes nothing useful
+to `smartctl`. Kept here for whenever the project runs on physical hardware
+again.
+
 Install `smartmontools`. Add `/etc/systemd/system/termine-smart.service`:
 
 ```
@@ -120,19 +132,22 @@ WantedBy=timers.target
 
 `systemctl enable --now termine-smart.timer`.
 
-## Off-Pi backup (secondary)
+## Off-host backup (secondary)
 
-From your laptop:
+`/mnt/backup` shares a disk with the live database, so a copy has to leave the
+host. A scheduled pull from a workstation does it — daily, over scp, keeping
+every snapshot it has ever fetched:
 
 ```
-rsync -av jakub@pi:/mnt/backup/ ~/termine-backups/
+scp 'vps:/mnt/backup/app-*.db.gz' <local-snapshot-dir>/
 ```
 
-Cron weekly.
+Never let the puller delete: the point is to survive a deletion on the server,
+which a mirroring sync would faithfully replicate.
 
 ## IP-block runbook
 
-If `terminvereinbarung.leipzig.de` starts returning 403 for the Pi's IP:
+If `terminvereinbarung.leipzig.de` starts returning 403 for the host's IP:
 
 1. Stop the poller: `docker compose stop poller`.
 2. Email the city: `verwaltung@leipzig.de`. Subject: "Anfrage zu

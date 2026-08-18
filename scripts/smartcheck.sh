@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Runs on the Pi host (NOT inside Docker) via a systemd timer.
+# Runs on the host (NOT inside Docker) via a systemd timer, and only where
+# there is a physical disk to read — see docs/DEPLOY.md.
 # Appends SMART output to a file under the bind-mounted backup volume,
 # where the backup container can pick it up and email it.
 set -euo pipefail
