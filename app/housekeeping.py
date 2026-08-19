@@ -21,6 +21,7 @@ def run_once(conn: sqlite3.Connection) -> None:
     _send_heartbeats(conn, cfg, milestone_days=60, milestone_col="heartbeat_60d_at")
     _prune_seen_slots(conn)
     _prune_idempotency(conn)
+    _prune_email_failures(conn)
     _prune_slots_cache(conn)
     _prune_availability(conn)
     _check_parser_canary(conn, cfg)
@@ -124,6 +125,20 @@ def _prune_seen_slots(conn):
 
 def _prune_idempotency(conn):
     conn.execute("DELETE FROM sent_idempotency WHERE sent_at < datetime('now','-14 days')")
+
+def _prune_email_failures(conn):
+    """The bounce counter is keyed by the address itself, so it has to age out
+    on the same clock the address does. `_purge_hard` above deletes a
+    subscription 30 days after it was deleted; without this, its row here
+    outlived it forever — a bare e-mail address with nothing left to be
+    attached to, still dumped into every nightly backup, against a privacy
+    policy that promises final removal 30 days after deletion.
+
+    Depends on `_purge_hard` having run first in `run_once`. NOT EXISTS rather
+    than NOT IN: the latter deletes nothing at all if any subscription e-mail
+    is ever NULL."""
+    conn.execute("DELETE FROM email_failures WHERE NOT EXISTS ("
+                 "SELECT 1 FROM subscriptions s WHERE s.email = email_failures.email)")
 
 def _prune_slots_cache(conn):
     # Slots are short-lived in the upstream system; 14 days is generous.

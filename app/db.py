@@ -65,7 +65,9 @@ CREATE TABLE IF NOT EXISTS email_deferral_counts (
 -- rejects it (HTTP 400/422) is refusing the recipient, not failing itself; once
 -- an address collects MAX_SEND_FAILURES_PER_ADDRESS of those we stop attempting
 -- it, so one typo'd sign-up isn't retried every cycle forever. Cleared on any
--- successful delivery to that address.
+-- successful delivery to that address, and by housekeeping once no subscription
+-- carries the address any more — the row is a bare e-mail address, so it may not
+-- outlive the subscription that justified storing it.
 CREATE TABLE IF NOT EXISTS email_failures (
   email          TEXT PRIMARY KEY,
   failures       INTEGER NOT NULL DEFAULT 0,
