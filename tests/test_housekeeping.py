@@ -100,6 +100,37 @@ def test_old_deleted_rows_hard_purged(db):
     row = db.execute("SELECT id FROM subscriptions WHERE id=?", (sid,)).fetchone()
     assert row is None
 
+def test_bounce_counter_dies_with_its_subscription(db):
+    """The hard purge takes the subscription; the bounce row keyed on the same
+    address must go with it, or a bare e-mail address outlives the 30-day
+    promise in datenschutz.html and keeps landing in every nightly dump."""
+    sid = insert_pending(db, email="bounced@example.com", city="leipzig",
+                         language="de", filter_=_f(), ttl_days=90)
+    db.execute("INSERT INTO email_failures (email, failures, last_failed_at) "
+               "VALUES ('bounced@example.com', 3, CURRENT_TIMESTAMP)")
+    db.execute("UPDATE subscriptions SET deleted_at=datetime('now','-31 days') WHERE id=?",
+               (sid,))
+    with patch("app.mail.send"):
+        run_once(db)
+    assert db.execute("SELECT 1 FROM email_failures "
+                      "WHERE email='bounced@example.com'").fetchone() is None
+
+
+def test_bounce_counter_survives_while_someone_still_subscribes(db):
+    """Suppression must not be reset just because housekeeping ran: the address
+    is still on a live subscription, so we still owe it the cap."""
+    sid = insert_pending(db, email="typo@example.com", city="leipzig",
+                         language="de", filter_=_f(), ttl_days=90)
+    confirm(db, sid)
+    db.execute("INSERT INTO email_failures (email, failures, last_failed_at) "
+               "VALUES ('typo@example.com', 3, datetime('now','-200 days'))")
+    with patch("app.mail.send"):
+        run_once(db)
+    row = db.execute("SELECT failures FROM email_failures "
+                     "WHERE email='typo@example.com'").fetchone()
+    assert row is not None and row["failures"] == 3
+
+
 def test_renewal_reminder_sent_in_window(db):
     sid = insert_pending(db, email="a@x.com", city="leipzig", language="de",
                          filter_=_f(), ttl_days=90)
