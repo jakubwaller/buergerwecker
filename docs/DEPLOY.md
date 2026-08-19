@@ -53,6 +53,19 @@ failing:
   Mailjet lifts the throttle, raise these caps — not the provider order** (e.g.
   bump `MAILJET_HOURLY_QUOTA`); the daily cap then binds. Raise all of them
   after upgrading to a paid plan.
+- **When the whole pool is spent, digests are deferred, not dropped.** The
+  leftovers have their idempotency claims released and their slots left
+  unrecorded, so the next cycle re-sends them with a fresh `cycle_id`. Two
+  consequences worth knowing: a slot taken in the meantime is simply gone (the
+  digest never goes out, correctly), and the deferred count is written to
+  `email_deferral_counts` per UTC day — visible on `/admin`, in the ops summary,
+  and in the alert mail. That counter is the **only** record that a subscriber
+  was not told about a slot; nothing else persists it.
+- **The deferred tail rotates.** Batches are filled in list order, so without
+  care the same subscribers land at the back of every saturated cycle.
+  `flush_digests` sorts by `last_notified_at` (never-notified first), and a
+  deferred digest never stamps that column — so whoever was passed over leads
+  the next cycle.
 - **Sign-ups are never lost to quota.** If the confirmation email can't go out
   immediately, the registration is kept and the poller re-sends the
   confirmation on a later cycle (i.e. next day once quota resets); the user is

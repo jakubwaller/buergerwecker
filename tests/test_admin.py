@@ -454,3 +454,28 @@ def test_summary_email_quota_line_lists_each_provider():
     }), now=NOW, anomalies=[])
     q = _line(text, "Quota today")
     assert "mailjet 12/200" in q and "resend 0/100" in q
+
+
+def test_stats_and_anomaly_report_deferrals(tmp_path):
+    from types import SimpleNamespace
+    conn = connect(str(tmp_path / "d.db")); init_schema(conn)
+    conn.executemany(
+        "INSERT INTO email_deferral_counts (day, n) VALUES (?, ?)",
+        [(datetime.utcnow().date().isoformat(), 12), ("2000-01-15", 99)])
+    cfg = SimpleNamespace(mailjet_monthly_quota=6000, mailjet_daily_quota=200,
+                          resend_monthly_quota=3000, resend_daily_quota=100)
+    s = stats(conn, cfg)
+    assert s["deferrals_today"] == 12
+    assert s["deferrals_7d"] == 12          # the 2000 row is outside the window
+    a = summary_anomalies(_summary_stats(deferrals_today=12), now=NOW)
+    assert any("12 notification(s) deferred today" in x for x in a)
+
+
+def test_anomaly_deferral_reported_even_below_quota_thresholds():
+    """A deferral is not a "nearing the cap" warning — it is the cap having
+    already cost a subscriber a slot, so percentages don't gate it."""
+    a = summary_anomalies(_summary_stats(deferrals_today=1, email_usage={
+        "mailjet": {"month": 10, "today": 5, "month_quota": 6000, "day_quota": 200},
+    }), now=NOW)
+    assert any("deferred today" in x for x in a)
+    assert not any("quota at" in x for x in a)

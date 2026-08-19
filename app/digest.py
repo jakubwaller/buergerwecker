@@ -237,11 +237,22 @@ def send_digest(*, conn: sqlite3.Connection, subscription: Subscription,
 def flush_digests(conn: sqlite3.Connection, sink: list, cfg) -> None:
     """Deliver every staged digest in `sink` via quota-aware batches, then
     record seen_slots + last_notified for the ones that were actually sent.
-    Deferred digests are left unrecorded so the next cycle re-sends them."""
+    Deferred digests are left unrecorded so the next cycle re-sends them.
+
+    Longest-waiting subscriber first. `send_batch` fills provider batches in
+    list order and defers the tail, so whatever order the cycle happened to
+    stage in decides who loses a digest under saturation — and that order is
+    stable (city, then subscription id), which would put the same people at the
+    back every cycle. Sorting on last_notified_at rotates it: a deferred digest
+    never stamps last_notified_at, so anyone passed over keeps their old (or
+    absent) timestamp and leads the next cycle. Never-notified subscribers sort
+    first, which is also the right answer on the merits.
+    """
     if not sink:
         return
     from app.db import transaction
     from app.repo import record_seen_slot, set_last_notified
+    sink = sorted(sink, key=lambda q: str(q.subscription.last_notified_at or ""))
     result = send_batch(conn, [q.item for q in sink], cfg)
     for q in sink:
         if q.item.idem_key not in result.delivered:

@@ -3,7 +3,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS subscriptions (
@@ -49,6 +49,16 @@ CREATE TABLE IF NOT EXISTS email_send_counts (
   day      TEXT NOT NULL,
   n        INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (provider, day)
+);
+
+-- Notifications a cycle could not send because the combined provider quota was
+-- spent. Durable and per-UTC-day because the alert mail is rate-limited to once
+-- per 24h: a per-cycle count in that mail cannot tell you whether the day lost
+-- one digest or four hundred. This is the only record that someone was not told
+-- about a slot, so it outlives sent_idempotency's 14-day prune.
+CREATE TABLE IF NOT EXISTS email_deferral_counts (
+  day TEXT PRIMARY KEY,
+  n   INTEGER NOT NULL DEFAULT 0
 );
 
 -- Per-address delivery failures. A provider that parses our request and still

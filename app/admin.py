@@ -96,6 +96,13 @@ def summary_anomalies(s: dict, *, now: datetime) -> list[str]:
             out.append(f"{prov} month quota at {round(used * 100 / cap)}% "
                        f"({used}/{cap})")
 
+    #    A deferral is not a "nearing the cap" warning — it is the cap already
+    #    having cost someone a notification, so it is reported whatever the
+    #    percentages say.
+    deferred = s.get("deferrals_today") or 0
+    if deferred:
+        out.append(f"{deferred} notification(s) deferred today for lack of quota")
+
     # 2. Signup volume deviates sharply from the trailing 7-day baseline — a
     #    press/Reddit surge, or an inflow that suddenly dried up.
     d24 = s.get("signups_last_24h") or 0
@@ -178,6 +185,9 @@ def render_summary_email(s: dict, *, now: datetime, anomalies: list[str],
         roll_used = sum((u.get("rolling") or 0) for _, u in capped)
         roll_cap = sum(u["day_quota"] for _, u in capped)
         lines.append(f"  Gating 24h    {roll_used}/{roll_cap} combined rolling")
+    if s.get("deferrals_today") or s.get("deferrals_7d"):
+        lines.append(f"  Deferred      today {s.get('deferrals_today', 0)}"
+                     f" · 7d {s.get('deferrals_7d', 0)}")
 
     admin = f"{base_url.rstrip('/')}/admin" if base_url else "/admin"
     lines += ["", f"Full dashboard → {admin}"]
@@ -445,6 +455,11 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         "last_notification": last_notification,
         "emails_by_provider_7d": provider_7d,
         "email_usage": _email_usage(conn, cfg),
+        "deferrals_today":
+            scalar("SELECT n FROM email_deferral_counts WHERE day = date('now')"),
+        "deferrals_7d":
+            scalar("SELECT COALESCE(SUM(n), 0) FROM email_deferral_counts "
+                   "WHERE day >= date('now','-7 days')"),
         "last_failure_alert_at": meta_val("last_failure_alert_at"),
         "last_housekeeping_at": meta_val("last_housekeeping_at"),
         "last_backup_at":       meta_val("last_backup_at"),
