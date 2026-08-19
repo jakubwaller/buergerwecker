@@ -176,12 +176,14 @@ def test_quota_alert_fires_on_deferral_and_is_rate_limited(db):
 
 
 def test_quota_alert_fires_near_threshold(db, resend_on):
-    # 8/10 resend sends today = 80% → at threshold, alert even with no deferral.
+    # 16 sends against a combined cap of 20 (10 + 10) = 80% → at threshold,
+    # alert even with no deferral.
     db.executemany(
         "INSERT INTO sent_idempotency (idem_key, provider) VALUES (?, 'resend')",
-        [(f"r{i}",) for i in range(8)])
+        [(f"r{i}",) for i in range(16)])
     with patch("app.mail.send") as snd:
-        maybe_quota_alert(db, _cfg(resend_daily_quota=10), deferred=0)
+        maybe_quota_alert(db, _cfg(resend_daily_quota=10, mailjet_daily_quota=10),
+                          deferred=0)
     snd.assert_called_once()
 
 
@@ -189,7 +191,8 @@ def test_quota_alert_fires_when_mailjet_nears_its_cap(db):
     """Regression: the alert used to measure Resend only. Mailjet carries all
     the notification traffic and Resend just absorbs the overflow, so on
     2026-07-27 Mailjet sat at 197/200 while the alert read 0% and stayed
-    silent."""
+    silent. No RESEND_API_KEY here, so Mailjet IS the whole pool and 197/200
+    is a genuine 98% of combined capacity."""
     db.executemany(
         "INSERT INTO sent_idempotency (idem_key, provider) VALUES (?, 'mailjet')",
         [(f"m{i}",) for i in range(197)])
@@ -198,6 +201,44 @@ def test_quota_alert_fires_when_mailjet_nears_its_cap(db):
     snd.assert_called_once()
     body = snd.call_args.args[3]
     assert "mailjet: 197/200 (98%)" in body
+
+
+def test_quota_alert_silent_while_the_overflow_provider_has_room(db, resend_on):
+    """2026-08-19: mailjet 196/200 mailed "98%" while Resend's 100 sat
+    untouched. Mailjet-first routing only spills once Mailjet is exhausted, so
+    the primary filling up is an ordinary busy day, not an outage — 196 of a
+    combined 300 is 65%, and nothing was deferred. Must stay quiet."""
+    db.executemany(
+        "INSERT INTO sent_idempotency (idem_key, provider) VALUES (?, 'mailjet')",
+        [(f"m{i}",) for i in range(196)])
+    with patch("app.mail.send") as snd:
+        maybe_quota_alert(db, _cfg(mailjet_daily_quota=200, resend_daily_quota=100),
+                          deferred=0)
+    snd.assert_not_called()
+
+
+def test_quota_alert_on_deferral_says_someone_missed_a_slot(db, resend_on):
+    """The two conditions read differently: a deferral means a subscriber was
+    not told, a threshold crossing does not. The old body claimed the former
+    for both."""
+    with patch("app.mail.send") as snd:
+        maybe_quota_alert(db, _cfg(), deferred=3)
+    subject, body = snd.call_args.args[2], snd.call_args.args[3]
+    assert "deferred" in subject
+    assert "were not told about a slot" in body
+    assert "one cycle" in body            # not the day's total
+
+
+def test_quota_alert_at_threshold_does_not_claim_anyone_missed_out(db, resend_on):
+    db.executemany(
+        "INSERT INTO sent_idempotency (idem_key, provider) VALUES (?, 'resend')",
+        [(f"r{i}",) for i in range(16)])
+    with patch("app.mail.send") as snd:
+        maybe_quota_alert(db, _cfg(resend_daily_quota=10, mailjet_daily_quota=10),
+                          deferred=0)
+    body = snd.call_args.args[3]
+    assert "Nothing was deferred" in body
+    assert "combined: 16/20 (80%)" in body
 
 
 def test_quota_alert_ignores_providers_that_cannot_send(db):

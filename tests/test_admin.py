@@ -104,7 +104,9 @@ def test_admin_renders_new_metrics(client):
     r = client.get("/admin?token=admin-tok")
     assert r.status_code == 200
     # Always-present labels (Overview + System sections render regardless of data).
-    for label in (b"Slots cached", b"Emails sent", b"Failure alert", b"Last backup"):
+    for label in (b"Slots cached", b"Emails sent", b"Failure alert", b"Last backup",
+                  # The gating window, next to the UTC-day counter it disagrees with.
+                  b"rolling 24h", b"combined"):
         assert label in r.data, f"missing admin metric: {label!r}"
 
 def test_admin_renders_notifications_section(client):
@@ -235,10 +237,31 @@ def test_healthy_baseline_has_no_anomalies():
 
 
 def test_anomaly_quota_near_cap():
+    # Mailjet alone in the pool, so its 170/200 IS the combined 85%.
     a = summary_anomalies(_summary_stats(email_usage={
         "mailjet": {"month": 100, "today": 170, "month_quota": 6000, "day_quota": 200},
     }), now=NOW)
-    assert any("mailjet today quota at 85% (170/200)" in x for x in a)
+    assert any("combined day quota at 85% (170/200)" in x for x in a)
+
+
+def test_anomaly_day_quota_grades_the_pool_not_one_provider():
+    """Mailjet-first routing exhausts Mailjet before Resend sees anything, so a
+    hot primary is a busy day, not a warning. 196 of a combined 300 is 65%."""
+    a = summary_anomalies(_summary_stats(email_usage={
+        "mailjet": {"month": 100, "today": 196, "month_quota": 6000, "day_quota": 200},
+        "resend": {"month": 0, "today": 0, "month_quota": 3000, "day_quota": 100},
+    }), now=NOW)
+    assert not any("day quota" in x for x in a)
+
+
+def test_anomaly_month_quota_stays_per_provider():
+    """Monthly caps are hard per-account walls — no failover borrows against
+    them, so they are graded one provider at a time."""
+    a = summary_anomalies(_summary_stats(email_usage={
+        "mailjet": {"month": 5400, "today": 10, "month_quota": 6000, "day_quota": 200},
+        "resend": {"month": 0, "today": 0, "month_quota": 3000, "day_quota": 100},
+    }), now=NOW)
+    assert any("mailjet month quota at 90% (5400/6000)" in x for x in a)
 
 
 def test_anomaly_signup_spike():
@@ -388,11 +411,16 @@ def test_stats_email_usage_windows_and_caps(tmp_path):
                  "VALUES ('mailjet', '2000-01-15', 99)")
     cfg = SimpleNamespace(mailjet_monthly_quota=6000, mailjet_daily_quota=200,
                           resend_monthly_quota=3000, resend_daily_quota=100)
+    # Two sends inside the rolling window; the UTC-day counter above is separate
+    # bookkeeping and the two are allowed to disagree.
+    conn.executemany(
+        "INSERT INTO sent_idempotency (idem_key, provider) VALUES (?, 'mailjet')",
+        [("w1",), ("w2",)])
     u = stats(conn, cfg)["email_usage"]
-    assert u["mailjet"] == {"month": 3, "today": 3,
+    assert u["mailjet"] == {"month": 3, "today": 3, "rolling": 2,
                             "month_quota": 6000, "day_quota": 200}
     # Resend has sent nothing yet but still shows up with its caps.
-    assert u["resend"] == {"month": 0, "today": 0,
+    assert u["resend"] == {"month": 0, "today": 0, "rolling": 0,
                            "month_quota": 3000, "day_quota": 100}
 
 def test_init_schema_backfills_counters_once(tmp_path):

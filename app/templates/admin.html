@@ -186,7 +186,7 @@
   </section>
 
   <section class="adm-section">
-    <h2>Email quota <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· sends counted here, UTC calendar · caps from config</span></h2>
+    <h2>Email quota <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· month/today are UTC calendar · rolling 24h is what gates sending</span></h2>
     <table class="adm-table">
       {% for p, u in s.email_usage|dictsort %}
         <tr>
@@ -197,9 +197,22 @@
             month <span{% if mpct >= 80 %} class="quota-hot"{% endif %}>{{ u.month }}{% if u.month_quota %} / {{ u.month_quota }} ({{ mpct }}%){% endif %}</span>
             &nbsp;·&nbsp;
             today <span{% if dpct >= 80 %} class="quota-hot"{% endif %}>{{ u.today }}{% if u.day_quota %} / {{ u.day_quota }}{% endif %}</span>
+            &nbsp;·&nbsp;
+            rolling 24h {{ u.rolling }}{% if u.day_quota %} / {{ u.day_quota }}{% endif %}
           </td>
         </tr>
       {% endfor %}
+      {% set capped = s.email_usage.values()|selectattr("day_quota")|list %}
+      {% if capped %}
+        {% set roll = capped|sum(attribute="rolling") %}
+        {% set rcap = capped|sum(attribute="day_quota") %}
+        {% set rpct = (100 * roll / rcap)|round|int if rcap else 0 %}
+        <tr>
+          <td class="k">combined</td>
+          <td class="v">rolling 24h <span{% if rpct >= 80 %} class="quota-hot"{% endif %}>{{ roll }} / {{ rcap }} ({{ rpct }}%)</span>
+            <span class="adm-muted">· spillover means a single provider at its cap is not the ceiling</span></td>
+        </tr>
+      {% endif %}
     </table>
   </section>
 

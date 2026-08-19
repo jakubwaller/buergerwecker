@@ -57,14 +57,16 @@ failing:
   immediately, the registration is kept and the poller re-sends the
   confirmation on a later cycle (i.e. next day once quota resets); the user is
   told it may arrive later.
-- **Low-quota alert.** When **any** configured provider's rolling-24h usage
-  crosses `QUOTA_ALERT_THRESHOLD_PCT` of its daily cap, or when notifications are
-  deferred for lack of quota, `DEVELOPER_EMAIL` gets one alert per day. Every
-  provider is checked, not just Resend: Mailjet carries the notification traffic
-  by default and Resend only absorbs the overflow, so a Resend-only check sat at
-  0% while Mailjet ran to 197/200 on 2026-07-27. That alert is the cue to ask
-  Mailjet to raise the throttle, upgrade to a paid plan, and/or raise the quota
-  vars above.
+- **Low-quota alert.** When the **combined** rolling-24h usage across every
+  provider that can actually send crosses `QUOTA_ALERT_THRESHOLD_PCT` of the
+  summed daily caps, or when notifications are deferred for lack of quota,
+  `DEVELOPER_EMAIL` gets one alert per day. Combined, not per-provider: with
+  Mailjet-first routing a batch only reaches Resend once Mailjet's headroom is
+  0, so "Mailjet at 98%" is what a busy day looks like while a third of the pool
+  is still free (2026-08-19: 196/200 mailed as 98%, actually 196/300). Only the
+  deferral half of the alert means someone went un-notified — the subject line
+  says which fired. That mail is the cue to upgrade to a paid plan and raise the
+  matching `*_DAILY_QUOTA`.
 
 Delivery mix over the last 7 days is visible on `/admin`, along with an
 **Email quota** section showing month-to-date and today's sends per provider
@@ -72,7 +74,10 @@ against `MAILJET_MONTHLY_QUOTA` / `RESEND_MONTHLY_QUOTA` (display-only caps,
 free tiers: 6000/mo and 3000/mo) — so you can watch quota burn without logging
 into the provider dashboards. Counts come from the app's own durable
 `email_send_counts` table (UTC days, an approximation of each provider's reset
-cycle) and only include mail this app sent.
+cycle) and only include mail this app sent. Each row also shows the **rolling
+24h** figure, and a combined row totals it: that rolling number is what actually
+gates a send, and it deliberately disagrees with the UTC-day one — just after
+UTC midnight "today" is near 0 while the gate still counts last evening.
 
 ## Polling cadence
 

@@ -77,15 +77,24 @@ def summary_anomalies(s: dict, *, now: datetime) -> list[str]:
     """
     out: list[str] = []
 
-    # 1. A provider's send volume is climbing toward a configured cap — warns
-    #    ahead of the hard quota block in mail.maybe_quota_alert.
-    for prov, u in sorted((s.get("email_usage") or {}).items()):
-        for period, cap_key in (("today", "day_quota"), ("month", "month_quota")):
-            cap = u.get(cap_key)
-            used = u.get(period) or 0
-            if cap and used >= cap * QUOTA_WARN_PCT / 100:
-                out.append(f"{prov} {period} quota at {round(used * 100 / cap)}% "
-                           f"({used}/{cap})")
+    # 1. Send volume is climbing toward a configured cap — warns ahead of the
+    #    hard quota block in mail.maybe_quota_alert.
+    #    Daily is graded on the COMBINED pool, for the same reason the alert is:
+    #    Mailjet-first routing only spills to Resend once Mailjet is exhausted,
+    #    so "mailjet today 98%" fires on any busy day while the pool still has a
+    #    third of its capacity free. Monthly stays per-provider — those caps are
+    #    hard, per-account walls that no failover can borrow against.
+    usage = sorted((s.get("email_usage") or {}).items())
+    day_used = sum((u.get("today") or 0) for _, u in usage if u.get("day_quota"))
+    day_cap = sum(u["day_quota"] for _, u in usage if u.get("day_quota"))
+    if day_cap and day_used >= day_cap * QUOTA_WARN_PCT / 100:
+        out.append(f"combined day quota at {round(day_used * 100 / day_cap)}% "
+                   f"({day_used}/{day_cap})")
+    for prov, u in usage:
+        cap, used = u.get("month_quota"), u.get("month") or 0
+        if cap and used >= cap * QUOTA_WARN_PCT / 100:
+            out.append(f"{prov} month quota at {round(used * 100 / cap)}% "
+                       f"({used}/{cap})")
 
     # 2. Signup volume deviates sharply from the trailing 7-day baseline — a
     #    press/Reddit surge, or an inflow that suddenly dried up.
@@ -161,11 +170,14 @@ def render_summary_email(s: dict, *, now: datetime, anomalies: list[str],
               f" · 7d {s.get('notifications_7d', 0)}",
               f"  Delivery 7d   {prov_str}"]
     # Quota line only when a daily cap is configured — otherwise it's just noise.
-    quota_bits = [f"{p} {u.get('today', 0)}/{u['day_quota']}"
-                  for p, u in sorted((s.get("email_usage") or {}).items())
-                  if u.get("day_quota")]
+    capped = [(p, u) for p, u in sorted((s.get("email_usage") or {}).items())
+              if u.get("day_quota")]
+    quota_bits = [f"{p} {u.get('today', 0)}/{u['day_quota']}" for p, u in capped]
     if quota_bits:
         lines.append(f"  Quota today   {' · '.join(quota_bits)}")
+        roll_used = sum((u.get("rolling") or 0) for _, u in capped)
+        roll_cap = sum(u["day_quota"] for _, u in capped)
+        lines.append(f"  Gating 24h    {roll_used}/{roll_cap} combined rolling")
 
     admin = f"{base_url.rstrip('/')}/admin" if base_url else "/admin"
     lines += ["", f"Full dashboard → {admin}"]
@@ -179,7 +191,15 @@ def _email_usage(conn: sqlite3.Connection, cfg) -> dict:
     sent_idempotency prune), so the admin page answers "how far into the
     free-tier quota are we?" without logging into the provider dashboards.
     Days/months are UTC — an approximation of each provider's own reset cycle.
+
+    Each provider also carries `rolling`, the trailing-24h count from
+    mail._window_used. That is the number that actually gates a send, and it is
+    NOT the UTC-day figure next to it: just after UTC midnight `today` snaps to
+    0 while `rolling` still carries last evening's traffic. Showing only one of
+    them is what made the admin page and the low-quota mail look like they were
+    contradicting each other.
     """
+    from app.mail import _window_used
     caps = {
         "mailjet": {"month_quota": getattr(cfg, "mailjet_monthly_quota", None),
                     "day_quota":   getattr(cfg, "mailjet_daily_quota", None)},
@@ -203,6 +223,8 @@ def _email_usage(conn: sqlite3.Connection, cfg) -> dict:
                              {"month_quota": None, "day_quota": None})
         u["month"] = r["month"]
         u["today"] = r["today"]
+    for name, u in usage.items():
+        u["rolling"] = _window_used(conn, name, 86400)
     return usage
 
 
