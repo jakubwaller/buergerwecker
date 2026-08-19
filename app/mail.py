@@ -464,19 +464,28 @@ def _daily_usage(conn: sqlite3.Connection, cfg) -> list[tuple[str, int, int]]:
     return usage
 
 def maybe_quota_alert(conn: sqlite3.Connection, cfg, *, deferred: int) -> None:
-    """Email the developer when daily send volume nears a free-tier cap, or
-    when notifications had to be deferred for lack of quota. Rate-limited to
-    once per 24h via meta. This is the signal to upgrade to a paid plan.
+    """Email the developer when the COMBINED send capacity across providers is
+    running out, or when notifications had to be deferred for lack of quota.
+    Rate-limited to once per 24h via meta. This is the signal to upgrade.
 
-    Every configured provider is checked, not just one: Mailjet carries all the
-    notification traffic by default (EMAIL_PROVIDER_ORDER) and Resend only
-    absorbs its overflow, so watching Resend alone meant the alert could sit at
-    0% while Mailjet ran into its cap — which is exactly what happened on
-    2026-07-27, at 197 of 200.
+    Combined, not per-provider, and that distinction is the whole point. With
+    Mailjet-first routing (EMAIL_PROVIDER_ORDER) a batch only reaches Resend
+    once Mailjet's headroom is exactly 0, so Mailjet crossing 80% of its own cap
+    is what an ordinary busy day looks like — it says nothing about whether
+    anyone goes un-notified. On 2026-08-19 the old per-provider rule mailed
+    "mailjet: 196/200 (98%)" while Resend's 100 sat untouched: 65% of real
+    capacity, nothing deferred. Summing the caps of every provider that can
+    actually send measures the thing that matters.
+
+    (An earlier version watched Resend alone, which was worse still — it read 0%
+    while Mailjet ran to 197/200 on 2026-07-27. Both bugs are the same mistake:
+    grading one provider against its own cap instead of grading the pool.)
     """
     usage = _daily_usage(conn, cfg)
     threshold = cfg.quota_alert_threshold_pct / 100
-    breached = [u for u in usage if u[1] >= u[2] * threshold]
+    used_total = sum(u[1] for u in usage)
+    cap_total = sum(u[2] for u in usage)
+    breached = bool(cap_total) and used_total >= cap_total * threshold
     if deferred == 0 and not breached:
         return
     if not cfg.developer_email:
@@ -492,14 +501,30 @@ def maybe_quota_alert(conn: sqlite3.Connection, cfg, *, deferred: int) -> None:
             pass
     lines = [f"  {name}: {used}/{cap} ({round(used / cap * 100)}%)"
              for name, used, cap in usage] or ["  (no provider has a daily cap set)"]
-    subject = "[buergerwecker] email quota running low"
+    if cap_total:
+        lines.append(f"  combined: {used_total}/{cap_total} "
+                     f"({round(used_total / cap_total * 100)}%) "
+                     f"<- what gates sending")
+    # Say which of the two conditions fired. Only a deferral means someone did
+    # not get told about a slot; a threshold crossing is a heads-up with room
+    # still left, and wording it as an outage is what made this mail cry wolf.
+    if deferred:
+        subject = "[buergerwecker] notifications deferred for lack of email quota"
+        why = (f"{deferred} notification(s) were deferred in the cycle that sent "
+               "this mail — those subscribers were not told about a slot. Note "
+               "this is one cycle's count, not the day's: the alert is rate-"
+               "limited to once per 24h, so it cannot tell you the daily total.")
+    else:
+        subject = "[buergerwecker] email quota running low"
+        why = ("Nothing was deferred — every subscriber was notified. This is "
+               "the heads-up that combined capacity is nearly spent.")
     body = (
-        "Provider usage in the last 24h:\n"
+        "Provider usage in the last 24h (rolling window, not UTC days):\n"
         + "\n".join(lines) + "\n\n"
-        + f"Notifications deferred this cycle for lack of quota: {deferred}.\n\n"
-        "Subscribers may be going un-notified. Either raise the send cadence "
-        "floor (RATE_LIMIT_MINUTES / ADAPTIVE_RATE_LIMIT_MAX_MULTIPLIER) or "
-        "upgrade to a paid email plan and raise the matching *_DAILY_QUOTA."
+        + why + "\n\n"
+        "Either raise the send cadence floor (RATE_LIMIT_MINUTES / "
+        "ADAPTIVE_RATE_LIMIT_MAX_MULTIPLIER) or upgrade to a paid email plan "
+        "and raise the matching *_DAILY_QUOTA."
     )
     try:
         send(conn, cfg.developer_email, subject, body,
