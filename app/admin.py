@@ -312,8 +312,8 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         agg["tenants"].sort()
     # Slot-match notifications actually delivered to subscribers. `last_notified_at`
     # is set only when a real appointment slot matched and a digest went out, so it
-    # is the truest "a subscriber was served" signal — distinct from emails_sent_total,
-    # which also counts confirmations, heartbeats and these summary emails.
+    # is the truest "a subscriber was served" signal — distinct from the emails-sent
+    # counters, which also count confirmations, heartbeats and these summary emails.
     notif = conn.execute(
         "SELECT id, last_notified_at FROM subscriptions "
         "WHERE last_notified_at IS NOT NULL ORDER BY last_notified_at DESC LIMIT 1"
@@ -362,6 +362,23 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         "GROUP BY provider"
     ).fetchall():
         provider_7d[r["provider"]] = r["n"]
+    # All-time sends, from the durable counters rather than sent_idempotency —
+    # housekeeping prunes that table at 14 days, so counting its rows produced a
+    # "total" that silently meant "the last fortnight". email_send_counts only
+    # goes back to its 2026-07-01 backfill, so the figure is reported with the
+    # month it starts from instead of being passed off as all of history.
+    try:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(n), 0) AS n, MIN(day) AS since "
+            "FROM email_send_counts"
+        ).fetchone()
+        emails_recorded = row["n"]
+        emails_since = (
+            datetime.strptime(row["since"], "%Y-%m-%d").strftime("%b %Y")
+            if row["since"] else None
+        )
+    except (sqlite3.OperationalError, ValueError):
+        emails_recorded, emails_since = 0, None  # pre-migration DB
     return {
         "active_subscriptions":
             scalar("SELECT COUNT(*) FROM subscriptions WHERE deleted_at IS NULL "
@@ -379,7 +396,7 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         "signups_last_7d":
             scalar("SELECT COUNT(*) FROM subscriptions "
                    "WHERE created_at > datetime('now','-7 days')"),
-        "digests_sent_last_7d":
+        "emails_sent_last_7d":
             scalar("SELECT COUNT(*) FROM sent_idempotency "
                    "WHERE sent_at > datetime('now','-7 days') "
                    "AND provider != 'pending'"),
@@ -389,8 +406,8 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         "city_names": city_names,
         "last_polled_at_by_city": last_polled_at_by_city,
         "slots_cached": scalar("SELECT COUNT(*) FROM slots_cache"),
-        "emails_sent_total":
-            scalar("SELECT COUNT(*) FROM sent_idempotency WHERE provider != 'pending'"),
+        "emails_sent_recorded": emails_recorded,
+        "emails_sent_since": emails_since,
         "notifications_24h":
             scalar("SELECT COUNT(*) FROM subscriptions "
                    "WHERE last_notified_at > datetime('now','-1 day')"),

@@ -169,8 +169,8 @@
       <div class="stat"><div class="stat-num">{{ s.pending_confirmation }}</div><div class="stat-label">Pending confirmation</div></div>
       <div class="stat"><div class="stat-num">{{ s.signups_last_24h }}</div><div class="stat-label">Signups · 24h</div></div>
       <div class="stat"><div class="stat-num">{{ s.signups_last_7d }}</div><div class="stat-label">Signups · 7d</div></div>
-      <div class="stat"><div class="stat-num">{{ s.digests_sent_last_7d }}</div><div class="stat-label">Digests sent · 7d</div></div>
-      <div class="stat"><div class="stat-num">{{ s.emails_sent_total }}</div><div class="stat-label">Emails sent · total</div></div>
+      <div class="stat"><div class="stat-num">{{ s.emails_sent_last_7d }}</div><div class="stat-label">Emails sent · 7d</div></div>
+      <div class="stat"><div class="stat-num">{{ s.emails_sent_recorded }}</div><div class="stat-label">Emails sent · {% if s.emails_sent_since %}since {{ s.emails_sent_since }}{% else %}recorded{% endif %}</div></div>
       <div class="stat"><div class="stat-num">{{ s.slots_cached }}</div><div class="stat-label">Slots cached</div></div>
     </div>
   </section>

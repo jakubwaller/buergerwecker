@@ -57,11 +57,14 @@ failing:
   immediately, the registration is kept and the poller re-sends the
   confirmation on a later cycle (i.e. next day once quota resets); the user is
   told it may arrive later.
-- **Low-quota alert.** When daily Resend usage crosses
-  `QUOTA_ALERT_THRESHOLD_PCT` of `RESEND_DAILY_QUOTA`, or when notifications are
-  deferred for lack of quota, `DEVELOPER_EMAIL` gets one alert per day. That is
-  the cue to ask Mailjet to raise the throttle, upgrade to a paid plan, and/or
-  raise the quota vars above.
+- **Low-quota alert.** When **any** configured provider's rolling-24h usage
+  crosses `QUOTA_ALERT_THRESHOLD_PCT` of its daily cap, or when notifications are
+  deferred for lack of quota, `DEVELOPER_EMAIL` gets one alert per day. Every
+  provider is checked, not just Resend: Mailjet carries the notification traffic
+  by default and Resend only absorbs the overflow, so a Resend-only check sat at
+  0% while Mailjet ran to 197/200 on 2026-07-27. That alert is the cue to ask
+  Mailjet to raise the throttle, upgrade to a paid plan, and/or raise the quota
+  vars above.
 
 Delivery mix over the last 7 days is visible on `/admin`, along with an
 **Email quota** section showing month-to-date and today's sends per provider

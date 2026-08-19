@@ -143,6 +143,10 @@ def test_stats_includes_upstream_and_extra_metrics(tmp_path):
                  "VALUES ('t', 'leipzig', 'u')")
     conn.execute("INSERT INTO sent_idempotency (idem_key, provider) VALUES ('k', 'mailjet')")
     conn.execute("INSERT INTO sent_idempotency (idem_key, provider) VALUES ('p', 'pending')")
+    # Durable counters carry history that sent_idempotency has already pruned, so
+    # they deliberately disagree with the row count above.
+    conn.execute("INSERT INTO email_send_counts (provider, day, n) VALUES "
+                 "('mailjet', '2026-07-01', 484), ('resend', '2026-07-02', 1)")
     conn.execute("INSERT INTO meta (key, value) VALUES ('last_failure_alert_at', '2026-06-01T00:00:00')")
     s = stats(conn)
     up = s["upstream_by_city"]["leipzig"]
@@ -150,7 +154,10 @@ def test_stats_includes_upstream_and_extra_metrics(tmp_path):
                   "requests_today": 12, "requests_total": 120}
     assert s["last_polled_at_by_city"]["leipzig"] == "2026-06-03T10:00:00"
     assert s["slots_cached"] == 1
-    assert s["emails_sent_total"] == 1   # 'pending' excluded
+    assert s["emails_sent_last_7d"] == 1   # 'pending' excluded
+    # All-time comes from email_send_counts, NOT from the 14-day-pruned table.
+    assert s["emails_sent_recorded"] == 485
+    assert s["emails_sent_since"] == "Jul 2026"
     assert s["last_failure_alert_at"] == "2026-06-01T00:00:00"
 
 def test_stats_notification_metrics(tmp_path):
@@ -193,13 +200,14 @@ def _summary_stats(**over):
         "pending_confirmation": 3,
         "signups_last_24h": 5,
         "signups_last_7d": 19,
-        "digests_sent_last_7d": 88,
+        "emails_sent_last_7d": 88,
         "upstream_by_city": {"leipzig": {"polls_today": 120, "polls_total": 9821,
                                          "requests_today": 240, "requests_total": 20140}},
         "last_polled_at_by_city": {"leipzig": "2026-06-09T14:32:00"},
         "city_labels": {"leipzig": "Leipzig"},
         "slots_cached": 17,
-        "emails_sent_total": 1203,
+        "emails_sent_recorded": 1203,
+        "emails_sent_since": "Jul 2026",
         "notifications_24h": 2,
         "notifications_7d": 7,
         "subscribers_ever_notified": 9,
