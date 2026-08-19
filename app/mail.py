@@ -447,8 +447,29 @@ def send_batch(conn: sqlite3.Connection, items: list[Outgoing], cfg) -> BatchRes
         with transaction(conn):
             conn.executemany("DELETE FROM sent_idempotency WHERE idem_key=?",
                              [(c.idem_key,) for c in remaining])
+            _record_deferrals(conn, len(remaining))
         result.deferred = len(remaining)
     return result
+
+def _record_deferrals(conn: sqlite3.Connection, n: int) -> None:
+    """Bump the durable per-UTC-day deferral counter. Deferral is the only event
+    that means a subscriber was not told about a slot, and nothing else records
+    it: the idempotency claim is deleted on the way out and the digest itself is
+    never written anywhere."""
+    conn.execute(
+        "INSERT INTO email_deferral_counts (day, n) VALUES (date('now'), ?) "
+        "ON CONFLICT (day) DO UPDATE SET n = n + excluded.n",
+        (n,),
+    )
+
+def deferrals_today(conn: sqlite3.Connection) -> int:
+    try:
+        row = conn.execute(
+            "SELECT n FROM email_deferral_counts WHERE day = date('now')"
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return 0  # pre-migration DB
+    return row["n"] if row else 0
 
 def _daily_usage(conn: sqlite3.Connection, cfg) -> list[tuple[str, int, int]]:
     """(provider, sends in the last 24h, daily cap) for every provider that is
@@ -511,9 +532,10 @@ def maybe_quota_alert(conn: sqlite3.Connection, cfg, *, deferred: int) -> None:
     if deferred:
         subject = "[buergerwecker] notifications deferred for lack of email quota"
         why = (f"{deferred} notification(s) were deferred in the cycle that sent "
-               "this mail — those subscribers were not told about a slot. Note "
-               "this is one cycle's count, not the day's: the alert is rate-"
-               "limited to once per 24h, so it cannot tell you the daily total.")
+               f"this mail, {deferrals_today(conn)} so far today (UTC) — those "
+               "subscribers were not told about a slot. They are re-sent next "
+               "cycle, longest-waiting first, but a slot taken in the meantime "
+               "is simply gone.")
     else:
         subject = "[buergerwecker] email quota running low"
         why = ("Nothing was deferred — every subscriber was notified. This is "

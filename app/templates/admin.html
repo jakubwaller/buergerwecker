@@ -213,6 +213,11 @@
             <span class="adm-muted">· spillover means a single provider at its cap is not the ceiling</span></td>
         </tr>
       {% endif %}
+      <tr>
+        <td class="k">deferred</td>
+        <td class="v"><span{% if s.deferrals_today %} class="quota-hot"{% endif %}>today {{ s.deferrals_today }}</span> · 7d {{ s.deferrals_7d }}
+          <span class="adm-muted">· notifications the quota could not send — re-tried next cycle, longest wait first</span></td>
+      </tr>
     </table>
   </section>
 

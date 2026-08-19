@@ -226,7 +226,9 @@ def test_quota_alert_on_deferral_says_someone_missed_a_slot(db, resend_on):
     subject, body = snd.call_args.args[2], snd.call_args.args[3]
     assert "deferred" in subject
     assert "were not told about a slot" in body
-    assert "one cycle" in body            # not the day's total
+    # The cycle count alone can't tell you what the day cost — the alert only
+    # fires once per 24h — so the mail carries the UTC-day total beside it.
+    assert "so far today" in body
 
 
 def test_quota_alert_at_threshold_does_not_claim_anyone_missed_out(db, resend_on):
@@ -469,3 +471,27 @@ def test_graded_batch_where_everything_failed_is_not_a_provider_outage(db, resen
         res = send_batch(db, _items(2), _cfg())
     assert len(res.delivered) == 2 and res.undeliverable == set()
     assert res.sent_by_provider == {"resend": 2}
+
+
+def test_deferral_is_recorded_per_utc_day(db, resend_on):
+    """Deferral is the only trace that a subscriber was not told about a slot:
+    the idempotency claim is deleted on the way out and the digest is never
+    persisted. Without this counter the loss is invisible."""
+    with patch("app.mail._call_mailjet_batch", return_value=200), \
+         patch("app.mail._call_resend_batch", return_value=200):
+        res = send_batch(db, _items(9), _cfg(mailjet_daily_quota=2,
+                                             mailjet_hourly_quota=2,
+                                             resend_daily_quota=3))
+    assert res.deferred == 4                      # 9 staged, 2 + 3 sent
+    from app.mail import deferrals_today
+    assert deferrals_today(db) == 4
+
+
+def test_deferral_counter_accumulates_across_cycles(db, resend_on):
+    cfg = _cfg(mailjet_daily_quota=1, mailjet_hourly_quota=1, resend_daily_quota=0)
+    with patch("app.mail._call_mailjet_batch", return_value=200), \
+         patch("app.mail._call_resend_batch", return_value=200):
+        send_batch(db, _items(3, "a"), cfg)       # 1 sent, 2 deferred
+        send_batch(db, _items(3, "b"), cfg)       # quota spent, 3 deferred
+    from app.mail import deferrals_today
+    assert deferrals_today(db) == 5
