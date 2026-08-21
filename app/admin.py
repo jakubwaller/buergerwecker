@@ -176,8 +176,9 @@ def render_summary_email(s: dict, *, now: datetime, anomalies: list[str],
               f"  Notified      24h {s.get('notifications_24h', 0)}"
               f" · 7d {s.get('notifications_7d', 0)}",
               f"  Delivery 7d   {prov_str}"]
-    # Quota line only when a daily cap is configured — otherwise it's just noise.
-    capped = [(p, u) for p, u in sorted((s.get("email_usage") or {}).items())
+    # Quota line only when a daily cap is configured — otherwise it's just
+    # noise. email_usage arrives in EMAIL_PROVIDER_ORDER; keep that order.
+    capped = [(p, u) for p, u in (s.get("email_usage") or {}).items()
               if u.get("day_quota")]
     quota_bits = [f"{p} {u.get('today', 0)}/{u['day_quota']}" for p, u in capped]
     if quota_bits:
@@ -232,6 +233,15 @@ def _email_usage(conn: sqlite3.Connection, cfg) -> dict:
         caps["sweego"] = {"month_quota": getattr(cfg, "sweego_monthly_quota", None),
                           "day_quota":   getattr(cfg, "sweego_daily_quota", None)}
     usage = {p: {"month": 0, "today": 0, **caps[p]} for p in caps}
+
+    def chain_order(u: dict) -> dict:
+        # The admin page and ops mail render this dict in iteration order;
+        # make that EMAIL_PROVIDER_ORDER (the actual fallback chain), with
+        # providers that only exist in the counters — retired ones — after.
+        out = {p: u[p] for p in order if p in u}
+        out.update(sorted((p, v) for p, v in u.items() if p not in out))
+        return out
+
     try:
         rows = conn.execute(
             "SELECT provider, "
@@ -242,7 +252,7 @@ def _email_usage(conn: sqlite3.Connection, cfg) -> dict:
             "GROUP BY provider"
         ).fetchall()
     except sqlite3.OperationalError:
-        return usage  # pre-migration DB; counters not available yet
+        return chain_order(usage)  # pre-migration DB; counters not available yet
     for r in rows:
         u = usage.setdefault(r["provider"],
                              {"month_quota": None, "day_quota": None})
@@ -250,7 +260,7 @@ def _email_usage(conn: sqlite3.Connection, cfg) -> dict:
         u["today"] = r["today"]
     for name, u in usage.items():
         u["rolling"] = _window_used(conn, name, 86400)
-    return usage
+    return chain_order(usage)
 
 
 def stats(conn: sqlite3.Connection, cfg=None) -> dict:
@@ -430,6 +440,12 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         "active_subscriptions":
             scalar("SELECT COUNT(*) FROM subscriptions WHERE deleted_at IS NULL "
                    "AND confirmed_at IS NOT NULL AND expires_at > CURRENT_TIMESTAMP"),
+        # People, not rows: one address may hold several subscriptions. lower()
+        # folds rows that predate the subscribe form's lowercasing.
+        "active_subscribers":
+            scalar("SELECT COUNT(DISTINCT lower(email)) FROM subscriptions "
+                   "WHERE deleted_at IS NULL AND confirmed_at IS NOT NULL "
+                   "AND expires_at > CURRENT_TIMESTAMP"),
         "active_subscriptions_by_city": by_city_subs,
         "cities": cities,
         "current_plan_count_by_city": by_city_plans,

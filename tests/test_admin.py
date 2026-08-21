@@ -105,6 +105,8 @@ def test_admin_renders_new_metrics(client):
     assert r.status_code == 200
     # Always-present labels (Overview + System sections render regardless of data).
     for label in (b"Slots cached", b"Emails sent", b"Failure alert", b"Last backup",
+                  # People, not subscription rows — the two counts differ.
+                  b"Distinct subscribers",
                   # The gating window, next to the UTC-day counter it disagrees with.
                   b"rolling 24h", b"combined"):
         assert label in r.data, f"missing admin metric: {label!r}"
@@ -184,6 +186,24 @@ def test_stats_notification_metrics(tmp_path):
     assert s["active_awaiting_first_match"] == 1            # s2 still waiting
     assert s["last_notification"]["sub_id"] == s1
     assert s["emails_by_provider_7d"] == {"mailjet": 1, "resend": 1}  # 'pending' excluded
+
+def test_stats_distinct_active_subscribers(tmp_path):
+    from datetime import time
+    from app.models import Filter
+    from app.repo import insert_pending, confirm
+    conn = connect(str(tmp_path / "e.db")); init_schema(conn)
+    f = Filter(appointment_types=["A"], locations="all", weekdays=[1, 2, 3, 4, 5, 6, 7],
+               time_window_start=time(0, 0), time_window_end=time(23, 59))
+    # One person holds two subscriptions — here differing only in case, which
+    # rows from before the subscribe form lowercased can still do.
+    for email in ("one@example.com", "One@Example.com", "two@example.com"):
+        confirm(conn, insert_pending(conn, email=email, city="leipzig",
+                                     language="de", filter_=f, ttl_days=90))
+    insert_pending(conn, email="pending@example.com", city="leipzig",
+                   language="de", filter_=f, ttl_days=90)   # never confirmed
+    s = stats(conn)
+    assert s["active_subscriptions"] == 3
+    assert s["active_subscribers"] == 2
 
 
 # ---------- ops-summary: anomaly detection + compact email ----------
@@ -446,6 +466,23 @@ def test_stats_email_usage_lists_new_providers_only_when_configured(tmp_path):
     cfg = SimpleNamespace(**base, email_provider_order=("mailjet", "resend"))
     assert "brevo" not in stats(conn, cfg)["email_usage"]
 
+def test_stats_email_usage_follows_provider_chain_order(tmp_path):
+    """The quota table lists providers in EMAIL_PROVIDER_ORDER — the order a
+    send actually falls back along — not alphabetically. A provider that only
+    exists in the counters (retired from the chain) trails it."""
+    from types import SimpleNamespace
+    conn = connect(str(tmp_path / "o.db")); init_schema(conn)
+    conn.execute("INSERT INTO email_send_counts (provider, day, n) "
+                 "VALUES ('acme-retired', date('now'), 7)")
+    cfg = SimpleNamespace(
+        mailjet_monthly_quota=6000, mailjet_daily_quota=200,
+        resend_monthly_quota=3000, resend_daily_quota=100,
+        brevo_api_key="k", brevo_monthly_quota=9000, brevo_daily_quota=300,
+        sweego_api_key="k", sweego_monthly_quota=3000, sweego_daily_quota=100,
+        email_provider_order=("mailjet", "brevo", "sweego", "resend"))
+    u = stats(conn, cfg)["email_usage"]
+    assert list(u) == ["mailjet", "brevo", "sweego", "resend", "acme-retired"]
+
 def test_init_schema_backfills_counters_once(tmp_path):
     conn = connect(str(tmp_path / "b.db")); init_schema(conn)
     for k, p in (("k1", "mailjet"), ("k2", "mailjet"), ("k3", "resend"),
@@ -469,6 +506,10 @@ def test_admin_renders_email_quota_section(client):
     assert "Email quota" in html
     assert "483 / 6000" in html          # MAILJET_MONTHLY_QUOTA default
     assert "0 / 3000" in html            # RESEND_MONTHLY_QUOTA default
+    # combined + deferred lead the section; the per-provider rows follow.
+    q = html.index("Email quota")
+    assert (q < html.index(">combined</td>") < html.index(">deferred</td>")
+            < html.index(">mailjet</td>"))
 
 def test_summary_email_quota_line_lists_each_provider():
     text = render_summary_email(_summary_stats(email_usage={

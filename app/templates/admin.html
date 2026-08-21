@@ -166,6 +166,7 @@
   <section class="adm-section">
     <div class="stat-grid">
       <div class="stat"><div class="stat-num">{{ s.active_subscriptions }}</div><div class="stat-label">Active subscriptions</div></div>
+      <div class="stat"><div class="stat-num">{{ s.active_subscribers }}</div><div class="stat-label">Distinct subscribers</div></div>
       <div class="stat"><div class="stat-num">{{ s.pending_confirmation }}</div><div class="stat-label">Pending confirmation</div></div>
       <div class="stat"><div class="stat-num">{{ s.signups_last_24h }}</div><div class="stat-label">Signups · 24h</div></div>
       <div class="stat"><div class="stat-num">{{ s.signups_last_7d }}</div><div class="stat-label">Signups · 7d</div></div>
@@ -188,20 +189,6 @@
   <section class="adm-section">
     <h2>Email quota <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· month/today are UTC calendar · rolling 24h is what gates sending</span></h2>
     <table class="adm-table">
-      {% for p, u in s.email_usage|dictsort %}
-        <tr>
-          <td class="k">{{ p }}</td>
-          <td class="v">
-            {% set mpct = (100 * u.month / u.month_quota)|round|int if u.month_quota else 0 %}
-            {% set dpct = (100 * u.today / u.day_quota)|round|int if u.day_quota else 0 %}
-            month <span{% if mpct >= 80 %} class="quota-hot"{% endif %}>{{ u.month }}{% if u.month_quota %} / {{ u.month_quota }} ({{ mpct }}%){% endif %}</span>
-            &nbsp;·&nbsp;
-            today <span{% if dpct >= 80 %} class="quota-hot"{% endif %}>{{ u.today }}{% if u.day_quota %} / {{ u.day_quota }}{% endif %}</span>
-            &nbsp;·&nbsp;
-            rolling 24h {{ u.rolling }}{% if u.day_quota %} / {{ u.day_quota }}{% endif %}
-          </td>
-        </tr>
-      {% endfor %}
       {% set capped = s.email_usage.values()|selectattr("day_quota")|list %}
       {% if capped %}
         {% set roll = capped|sum(attribute="rolling") %}
@@ -218,6 +205,21 @@
         <td class="v"><span{% if s.deferrals_today %} class="quota-hot"{% endif %}>today {{ s.deferrals_today }}</span> · 7d {{ s.deferrals_7d }}
           <span class="adm-muted">· notifications the quota could not send — re-tried next cycle, longest wait first</span></td>
       </tr>
+      {# per-provider rows follow in EMAIL_PROVIDER_ORDER — the fallback chain #}
+      {% for p, u in s.email_usage.items() %}
+        <tr>
+          <td class="k">{{ p }}</td>
+          <td class="v">
+            {% set mpct = (100 * u.month / u.month_quota)|round|int if u.month_quota else 0 %}
+            {% set dpct = (100 * u.today / u.day_quota)|round|int if u.day_quota else 0 %}
+            month <span{% if mpct >= 80 %} class="quota-hot"{% endif %}>{{ u.month }}{% if u.month_quota %} / {{ u.month_quota }} ({{ mpct }}%){% endif %}</span>
+            &nbsp;·&nbsp;
+            today <span{% if dpct >= 80 %} class="quota-hot"{% endif %}>{{ u.today }}{% if u.day_quota %} / {{ u.day_quota }}{% endif %}</span>
+            &nbsp;·&nbsp;
+            rolling 24h {{ u.rolling }}{% if u.day_quota %} / {{ u.day_quota }}{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
     </table>
   </section>
 
