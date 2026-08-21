@@ -609,8 +609,8 @@ def test_systemic_rejection_streak_defers_rather_than_retires(db, brevo_sweego_o
     assert db.execute("SELECT COUNT(*) AS n FROM sent_idempotency").fetchone()["n"] == 0
 
 
-def test_batch_adapters_reach_the_wire_with_the_single_send_payload(db,
-                                                                    brevo_sweego_on):
+def test_batch_adapters_reach_the_wire_with_the_single_send_payload(
+        db, brevo_sweego_on, monkeypatch):
     """Route send_batch through the REAL _call_brevo_batch/_call_sweego_batch
     bodies — only requests.post is faked. Guards the adapter glue (the
     batch_size=1 unpack, the positional unsub_url pass-through, the
@@ -631,6 +631,7 @@ def test_batch_adapters_reach_the_wire_with_the_single_send_payload(db,
     assert payload["to"] == [{"email": "u0@x.com"}]
     assert payload["headers"]["List-Unsubscribe"] == "<https://x/unsubscribe/tok>"
     posted.clear()
+    monkeypatch.setenv("REPLY_TO_EMAIL", "termine@jakubwaller.eu")
     item = Outgoing(to="u1@x.com", subject="s", body="b", idem_key="w1",
                     unsub_url="https://x/unsubscribe/tok")
     with patch("app.mail.requests.post", side_effect=fake_post):
@@ -640,7 +641,10 @@ def test_batch_adapters_reach_the_wire_with_the_single_send_payload(db,
     assert url == "https://api.sweego.io/send"
     assert payload["recipients"] == [{"email": "u1@x.com"}]
     assert payload["message-txt"] == "b"
-    assert payload["headers"]["List-Unsubscribe"] == "<https://x/unsubscribe/tok>"
+    # Sweego's mailto+url form — the URL-only header the others send is 422'd.
+    assert payload["headers"]["List-Unsubscribe"] == (
+        "<mailto:termine@jakubwaller.eu?subject=abmelden>,"
+        "<https://x/unsubscribe/tok>")
 
 
 def test_a_rejection_at_brevo_still_tries_sweego(db, brevo_sweego_on):

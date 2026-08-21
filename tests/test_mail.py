@@ -324,7 +324,11 @@ def test_sweego_payload_shape(monkeypatch, mailjet_env, sweego_configured):
     assert p["recipients"] == [{"email": "alice@example.com"}]
     assert p["subject"] == "subj" and p["message-txt"] == "body"
     assert p["reply-to"] == {"email": "termine@jakubwaller.eu"}
-    assert p["headers"]["List-Unsubscribe"] == "<https://x/unsubscribe/tok123>"
+    # Sweego refuses the URL-only form the other providers send: it demands
+    # <mailto:...>,<url> with the one-click Post header.
+    assert p["headers"]["List-Unsubscribe"] == (
+        "<mailto:termine@jakubwaller.eu?subject=abmelden>,"
+        "<https://x/unsubscribe/tok123>")
     assert p["headers"]["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
 
 def test_sweego_omits_reply_to_and_headers_when_unset(monkeypatch, mailjet_env,
@@ -334,6 +338,17 @@ def test_sweego_omits_reply_to_and_headers_when_unset(monkeypatch, mailjet_env,
     with patch("app.mail.requests.post", side_effect=fake):
         _call_sweego("alice@example.com", "subj", "body")
     assert "reply-to" not in seen["json"]
+    assert "headers" not in seen["json"]
+
+def test_sweego_drops_unsub_headers_without_a_reply_to_mailbox(
+        monkeypatch, mailjet_env, sweego_configured):
+    # An unsub URL but no monitored mailbox: Sweego would 422 the URL-only
+    # header, so none are sent at all.
+    monkeypatch.delenv("REPLY_TO_EMAIL", raising=False)
+    seen, fake = _capture()
+    with patch("app.mail.requests.post", side_effect=fake):
+        _call_sweego("alice@example.com", "subj", "body",
+                     "https://x/unsubscribe/tok123")
     assert "headers" not in seen["json"]
 
 def test_explicit_reply_to_overrides_env_for_new_providers(monkeypatch, mailjet_env,

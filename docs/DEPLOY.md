@@ -68,7 +68,11 @@ failing:
   takes them as a plain `headers` passthrough — confirm on a real mailbox).
   For Sweego, whose API reference renders client-side and cannot be
   desk-checked, validate the payload shape with a `dry-run: true` send first,
-  then one real send. Only then add the provider to the order.
+  then one real send. (That dry-run is not optional ceremony: it is how we
+  found, 2026-08-21, that Sweego rejects the RFC 8058 URL-only
+  `List-Unsubscribe` header and requires the `<mailto:…>,<url>` form — which
+  `app/mail.py` now builds for Sweego alone.) Only then add the provider to
+  the order.
   **Recommended transition order once Brevo and Sweego are proven:
   `mailjet,brevo,sweego,resend`** — the EU providers absorb the overflow and
   Resend (US, being phased out) only sees traffic when everything else is
