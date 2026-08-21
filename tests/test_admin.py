@@ -423,6 +423,22 @@ def test_stats_email_usage_windows_and_caps(tmp_path):
     assert u["resend"] == {"month": 0, "today": 0, "rolling": 0,
                            "month_quota": 3000, "day_quota": 100}
 
+def test_stats_email_usage_lists_new_providers_only_when_configured(tmp_path):
+    """Brevo/Sweego join the quota table (and thus the ops-summary combined
+    pool) only once their API key is configured — a provider that cannot send
+    must not add its cap to the pool math."""
+    from types import SimpleNamespace
+    conn = connect(str(tmp_path / "v.db")); init_schema(conn)
+    cfg = SimpleNamespace(mailjet_monthly_quota=6000, mailjet_daily_quota=200,
+                          resend_monthly_quota=3000, resend_daily_quota=100,
+                          brevo_api_key="xkeysib-x", brevo_monthly_quota=9000,
+                          brevo_daily_quota=300, sweego_api_key="",
+                          sweego_monthly_quota=3000, sweego_daily_quota=100)
+    u = stats(conn, cfg)["email_usage"]
+    assert u["brevo"] == {"month": 0, "today": 0, "rolling": 0,
+                          "month_quota": 9000, "day_quota": 300}
+    assert "sweego" not in u
+
 def test_init_schema_backfills_counters_once(tmp_path):
     conn = connect(str(tmp_path / "b.db")); init_schema(conn)
     for k, p in (("k1", "mailjet"), ("k2", "mailjet"), ("k3", "resend"),

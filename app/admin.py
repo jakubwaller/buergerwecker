@@ -216,6 +216,16 @@ def _email_usage(conn: sqlite3.Connection, cfg) -> dict:
         "resend":  {"month_quota": getattr(cfg, "resend_monthly_quota", None),
                     "day_quota":   getattr(cfg, "resend_daily_quota", None)},
     }
+    # Brevo/Sweego join the table only once their API key is configured: a
+    # provider that cannot send must not add its cap to the combined-pool
+    # grading in summary_anomalies (the same principle mail._daily_usage
+    # applies via _providers).
+    if getattr(cfg, "brevo_api_key", ""):
+        caps["brevo"] = {"month_quota": getattr(cfg, "brevo_monthly_quota", None),
+                         "day_quota":   getattr(cfg, "brevo_daily_quota", None)}
+    if getattr(cfg, "sweego_api_key", ""):
+        caps["sweego"] = {"month_quota": getattr(cfg, "sweego_monthly_quota", None),
+                          "day_quota":   getattr(cfg, "sweego_daily_quota", None)}
     usage = {p: {"month": 0, "today": 0, **caps[p]} for p in caps}
     try:
         rows = conn.execute(

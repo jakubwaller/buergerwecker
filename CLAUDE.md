@@ -57,9 +57,10 @@ links in already-sent mail silently misparse.
 **Mail sends are idempotent by key** — `subscription_id | sorted slot hashes | cycle_id`. Changing
 how that key is built means re-notifying people about slots they were already told about.
 
-**Two providers, and the From domain must be verified in both.** `EMAIL_PROVIDER_ORDER` falls back
-between Mailjet and Resend; an unverified sender domain makes the fallback reject the mail at exactly
-the moment it is needed. Quotas are enforced in config — see the DEPLOY runbook.
+**Several providers, and the From domain must be verified in every one of them.**
+`EMAIL_PROVIDER_ORDER` falls back along the configured chain (Mailjet, Brevo, Sweego, Resend); an
+unverified sender domain makes a fallback provider reject the mail at exactly the moment it is
+needed. Quotas are enforced in config — see the DEPLOY runbook.
 
 **One malformed address used to kill a whole batch.** Batch sends must isolate per-recipient
 failures; `tests/test_send_batch.py` guards it.

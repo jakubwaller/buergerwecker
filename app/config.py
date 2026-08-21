@@ -13,6 +13,12 @@ class Config:
     resend_api_key: str
     resend_daily_quota: int
     resend_monthly_quota: int
+    brevo_api_key: str
+    brevo_daily_quota: int
+    brevo_monthly_quota: int
+    sweego_api_key: str
+    sweego_daily_quota: int
+    sweego_monthly_quota: int
     mailjet_hourly_quota: int
     quota_alert_threshold_pct: int
     max_send_failures_per_address: int
@@ -58,14 +64,21 @@ def load_config() -> Config:
         mailjet_from_name=_req("MAILJET_FROM_NAME"),
         mailjet_daily_quota=_req_int("MAILJET_DAILY_QUOTA"),
         resend_api_key=os.environ.get("RESEND_API_KEY", ""),
+        brevo_api_key=os.environ.get("BREVO_API_KEY", ""),
+        sweego_api_key=os.environ.get("SWEEGO_API_KEY", ""),
         # Free-tier send caps used for quota-aware delivery + alerting. Defaults
-        # match Resend's free tier (100/day) and the current Mailjet allowance
-        # (10/hour). Raise these after upgrading to a paid plan.
+        # match the free tiers — Resend 100/day, Brevo 300/day, Sweego 100/day —
+        # and the current Mailjet allowance (10/hour). Raise these after
+        # upgrading to a paid plan.
         resend_daily_quota=int(os.environ.get("RESEND_DAILY_QUOTA", "100")),
+        brevo_daily_quota=int(os.environ.get("BREVO_DAILY_QUOTA", "300")),
+        sweego_daily_quota=int(os.environ.get("SWEEGO_DAILY_QUOTA", "100")),
         # Monthly caps are display-only (admin quota view): free tiers allow
-        # Mailjet 6000/mo and Resend 3000/mo.
+        # Mailjet 6000/mo, Resend 3000/mo, Brevo 9000/mo, Sweego 3000/mo.
         mailjet_monthly_quota=int(os.environ.get("MAILJET_MONTHLY_QUOTA", "6000")),
         resend_monthly_quota=int(os.environ.get("RESEND_MONTHLY_QUOTA", "3000")),
+        brevo_monthly_quota=int(os.environ.get("BREVO_MONTHLY_QUOTA", "9000")),
+        sweego_monthly_quota=int(os.environ.get("SWEEGO_MONTHLY_QUOTA", "3000")),
         mailjet_hourly_quota=int(os.environ.get("MAILJET_HOURLY_QUOTA", "10")),
         quota_alert_threshold_pct=int(os.environ.get("QUOTA_ALERT_THRESHOLD_PCT", "80")),
         # How many provider content-rejections an address may collect before we
