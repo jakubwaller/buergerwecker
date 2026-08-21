@@ -161,19 +161,33 @@ def _record_send_count(conn: sqlite3.Connection, provider: str, n: int = 1) -> N
         (provider, n),
     )
 
+# Providers whose API key is optional; a missing key disables the provider.
+_PROVIDER_API_KEYS = {"brevo": "BREVO_API_KEY", "sweego": "SWEEGO_API_KEY",
+                      "resend": "RESEND_API_KEY"}
+
 def _single_send_chain() -> list[tuple[str, Any]]:
-    """Failover chain for transactional `send()`: Mailjet first (it is required
-    config), then every optional provider whose API key is present — the EU
-    providers before Resend, matching the recommended EMAIL_PROVIDER_ORDER
-    transition (Resend is being phased out)."""
-    chain: list[tuple[str, Any]] = [("mailjet", _call_mailjet)]
-    if os.environ.get("BREVO_API_KEY"):
-        chain.append(("brevo", _call_brevo))
-    if os.environ.get("SWEEGO_API_KEY"):
-        chain.append(("sweego", _call_sweego))
-    if os.environ.get("RESEND_API_KEY"):
-        chain.append(("resend", _call_resend))
-    return chain
+    """Failover chain for transactional `send()`, gated by EMAIL_PROVIDER_ORDER
+    exactly like the digest path (`_providers`): a provider sends only when it
+    is named in the order AND its API key is present. A key configured ahead of
+    a smoke test is therefore inert until the order says otherwise, and
+    dropping a provider from the order removes it from BOTH send paths. If the
+    order names nothing usable, Mailjet (required config) is the last resort —
+    transactional mail must always have a provider."""
+    available = {"mailjet": _call_mailjet, "brevo": _call_brevo,
+                 "sweego": _call_sweego, "resend": _call_resend}
+    order = [p.strip() for p in
+             os.environ.get("EMAIL_PROVIDER_ORDER", "mailjet,resend").split(",")
+             if p.strip()]
+    chain: list[tuple[str, Any]] = []
+    for name in order:
+        call = available.get(name)
+        if call is None:
+            continue
+        env_key = _PROVIDER_API_KEYS.get(name)
+        if env_key and not os.environ.get(env_key):
+            continue
+        chain.append((name, call))
+    return chain or [("mailjet", _call_mailjet)]
 
 def send(conn: sqlite3.Connection, to: str, subject: str, body: str,
          *, idem_key: str, unsub_url: str | None = None,
@@ -199,7 +213,7 @@ def send(conn: sqlite3.Connection, to: str, subject: str, body: str,
         # Fail over on ANY provider error (4xx incl. 401/403 account blocks,
         # and 5xx/429), not just transient ones — a blocked account returns
         # 401, and that's exactly when the fallback must engage.
-        for provider, call in _single_send_chain():  # never empty: mailjet leads
+        for provider, call in _single_send_chain():  # never empty: mailjet is the last resort
             resp = call(to, subject, body, unsub_url, reply_to)
             if resp.status_code < 400:
                 break
@@ -363,15 +377,13 @@ def _providers(cfg) -> list[tuple]:
         "resend": ("resend", _call_resend_batch, 100,
                    [(cfg.resend_daily_quota, 86400)]),
     }
-    api_keys = {"brevo": "BREVO_API_KEY", "sweego": "SWEEGO_API_KEY",
-                "resend": "RESEND_API_KEY"}
     order = getattr(cfg, "email_provider_order", ("mailjet", "resend"))
     specs: list[tuple] = []
     for name in order:
         spec = available.get(name)
         if spec is None:
             continue
-        env_key = api_keys.get(name)
+        env_key = _PROVIDER_API_KEYS.get(name)
         if env_key and not os.environ.get(env_key):
             continue
         specs.append(spec)
@@ -384,6 +396,16 @@ def _content_rejected(status: int | None) -> bool:
     """400/422: the provider parsed the request and rejected what was in it.
     For a batch send that points at a recipient, not at the provider."""
     return status in (400, 422)
+
+# When one provider rejects at least this many messages in a cycle while
+# delivering none, its 400/422s stop being believed as per-recipient verdicts
+# (see the guard in send_batch). One or two rejections is the everyday case
+# the failure counter exists for — a typo'd address. A whole cycle of them
+# with zero successes looks like the provider rejecting the sender's side
+# (bad payload shape, unverified From domain — every call 4xxes), and blaming
+# the recipients would silently retire every routed address within
+# max_send_failures_per_address cycles.
+_SYSTEMIC_REJECTION_MIN = 3
 
 def _deliver(send_fn, chunk: list[Outgoing]) -> tuple[list, list, bool]:
     """Send `chunk`. Returns (delivered, undeliverable, provider_unusable).
@@ -530,6 +552,13 @@ def send_batch(conn: sqlite3.Connection, items: list[Outgoing], cfg) -> BatchRes
                 # provider can take it. If every provider fails, the trailing
                 # deferral block releases them.
                 break
+        if (len(refused) >= _SYSTEMIC_REJECTION_MIN
+                and not result.sent_by_provider.get(name)):
+            # An unbroken rejection streak with nothing delivered: treat it as
+            # the provider being unusable, not as a verdict on the recipients.
+            # Hand the mail on to the next provider (or the deferral path at
+            # the bottom) with no failure strikes recorded.
+            remaining, refused = remaining + refused, []
 
     if refused:
         # Refused by every provider that could try it. Release the claim so a

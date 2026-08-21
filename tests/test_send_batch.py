@@ -594,6 +594,55 @@ def test_sweego_422_is_attributed_to_the_single_recipient(db, brevo_sweego_on):
     ).fetchone()["failures"] == 1
 
 
+def test_systemic_rejection_streak_defers_rather_than_retires(db, brevo_sweego_on):
+    """A misconfigured provider (bad payload shape, unverified sender) answers
+    400/422 to EVERY call — at batch_size=1 indistinguishable per-call from a
+    bad recipient. A provider that rejects a whole cycle while delivering
+    nothing is treated as unusable: the mail defers to the next cycle instead
+    of striking every address, which at the failure cap would silently retire
+    them all within three cycles."""
+    with patch("app.mail._call_sweego_batch", return_value=422):
+        res = send_batch(db, _items(4), _cfg(order=("sweego",)))
+    assert res.deferred == 4 and res.undeliverable == set()
+    assert db.execute("SELECT COUNT(*) AS n FROM email_failures").fetchone()["n"] == 0
+    # Claims released so the next cycle (or a fixed provider) can retry.
+    assert db.execute("SELECT COUNT(*) AS n FROM sent_idempotency").fetchone()["n"] == 0
+
+
+def test_batch_adapters_reach_the_wire_with_the_single_send_payload(db,
+                                                                    brevo_sweego_on):
+    """Route send_batch through the REAL _call_brevo_batch/_call_sweego_batch
+    bodies — only requests.post is faked. Guards the adapter glue (the
+    batch_size=1 unpack, the positional unsub_url pass-through, the
+    ProviderResult wrap) that every other batch test mocks away."""
+    posted = []
+    def fake_post(url, **kwargs):
+        posted.append((url, kwargs.get("json")))
+        r = MagicMock()
+        r.status_code = 201
+        return r
+    item = Outgoing(to="u0@x.com", subject="s", body="b", idem_key="w0",
+                    unsub_url="https://x/unsubscribe/tok")
+    with patch("app.mail.requests.post", side_effect=fake_post):
+        res = send_batch(db, [item], _cfg(order=("brevo",)))
+    assert res.delivered == {"w0"} and _sent(db, "brevo") == 1
+    url, payload = posted[0]
+    assert url == "https://api.brevo.com/v3/smtp/email"
+    assert payload["to"] == [{"email": "u0@x.com"}]
+    assert payload["headers"]["List-Unsubscribe"] == "<https://x/unsubscribe/tok>"
+    posted.clear()
+    item = Outgoing(to="u1@x.com", subject="s", body="b", idem_key="w1",
+                    unsub_url="https://x/unsubscribe/tok")
+    with patch("app.mail.requests.post", side_effect=fake_post):
+        res = send_batch(db, [item], _cfg(order=("sweego",)))
+    assert res.delivered == {"w1"} and _sent(db, "sweego") == 1
+    url, payload = posted[0]
+    assert url == "https://api.sweego.io/send"
+    assert payload["recipients"] == [{"email": "u1@x.com"}]
+    assert payload["message-txt"] == "b"
+    assert payload["headers"]["List-Unsubscribe"] == "<https://x/unsubscribe/tok>"
+
+
 def test_a_rejection_at_brevo_still_tries_sweego(db, brevo_sweego_on):
     items = _items(3)
     items[1] = Outgoing(to="odd@x.com", subject="s", body="b", idem_key="odd")

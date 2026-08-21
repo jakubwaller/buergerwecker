@@ -22,13 +22,22 @@
   exactly one, so extend the existing record rather than letting a provider's
   automatic flow replace it. `REPLY_TO_EMAIL` points at a real mailbox on
   `jakubwaller.eu`; the From address itself doesn't receive mail.
+- A signed data-processing agreement (DPA / AVV) with every processor the
+  privacy page names — Mailjet, Brevo, Sweego and (while it remains) Resend,
+  besides Cloudflare and netcup. The Datenschutz page states unconditionally
+  that a DPA is in place with all listed providers, so concluding a new
+  provider's DPA comes **before** deploying a version that lists it, not
+  after.
 
 ## First deploy
 
 1. Clone the repo to the host.
 2. Copy `.env.example` to `.env` and fill in real secrets:
    - 32-byte `TOKEN_SECRET_PRIMARY` and `ADMIN_TOKEN` (e.g., `openssl rand -hex 32`).
-   - Mailjet, Brevo, Sweego and Resend API keys.
+   - The Mailjet API key + secret (required — Mailjet is the primary sender).
+     `BREVO_API_KEY`, `SWEEGO_API_KEY` and `RESEND_API_KEY` are optional:
+     leave a key blank to disable that provider. A fresh deploy has no reason
+     to create a Resend account — it is transitional and being phased out.
    - Review the email-delivery settings (`EMAIL_PROVIDER_ORDER`,
      `BREVO_DAILY_QUOTA`, `SWEEGO_DAILY_QUOTA`, `RESEND_DAILY_QUOTA`,
      `MAILJET_HOURLY_QUOTA`, `MAILJET_DAILY_QUOTA`,
@@ -49,12 +58,24 @@ failing:
   Digests try the first provider up to its remaining quota, then spill along
   the chain. Mailjet-first routes volume through Mailjet so its account accrues
   the traffic needed to lift a new-sender throttle. A provider named in the
-  order without its API key configured is skipped. **Recommended transition
-  order once the Brevo and Sweego accounts are set up:
+  order without its API key configured is skipped. The order gates **every**
+  send path — notification digests and the transactional fallback chain alike —
+  so a configured key alone is inert until its provider is named here.
+- **Prove a new provider before adding it to the order.** Verify the From
+  domain in its dashboard, then send yourself one real mail through its API
+  with the same payload the app builds (`app/mail.py`) and check it arrives
+  with the `List-Unsubscribe`/`List-Unsubscribe-Post` headers intact (Brevo
+  takes them as a plain `headers` passthrough — confirm on a real mailbox).
+  For Sweego, whose API reference renders client-side and cannot be
+  desk-checked, validate the payload shape with a `dry-run: true` send first,
+  then one real send. Only then add the provider to the order.
+  **Recommended transition order once Brevo and Sweego are proven:
   `mailjet,brevo,sweego,resend`** — the EU providers absorb the overflow and
   Resend (US, being phased out) only sees traffic when everything else is
-  spent; drop `resend` from the order once the new providers are proven. It's
-  runtime-configurable (a `docker compose restart web poller`, no rebuild).
+  spent. To finish the phase-out, drop `resend` from the order (that removes
+  it from both send paths), then delete `RESEND_API_KEY` and trim Resend from
+  the Datenschutz page. The order is runtime-configurable (a
+  `docker compose restart web poller`, no rebuild).
 - **Per-provider caps** (`BREVO_DAILY_QUOTA`, `SWEEGO_DAILY_QUOTA`,
   `RESEND_DAILY_QUOTA`, `MAILJET_HOURLY_QUOTA`, `MAILJET_DAILY_QUOTA`). Sends
   beyond the tighter of a provider's rolling windows are **deferred** to a
@@ -102,7 +123,8 @@ Delivery mix over the last 7 days is visible on `/admin`, along with an
 against `MAILJET_MONTHLY_QUOTA` / `BREVO_MONTHLY_QUOTA` /
 `SWEEGO_MONTHLY_QUOTA` / `RESEND_MONTHLY_QUOTA` (display-only caps, free
 tiers: 6000, 9000, 3000 and 3000/mo; Brevo and Sweego appear once their API
-key is configured) — so you can watch quota burn without logging into the
+key is configured and they are named in `EMAIL_PROVIDER_ORDER`) — so you can
+watch quota burn without logging into the
 provider dashboards. Counts come from the app's own durable
 `email_send_counts` table (UTC days, an approximation of each provider's reset
 cycle) and only include mail this app sent. Each row also shows the **rolling

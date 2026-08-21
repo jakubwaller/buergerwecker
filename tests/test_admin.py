@@ -425,19 +425,26 @@ def test_stats_email_usage_windows_and_caps(tmp_path):
 
 def test_stats_email_usage_lists_new_providers_only_when_configured(tmp_path):
     """Brevo/Sweego join the quota table (and thus the ops-summary combined
-    pool) only once their API key is configured — a provider that cannot send
-    must not add its cap to the pool math."""
+    pool) only once they can actually send: API key configured AND named in
+    EMAIL_PROVIDER_ORDER — the same gate mail._daily_usage applies. A provider
+    that cannot send must not add its cap to the pool math."""
     from types import SimpleNamespace
     conn = connect(str(tmp_path / "v.db")); init_schema(conn)
-    cfg = SimpleNamespace(mailjet_monthly_quota=6000, mailjet_daily_quota=200,
-                          resend_monthly_quota=3000, resend_daily_quota=100,
-                          brevo_api_key="xkeysib-x", brevo_monthly_quota=9000,
-                          brevo_daily_quota=300, sweego_api_key="",
-                          sweego_monthly_quota=3000, sweego_daily_quota=100)
+    base = dict(mailjet_monthly_quota=6000, mailjet_daily_quota=200,
+                resend_monthly_quota=3000, resend_daily_quota=100,
+                brevo_api_key="xkeysib-x", brevo_monthly_quota=9000,
+                brevo_daily_quota=300, sweego_api_key="",
+                sweego_monthly_quota=3000, sweego_daily_quota=100)
+    cfg = SimpleNamespace(**base, email_provider_order=(
+        "mailjet", "brevo", "sweego", "resend"))
     u = stats(conn, cfg)["email_usage"]
     assert u["brevo"] == {"month": 0, "today": 0, "rolling": 0,
                           "month_quota": 9000, "day_quota": 300}
-    assert "sweego" not in u
+    assert "sweego" not in u                    # in the order, but keyless
+    # Keyed but NOT in the order — the smoke-test transition state: the cap
+    # must stay out of the pool, exactly as the digest path skips the provider.
+    cfg = SimpleNamespace(**base, email_provider_order=("mailjet", "resend"))
+    assert "brevo" not in stats(conn, cfg)["email_usage"]
 
 def test_init_schema_backfills_counters_once(tmp_path):
     conn = connect(str(tmp_path / "b.db")); init_schema(conn)
