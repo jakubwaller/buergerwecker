@@ -101,10 +101,18 @@ def _sweego_email(to: str, subject: str, body: str,
         "subject": subject,
         "message-txt": body,
     }
-    headers = _unsub_headers(unsub_url)
-    if headers:
-        payload["headers"] = headers
     reply_to = reply_to or os.environ.get("REPLY_TO_EMAIL")
+    headers = _unsub_headers(unsub_url)
+    if headers and reply_to:
+        # Sweego validates List-Unsubscribe and 422s on the RFC 8058 URL-only
+        # form every other provider accepts: it requires <mailto:...>,<url>
+        # paired with the one-click Post header (verified against the live
+        # API, 2026-08-21). The reply-to mailbox is the monitored address, so
+        # unsubscribe-by-mail lands somewhere real; without one there is no
+        # valid mailto and the headers must be dropped, not sent malformed.
+        headers["List-Unsubscribe"] = (
+            f"<mailto:{reply_to}?subject=abmelden>,<{unsub_url}>")
+        payload["headers"] = headers
     if reply_to:
         payload["reply-to"] = {"email": reply_to}
     return payload
