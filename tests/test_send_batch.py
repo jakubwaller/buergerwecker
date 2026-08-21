@@ -21,9 +21,19 @@ def resend_on(monkeypatch):
         monkeypatch.setenv(k, v)
 
 
+@pytest.fixture
+def brevo_sweego_on(monkeypatch):
+    monkeypatch.setenv("BREVO_API_KEY", "xkeysib-test")
+    monkeypatch.setenv("SWEEGO_API_KEY", "sw_test")
+    for k, v in {"MAILJET_API_KEY": "m", "MAILJET_API_SECRET": "s",
+                 "MAILJET_FROM_EMAIL": "x@x", "MAILJET_FROM_NAME": "x"}.items():
+        monkeypatch.setenv(k, v)
+
+
 def _cfg(order=("mailjet", "resend"), **over):
     base = dict(resend_daily_quota=100, mailjet_hourly_quota=10,
                 mailjet_daily_quota=100_000,  # effectively unbounded unless set
+                brevo_daily_quota=300, sweego_daily_quota=100,
                 quota_alert_threshold_pct=80, developer_email="dev@x",
                 email_provider_order=order)
     base.update(over)
@@ -495,3 +505,205 @@ def test_deferral_counter_accumulates_across_cycles(db, resend_on):
         send_batch(db, _items(3, "b"), cfg)       # quota spent, 3 deferred
     from app.mail import deferrals_today
     assert deferrals_today(db) == 5
+
+
+# --- Brevo & Sweego: one message per call, same failover discipline ----------
+# Neither API documents batch atomicity, so both are registered with
+# batch_size=1 — a 4xx is attributable to exactly one recipient, and there is
+# never a partially-delivered batch to mis-retry.
+
+def test_order_routes_to_brevo_one_message_per_call(db, brevo_sweego_on):
+    with patch("app.mail._call_brevo_batch", return_value=201) as bb, \
+         patch("app.mail._call_sweego_batch") as sb, \
+         patch("app.mail._call_mailjet_batch") as mb:
+        res = send_batch(db, _items(3), _cfg(order=("brevo", "sweego")))
+    assert len(res.delivered) == 3 and res.deferred == 0
+    assert bb.call_count == 3                 # batch_size=1, never a real batch
+    assert all(len(c.args[0]) == 1 for c in bb.call_args_list)
+    sb.assert_not_called()
+    mb.assert_not_called()
+    assert _sent(db, "brevo") == 3
+
+
+def test_brevo_and_sweego_skipped_without_api_keys(db, resend_on, monkeypatch):
+    monkeypatch.delenv("BREVO_API_KEY", raising=False)
+    monkeypatch.delenv("SWEEGO_API_KEY", raising=False)
+    with patch("app.mail._call_brevo_batch") as bb, \
+         patch("app.mail._call_sweego_batch") as sb, \
+         patch("app.mail._call_mailjet_batch", return_value=200) as mb:
+        res = send_batch(db, _items(2),
+                         _cfg(order=("brevo", "sweego", "mailjet")))
+    assert len(res.delivered) == 2
+    bb.assert_not_called()
+    sb.assert_not_called()
+    mb.assert_called_once()
+
+
+def test_brevo_overflow_spills_to_sweego(db, brevo_sweego_on):
+    with patch("app.mail._call_brevo_batch", return_value=201), \
+         patch("app.mail._call_sweego_batch", return_value=200):
+        res = send_batch(db, _items(5), _cfg(order=("brevo", "sweego"),
+                                             brevo_daily_quota=2))
+    assert len(res.delivered) == 5 and res.deferred == 0
+    assert _sent(db, "brevo") == 2 and _sent(db, "sweego") == 3
+
+
+def test_existing_brevo_usage_counts_against_its_quota(db, brevo_sweego_on):
+    db.executemany(
+        "INSERT INTO sent_idempotency (idem_key, provider) VALUES (?, 'brevo')",
+        [(f"old{i}",) for i in range(4)])
+    with patch("app.mail._call_brevo_batch", return_value=201):
+        res = send_batch(db, _items(3), _cfg(order=("brevo",),
+                                             brevo_daily_quota=5))
+    assert len(res.delivered) == 1 and res.deferred == 2
+
+
+def test_brevo_402_is_an_outage_not_a_bad_recipient(db, brevo_sweego_on):
+    """Brevo answers 402 when the account is out of credits. That is a provider
+    problem — fall through to the next provider, condemn nobody."""
+    with patch("app.mail._call_brevo_batch", return_value=402) as bb, \
+         patch("app.mail._call_sweego_batch", return_value=200):
+        res = send_batch(db, _items(3), _cfg(order=("brevo", "sweego")))
+    assert len(res.delivered) == 3 and res.undeliverable == set()
+    assert bb.call_count == 1                 # first 402 abandons the provider
+    assert db.execute("SELECT COUNT(*) AS n FROM email_failures").fetchone()["n"] == 0
+
+
+def test_sweego_rejection_feeds_the_failure_accounting(db, brevo_sweego_on):
+    items = _items(3)
+    items[1] = Outgoing(to="subscriber@example-com", subject="s", body="b",
+                        idem_key="poison")
+    with patch("app.mail._call_sweego_batch",
+               _poisoned(["subscriber@example-com"])):
+        res = send_batch(db, items, _cfg(order=("sweego",)))
+    assert len(res.delivered) == 2
+    assert res.undeliverable == {"poison"}
+    assert db.execute(
+        "SELECT failures FROM email_failures WHERE email='subscriber@example-com'"
+    ).fetchone()["failures"] == 1
+
+
+def test_sweego_422_is_attributed_to_the_single_recipient(db, brevo_sweego_on):
+    """Sweego's documented validation error is 422; with one message per call
+    it points at exactly one address."""
+    with patch("app.mail._call_sweego_batch", return_value=422):
+        res = send_batch(db, _items(1), _cfg(order=("sweego",)))
+    assert res.undeliverable == {"k0"} and res.delivered == set()
+    assert db.execute(
+        "SELECT failures FROM email_failures WHERE email='u0@x.com'"
+    ).fetchone()["failures"] == 1
+
+
+def test_systemic_rejection_streak_defers_rather_than_retires(db, brevo_sweego_on):
+    """A misconfigured provider (bad payload shape, unverified sender) answers
+    400/422 to EVERY call — at batch_size=1 indistinguishable per-call from a
+    bad recipient. A provider that rejects a whole cycle while delivering
+    nothing is treated as unusable: the mail defers to the next cycle instead
+    of striking every address, which at the failure cap would silently retire
+    them all within three cycles."""
+    with patch("app.mail._call_sweego_batch", return_value=422):
+        res = send_batch(db, _items(4), _cfg(order=("sweego",)))
+    assert res.deferred == 4 and res.undeliverable == set()
+    assert db.execute("SELECT COUNT(*) AS n FROM email_failures").fetchone()["n"] == 0
+    # Claims released so the next cycle (or a fixed provider) can retry.
+    assert db.execute("SELECT COUNT(*) AS n FROM sent_idempotency").fetchone()["n"] == 0
+
+
+def test_batch_adapters_reach_the_wire_with_the_single_send_payload(db,
+                                                                    brevo_sweego_on):
+    """Route send_batch through the REAL _call_brevo_batch/_call_sweego_batch
+    bodies — only requests.post is faked. Guards the adapter glue (the
+    batch_size=1 unpack, the positional unsub_url pass-through, the
+    ProviderResult wrap) that every other batch test mocks away."""
+    posted = []
+    def fake_post(url, **kwargs):
+        posted.append((url, kwargs.get("json")))
+        r = MagicMock()
+        r.status_code = 201
+        return r
+    item = Outgoing(to="u0@x.com", subject="s", body="b", idem_key="w0",
+                    unsub_url="https://x/unsubscribe/tok")
+    with patch("app.mail.requests.post", side_effect=fake_post):
+        res = send_batch(db, [item], _cfg(order=("brevo",)))
+    assert res.delivered == {"w0"} and _sent(db, "brevo") == 1
+    url, payload = posted[0]
+    assert url == "https://api.brevo.com/v3/smtp/email"
+    assert payload["to"] == [{"email": "u0@x.com"}]
+    assert payload["headers"]["List-Unsubscribe"] == "<https://x/unsubscribe/tok>"
+    posted.clear()
+    item = Outgoing(to="u1@x.com", subject="s", body="b", idem_key="w1",
+                    unsub_url="https://x/unsubscribe/tok")
+    with patch("app.mail.requests.post", side_effect=fake_post):
+        res = send_batch(db, [item], _cfg(order=("sweego",)))
+    assert res.delivered == {"w1"} and _sent(db, "sweego") == 1
+    url, payload = posted[0]
+    assert url == "https://api.sweego.io/send"
+    assert payload["recipients"] == [{"email": "u1@x.com"}]
+    assert payload["message-txt"] == "b"
+    assert payload["headers"]["List-Unsubscribe"] == "<https://x/unsubscribe/tok>"
+
+
+def test_a_rejection_at_brevo_still_tries_sweego(db, brevo_sweego_on):
+    items = _items(3)
+    items[1] = Outgoing(to="odd@x.com", subject="s", body="b", idem_key="odd")
+    with patch("app.mail._call_brevo_batch", _poisoned(["odd@x.com"])), \
+         patch("app.mail._call_sweego_batch", return_value=200):
+        res = send_batch(db, items, _cfg(order=("brevo", "sweego")))
+    assert len(res.delivered) == 3 and res.undeliverable == set()
+    assert res.sent_by_provider == {"brevo": 2, "sweego": 1}
+    assert db.execute("SELECT COUNT(*) AS n FROM email_failures").fetchone()["n"] == 0
+
+
+def test_brevo_and_sweego_both_down_defers_rather_than_condemns(db, brevo_sweego_on):
+    with patch("app.mail._call_brevo_batch", return_value=500), \
+         patch("app.mail._call_sweego_batch", side_effect=OSError("timeout")):
+        res = send_batch(db, _items(3), _cfg(order=("brevo", "sweego")))
+    assert res.deferred == 3 and res.undeliverable == set()
+    assert db.execute("SELECT COUNT(*) AS n FROM email_failures").fetchone()["n"] == 0
+    assert db.execute("SELECT COUNT(*) AS n FROM sent_idempotency").fetchone()["n"] == 0
+
+
+def test_batch_bumps_daily_counters_for_new_providers(db, brevo_sweego_on):
+    with patch("app.mail._call_brevo_batch", return_value=201), \
+         patch("app.mail._call_sweego_batch", return_value=200):
+        send_batch(db, _items(4), _cfg(order=("brevo", "sweego"),
+                                       brevo_daily_quota=3))
+    def day_count(p):
+        row = db.execute(
+            "SELECT n FROM email_send_counts WHERE provider=? AND day=date('now')",
+            (p,)).fetchone()
+        return row["n"] if row else 0
+    assert day_count("brevo") == 3
+    assert day_count("sweego") == 1
+
+
+def test_quota_alert_pool_includes_new_providers_when_configured(db, brevo_sweego_on):
+    # 16 sends against a combined cap of 20 (mailjet 5 + brevo 10 + sweego 5)
+    # = 80% → the alert fires even with no deferral. Guards the _daily_usage
+    # caps dict: a provider missing from it silently drops out of the pool.
+    db.executemany(
+        "INSERT INTO sent_idempotency (idem_key, provider) VALUES (?, 'brevo')",
+        [(f"b{i}",) for i in range(16)])
+    with patch("app.mail.send") as snd:
+        maybe_quota_alert(db, _cfg(order=("mailjet", "brevo", "sweego"),
+                                   mailjet_daily_quota=5, brevo_daily_quota=10,
+                                   sweego_daily_quota=5),
+                          deferred=0)
+    snd.assert_called_once()
+    body = snd.call_args.args[3]
+    assert "brevo: 16/10" in body
+
+
+def test_quota_alert_ignores_new_providers_without_keys(db, monkeypatch):
+    """No BREVO/SWEEGO API keys → they are not in the send path, so their
+    (unused) caps must not join the pool or raise an alarm on their own."""
+    monkeypatch.delenv("BREVO_API_KEY", raising=False)
+    monkeypatch.delenv("SWEEGO_API_KEY", raising=False)
+    db.executemany(
+        "INSERT INTO sent_idempotency (idem_key, provider) VALUES (?, 'brevo')",
+        [(f"b{i}",) for i in range(99)])
+    with patch("app.mail.send") as snd:
+        maybe_quota_alert(db, _cfg(order=("mailjet", "brevo", "sweego"),
+                                   brevo_daily_quota=100, sweego_daily_quota=100),
+                          deferred=0)
+    snd.assert_not_called()

@@ -2,7 +2,8 @@ import sqlite3
 from unittest.mock import patch, MagicMock
 import pytest
 from app.db import connect, init_schema
-from app.mail import send, MailFailed, _idem_key, _call_mailjet, _call_resend
+from app.mail import (send, MailFailed, _idem_key, _call_mailjet, _call_resend,
+                      _call_brevo, _call_sweego)
 
 @pytest.fixture
 def db(tmp_path):
@@ -13,6 +14,20 @@ def db(tmp_path):
 @pytest.fixture
 def resend_configured(monkeypatch):
     monkeypatch.setenv("RESEND_API_KEY", "re_test_key")
+
+@pytest.fixture
+def brevo_configured(monkeypatch):
+    monkeypatch.setenv("BREVO_API_KEY", "xkeysib-test")
+
+@pytest.fixture
+def sweego_configured(monkeypatch):
+    monkeypatch.setenv("SWEEGO_API_KEY", "sw_test")
+
+@pytest.fixture
+def full_chain_order(monkeypatch):
+    """The recommended transition order. The chain honors EMAIL_PROVIDER_ORDER,
+    so tests expecting Brevo/Sweego in the transactional chain must name them."""
+    monkeypatch.setenv("EMAIL_PROVIDER_ORDER", "mailjet,brevo,sweego,resend")
 
 def _ok():
     r = MagicMock()
@@ -106,9 +121,12 @@ def mailjet_env(monkeypatch):
     monkeypatch.setenv("MAILJET_FROM_NAME", "Bürgerwecker")
 
 def _capture():
-    """Patch-ready post that records the json= payload and returns 200."""
+    """Patch-ready post that records the url, headers and json= payload and
+    returns 200."""
     seen = {}
     def fake_post(url, **kwargs):
+        seen["url"] = url
+        seen["headers"] = kwargs.get("headers")
         seen["json"] = kwargs.get("json")
         return _ok()
     return seen, fake_post
@@ -149,6 +167,94 @@ def test_explicit_reply_to_overrides_the_env_default(monkeypatch, mailjet_env):
     assert seen["json"]["reply_to"] == "gast@example.org"
 
 
+# ---------- Brevo & Sweego in the transactional failover chain ----------
+
+def test_failover_prefers_brevo_over_resend(db, resend_configured, brevo_configured,
+                                            full_chain_order):
+    """With Brevo configured, a Mailjet failure goes to the EU provider first;
+    Resend (being phased out) is only the last resort in the chain."""
+    with patch("app.mail._call_mailjet", return_value=_resp(503)), \
+         patch("app.mail._call_brevo", return_value=_ok()) as bv, \
+         patch("app.mail._call_resend") as re_:
+        send(db, "alice@example.com", "subj", "body", idem_key="kb1")
+    bv.assert_called_once()
+    re_.assert_not_called()
+    row = db.execute("SELECT provider FROM sent_idempotency WHERE idem_key='kb1'").fetchone()
+    assert row["provider"] == "brevo"
+
+def test_failover_walks_the_whole_chain(db, resend_configured, brevo_configured,
+                                        sweego_configured, full_chain_order):
+    with patch("app.mail._call_mailjet", return_value=_resp(500)), \
+         patch("app.mail._call_brevo", return_value=_resp(402)), \
+         patch("app.mail._call_sweego", return_value=_resp(500)), \
+         patch("app.mail._call_resend", return_value=_ok()) as re_:
+        send(db, "alice@example.com", "subj", "body", idem_key="kc1")
+    re_.assert_called_once()
+    row = db.execute("SELECT provider FROM sent_idempotency WHERE idem_key='kc1'").fetchone()
+    assert row["provider"] == "resend"
+
+def test_raises_when_the_whole_chain_fails(db, brevo_configured, sweego_configured,
+                                           full_chain_order, monkeypatch):
+    monkeypatch.delenv("RESEND_API_KEY", raising=False)
+    with patch("app.mail._call_mailjet", return_value=_resp(503)), \
+         patch("app.mail._call_brevo", return_value=_resp(500)), \
+         patch("app.mail._call_sweego", return_value=_resp(500)):
+        with pytest.raises(MailFailed):
+            send(db, "alice@example.com", "subj", "body", idem_key="kd1")
+    # Claim rolled back on full failure → retry possible.
+    assert db.execute("SELECT * FROM sent_idempotency WHERE idem_key='kd1'").fetchone() is None
+
+def test_brevo_and_sweego_not_in_the_chain_without_keys(db, full_chain_order,
+                                                        monkeypatch):
+    monkeypatch.delenv("BREVO_API_KEY", raising=False)
+    monkeypatch.delenv("SWEEGO_API_KEY", raising=False)
+    monkeypatch.delenv("RESEND_API_KEY", raising=False)
+    with patch("app.mail._call_mailjet", return_value=_resp(503)), \
+         patch("app.mail._call_brevo") as bv, \
+         patch("app.mail._call_sweego") as sw:
+        with pytest.raises(MailFailed):
+            send(db, "alice@example.com", "subj", "body", idem_key="ke1")
+    bv.assert_not_called()
+    sw.assert_not_called()
+
+def test_a_key_outside_the_provider_order_is_not_a_live_fallback(db, monkeypatch,
+                                                                 brevo_configured):
+    """The smoke-test transition state: BREVO_API_KEY configured for a manual
+    test while EMAIL_PROVIDER_ORDER still reads mailjet,resend. The order gates
+    the transactional chain too — an unproven provider must not quietly become
+    a live fallback for confirmations."""
+    monkeypatch.setenv("EMAIL_PROVIDER_ORDER", "mailjet,resend")
+    monkeypatch.delenv("RESEND_API_KEY", raising=False)
+    with patch("app.mail._call_mailjet", return_value=_resp(503)), \
+         patch("app.mail._call_brevo") as bv:
+        with pytest.raises(MailFailed):
+            send(db, "alice@example.com", "subj", "body", idem_key="ko1")
+    bv.assert_not_called()
+
+def test_dropping_resend_from_the_order_removes_it_from_the_chain(db, monkeypatch,
+                                                                  resend_configured,
+                                                                  brevo_configured):
+    """Completing the phase-out by dropping `resend` from the order must stop
+    transactional fallbacks too, not just digests — otherwise Resend keeps
+    seeing occasional mail until its key is deleted."""
+    monkeypatch.setenv("EMAIL_PROVIDER_ORDER", "mailjet,brevo")
+    with patch("app.mail._call_mailjet", return_value=_resp(503)), \
+         patch("app.mail._call_brevo", return_value=_ok()), \
+         patch("app.mail._call_resend") as re_:
+        send(db, "alice@example.com", "subj", "body", idem_key="ko2")
+    re_.assert_not_called()
+    row = db.execute("SELECT provider FROM sent_idempotency WHERE idem_key='ko2'").fetchone()
+    assert row["provider"] == "brevo"
+
+def test_order_without_a_usable_provider_falls_back_to_mailjet(db, monkeypatch):
+    """A bad order must not leave transactional mail with no provider at all —
+    Mailjet is required config, so it is the last resort."""
+    monkeypatch.setenv("EMAIL_PROVIDER_ORDER", "resend")
+    monkeypatch.delenv("RESEND_API_KEY", raising=False)
+    with patch("app.mail._call_mailjet", return_value=_ok()) as mj:
+        send(db, "alice@example.com", "subj", "body", idem_key="ko3")
+    mj.assert_called_once()
+
 def test_pending_row_blocks_second_call_after_crash(db):
     """If the process died mid-send leaving provider='pending', the next call must skip."""
     db.execute(
@@ -174,6 +280,74 @@ def test_unsub_headers_only_with_real_url(monkeypatch, mailjet_env):
         _call_mailjet("a@x.com", "s", "b")   # no unsub semantics (e.g. confirmation)
     assert "Headers" not in seen["json"]["Messages"][0]
 
+# ---------- Brevo & Sweego payload shapes ----------
+
+def test_brevo_payload_shape(monkeypatch, mailjet_env, brevo_configured):
+    monkeypatch.setenv("REPLY_TO_EMAIL", "termine@jakubwaller.eu")
+    seen, fake = _capture()
+    with patch("app.mail.requests.post", side_effect=fake):
+        _call_brevo("alice@example.com", "subj", "body",
+                    "https://x/unsubscribe/tok123")
+    assert seen["url"] == "https://api.brevo.com/v3/smtp/email"
+    assert seen["headers"]["api-key"] == "xkeysib-test"
+    p = seen["json"]
+    assert p["sender"] == {"email": "hallo@buergerwecker.de",
+                           "name": "Bürgerwecker"}
+    assert p["to"] == [{"email": "alice@example.com"}]
+    assert p["subject"] == "subj" and p["textContent"] == "body"
+    assert p["replyTo"] == {"email": "termine@jakubwaller.eu"}
+    assert p["headers"]["List-Unsubscribe"] == "<https://x/unsubscribe/tok123>"
+    assert p["headers"]["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
+
+def test_brevo_omits_reply_to_and_headers_when_unset(monkeypatch, mailjet_env,
+                                                     brevo_configured):
+    monkeypatch.delenv("REPLY_TO_EMAIL", raising=False)
+    seen, fake = _capture()
+    with patch("app.mail.requests.post", side_effect=fake):
+        _call_brevo("alice@example.com", "subj", "body")
+    assert "replyTo" not in seen["json"]
+    assert "headers" not in seen["json"]
+
+def test_sweego_payload_shape(monkeypatch, mailjet_env, sweego_configured):
+    monkeypatch.setenv("REPLY_TO_EMAIL", "termine@jakubwaller.eu")
+    seen, fake = _capture()
+    with patch("app.mail.requests.post", side_effect=fake):
+        _call_sweego("alice@example.com", "subj", "body",
+                     "https://x/unsubscribe/tok123")
+    assert seen["url"] == "https://api.sweego.io/send"
+    assert seen["headers"]["Api-Key"] == "sw_test"
+    p = seen["json"]
+    assert p["channel"] == "email" and p["provider"] == "sweego"
+    assert p["campaign-type"] == "transac"
+    assert p["from"] == {"email": "hallo@buergerwecker.de",
+                         "name": "Bürgerwecker"}
+    assert p["recipients"] == [{"email": "alice@example.com"}]
+    assert p["subject"] == "subj" and p["message-txt"] == "body"
+    assert p["reply-to"] == {"email": "termine@jakubwaller.eu"}
+    assert p["headers"]["List-Unsubscribe"] == "<https://x/unsubscribe/tok123>"
+    assert p["headers"]["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
+
+def test_sweego_omits_reply_to_and_headers_when_unset(monkeypatch, mailjet_env,
+                                                      sweego_configured):
+    monkeypatch.delenv("REPLY_TO_EMAIL", raising=False)
+    seen, fake = _capture()
+    with patch("app.mail.requests.post", side_effect=fake):
+        _call_sweego("alice@example.com", "subj", "body")
+    assert "reply-to" not in seen["json"]
+    assert "headers" not in seen["json"]
+
+def test_explicit_reply_to_overrides_env_for_new_providers(monkeypatch, mailjet_env,
+                                                           brevo_configured,
+                                                           sweego_configured):
+    monkeypatch.setenv("REPLY_TO_EMAIL", "buergerwecker@jakubwaller.eu")
+    seen, fake = _capture()
+    with patch("app.mail.requests.post", side_effect=fake):
+        _call_brevo("alice@example.com", "s", "b", None, "gast@example.org")
+    assert seen["json"]["replyTo"] == {"email": "gast@example.org"}
+    with patch("app.mail.requests.post", side_effect=fake):
+        _call_sweego("alice@example.com", "s", "b", None, "gast@example.org")
+    assert seen["json"]["reply-to"] == {"email": "gast@example.org"}
+
 # ---------- durable per-day send counters (admin quota view) ----------
 
 def _day_count(db, provider):
@@ -194,6 +368,14 @@ def test_send_counter_follows_failover_provider(db, resend_configured):
          patch("app.mail._call_resend", return_value=_ok()):
         send(db, "a@x.com", "s", "b", idem_key="cnt3")
     assert _day_count(db, "resend") == 1
+    assert _day_count(db, "mailjet") == 0
+
+def test_send_counter_follows_the_chain_provider(db, brevo_configured,
+                                                 full_chain_order):
+    with patch("app.mail._call_mailjet", return_value=_resp(503)), \
+         patch("app.mail._call_brevo", return_value=_ok()):
+        send(db, "a@x.com", "s", "b", idem_key="cnt5")
+    assert _day_count(db, "brevo") == 1
     assert _day_count(db, "mailjet") == 0
 
 def test_failed_send_does_not_bump_counter(db, monkeypatch):

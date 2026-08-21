@@ -216,6 +216,21 @@ def _email_usage(conn: sqlite3.Connection, cfg) -> dict:
         "resend":  {"month_quota": getattr(cfg, "resend_monthly_quota", None),
                     "day_quota":   getattr(cfg, "resend_daily_quota", None)},
     }
+    # Brevo/Sweego join the table only once they can actually send: API key
+    # configured AND named in EMAIL_PROVIDER_ORDER — the same gate
+    # mail._daily_usage applies via _providers. A provider that cannot send
+    # (say, a key configured ahead of a smoke test while the order still
+    # excludes it) must not add its cap to the combined-pool grading in
+    # summary_anomalies. The unconditional mailjet/resend rows above are
+    # transition-scoped on purpose: Mailjet is required config, and Resend
+    # keeps its row until the phase-out completes.
+    order = getattr(cfg, "email_provider_order", ("mailjet", "resend"))
+    if getattr(cfg, "brevo_api_key", "") and "brevo" in order:
+        caps["brevo"] = {"month_quota": getattr(cfg, "brevo_monthly_quota", None),
+                         "day_quota":   getattr(cfg, "brevo_daily_quota", None)}
+    if getattr(cfg, "sweego_api_key", "") and "sweego" in order:
+        caps["sweego"] = {"month_quota": getattr(cfg, "sweego_monthly_quota", None),
+                          "day_quota":   getattr(cfg, "sweego_daily_quota", None)}
     usage = {p: {"month": 0, "today": 0, **caps[p]} for p in caps}
     try:
         rows = conn.execute(

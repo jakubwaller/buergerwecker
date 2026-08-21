@@ -66,6 +66,49 @@ def _resend_email(to: str, subject: str, body: str,
         payload["reply_to"] = reply_to
     return payload
 
+def _brevo_email(to: str, subject: str, body: str,
+                 unsub_url: str | None = None,
+                 reply_to: str | None = None) -> dict:
+    """One Brevo `/v3/smtp/email` payload. The From identity is the same
+    verified sending address the other providers use."""
+    payload = {
+        "sender": {"email": os.environ["MAILJET_FROM_EMAIL"],
+                   "name":  os.environ["MAILJET_FROM_NAME"]},
+        "to": [{"email": to}],
+        "subject": subject,
+        "textContent": body,
+    }
+    headers = _unsub_headers(unsub_url)
+    if headers:
+        payload["headers"] = headers
+    reply_to = reply_to or os.environ.get("REPLY_TO_EMAIL")
+    if reply_to:
+        payload["replyTo"] = {"email": reply_to}
+    return payload
+
+def _sweego_email(to: str, subject: str, body: str,
+                  unsub_url: str | None = None,
+                  reply_to: str | None = None) -> dict:
+    """One Sweego `/send` payload. Field names are hyphenated JSON keys, and
+    `channel`/`provider` are required literals."""
+    payload = {
+        "channel": "email",
+        "provider": "sweego",
+        "campaign-type": "transac",
+        "from": {"email": os.environ["MAILJET_FROM_EMAIL"],
+                 "name":  os.environ["MAILJET_FROM_NAME"]},
+        "recipients": [{"email": to}],
+        "subject": subject,
+        "message-txt": body,
+    }
+    headers = _unsub_headers(unsub_url)
+    if headers:
+        payload["headers"] = headers
+    reply_to = reply_to or os.environ.get("REPLY_TO_EMAIL")
+    if reply_to:
+        payload["reply-to"] = {"email": reply_to}
+    return payload
+
 def _call_mailjet(to: str, subject: str, body: str,
                   unsub_url: str | None = None,
                   reply_to: str | None = None) -> Any:
@@ -87,6 +130,26 @@ def _call_resend(to: str, subject: str, body: str,
         timeout=30,
     )
 
+def _call_brevo(to: str, subject: str, body: str,
+                unsub_url: str | None = None,
+                reply_to: str | None = None) -> Any:
+    return requests.post(
+        "https://api.brevo.com/v3/smtp/email",
+        headers={"api-key": os.environ["BREVO_API_KEY"]},
+        json=_brevo_email(to, subject, body, unsub_url, reply_to),
+        timeout=30,
+    )
+
+def _call_sweego(to: str, subject: str, body: str,
+                 unsub_url: str | None = None,
+                 reply_to: str | None = None) -> Any:
+    return requests.post(
+        "https://api.sweego.io/send",
+        headers={"Api-Key": os.environ["SWEEGO_API_KEY"]},
+        json=_sweego_email(to, subject, body, unsub_url, reply_to),
+        timeout=30,
+    )
+
 def _record_send_count(conn: sqlite3.Connection, provider: str, n: int = 1) -> None:
     """Bump the durable per-day counter behind the admin quota view. Days are
     UTC (matching sent_at's CURRENT_TIMESTAMP), an approximation of the
@@ -98,6 +161,34 @@ def _record_send_count(conn: sqlite3.Connection, provider: str, n: int = 1) -> N
         (provider, n),
     )
 
+# Providers whose API key is optional; a missing key disables the provider.
+_PROVIDER_API_KEYS = {"brevo": "BREVO_API_KEY", "sweego": "SWEEGO_API_KEY",
+                      "resend": "RESEND_API_KEY"}
+
+def _single_send_chain() -> list[tuple[str, Any]]:
+    """Failover chain for transactional `send()`, gated by EMAIL_PROVIDER_ORDER
+    exactly like the digest path (`_providers`): a provider sends only when it
+    is named in the order AND its API key is present. A key configured ahead of
+    a smoke test is therefore inert until the order says otherwise, and
+    dropping a provider from the order removes it from BOTH send paths. If the
+    order names nothing usable, Mailjet (required config) is the last resort —
+    transactional mail must always have a provider."""
+    available = {"mailjet": _call_mailjet, "brevo": _call_brevo,
+                 "sweego": _call_sweego, "resend": _call_resend}
+    order = [p.strip() for p in
+             os.environ.get("EMAIL_PROVIDER_ORDER", "mailjet,resend").split(",")
+             if p.strip()]
+    chain: list[tuple[str, Any]] = []
+    for name in order:
+        call = available.get(name)
+        if call is None:
+            continue
+        env_key = _PROVIDER_API_KEYS.get(name)
+        if env_key and not os.environ.get(env_key):
+            continue
+        chain.append((name, call))
+    return chain or [("mailjet", _call_mailjet)]
+
 def send(conn: sqlite3.Connection, to: str, subject: str, body: str,
          *, idem_key: str, unsub_url: str | None = None,
          reply_to: str | None = None) -> None:
@@ -106,8 +197,8 @@ def send(conn: sqlite3.Connection, to: str, subject: str, body: str,
     `reply_to` overrides the REPLY_TO_EMAIL default for this one message.
 
     Order: claim the idempotency row FIRST (atomic INSERT OR IGNORE), then
-    attempt sends. If both providers fail the claim is rolled back so a
-    retry can proceed. If the process dies between claim and successful
+    attempt sends. If every configured provider fails the claim is rolled back
+    so a retry can proceed. If the process dies between claim and successful
     send, the row remains with provider='pending' and the next call
     short-circuits — preventing a double-send on crash recovery.
     """
@@ -119,14 +210,13 @@ def send(conn: sqlite3.Connection, to: str, subject: str, body: str,
     if cur.rowcount == 0:
         return  # already claimed by an earlier call
     try:
-        resp = _call_mailjet(to, subject, body, unsub_url, reply_to)
-        provider = "mailjet"
-        # Fail over to Resend on ANY Mailjet error (4xx incl. 401/403 account
-        # blocks, and 5xx/429), not just transient ones — a blocked Mailjet
-        # account returns 401, and that's exactly when the fallback must engage.
-        if resp.status_code >= 400 and os.environ.get("RESEND_API_KEY"):
-            resp = _call_resend(to, subject, body, unsub_url, reply_to)
-            provider = "resend"
+        # Fail over on ANY provider error (4xx incl. 401/403 account blocks,
+        # and 5xx/429), not just transient ones — a blocked account returns
+        # 401, and that's exactly when the fallback must engage.
+        for provider, call in _single_send_chain():  # never empty: mailjet is the last resort
+            resp = call(to, subject, body, unsub_url, reply_to)
+            if resp.status_code < 400:
+                break
         if resp.status_code >= 400:
             raise MailFailed(f"provider failed; last status {resp.status_code}")
     except Exception:
@@ -142,12 +232,12 @@ def send(conn: sqlite3.Connection, to: str, subject: str, body: str,
 # --------------------------------------------------------------------------
 # Batched, quota-aware delivery (notification digests).
 #
-# Free-tier providers cap total sends (Resend ~100/day, Mailjet ~10/hour), so
-# a notification burst must (a) be sent in as few HTTP calls as possible and
-# (b) stop before a provider's cap to avoid account blocks. `send_batch` packs
-# recipients into provider batch calls, sends only within each provider's
-# remaining rolling-window quota, and DEFERS the rest (releasing their
-# idempotency claims so a later cycle retries them).
+# Free-tier providers cap total sends (Mailjet ~10/hour, Brevo ~300/day,
+# Sweego and Resend ~100/day), so a notification burst must (a) be sent in as
+# few HTTP calls as possible and (b) stop before a provider's cap to avoid
+# account blocks. `send_batch` packs recipients into provider batch calls,
+# sends only within each provider's remaining rolling-window quota, and DEFERS
+# the rest (releasing their idempotency claims so a later cycle retries them).
 # --------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -233,6 +323,23 @@ def _call_resend_batch(items: list[Outgoing]) -> ProviderResult:
     )
     return ProviderResult(resp.status_code)
 
+# Brevo and Sweego send ONE message per API call, on purpose. Neither API
+# documents whether a multi-message request is all-or-nothing, and our retry
+# logic is only safe under one of two regimes: per-message verdicts (Mailjet)
+# or a provably atomic batch (Resend). One recipient per call sidesteps the
+# ambiguity — a 4xx is attributable to exactly that recipient, and nothing was
+# partially delivered. Both are registered with batch_size=1 to enforce it.
+
+def _call_brevo_batch(items: list[Outgoing]) -> ProviderResult:
+    [item] = items  # batch_size=1 — see the atomicity note above
+    resp = _call_brevo(item.to, item.subject, item.body, item.unsub_url)
+    return ProviderResult(resp.status_code)
+
+def _call_sweego_batch(items: list[Outgoing]) -> ProviderResult:
+    [item] = items  # batch_size=1 — see the atomicity note above
+    resp = _call_sweego(item.to, item.subject, item.body, item.unsub_url)
+    return ProviderResult(resp.status_code)
+
 def _window_used(conn: sqlite3.Connection, provider: str, window_seconds: int) -> int:
     """Count emails a provider actually sent within the last `window_seconds`.
     Reads sent_idempotency (14-day retention covers our day/hour windows)."""
@@ -248,18 +355,25 @@ def _providers(cfg) -> list[tuple]:
 
     Order follows cfg.email_provider_order (default Mailjet-first, so Mailjet's
     account sees the notification traffic — the prerequisite for getting its
-    new-sender throttle lifted; Resend absorbs whatever exceeds Mailjet's
-    hourly allowance). Resend is skipped when no API key is configured. Each
-    provider's window usage already includes transactional emails sent via
-    `send()`, since those are recorded under the same provider name.
+    new-sender throttle lifted; the rest of the order absorbs whatever exceeds
+    Mailjet's hourly allowance). Optional providers (Brevo, Sweego, Resend) are
+    skipped when their API key is not configured. Each provider's window usage
+    already includes transactional emails sent via `send()`, since those are
+    recorded under the same provider name.
     """
     # Mailjet is bounded by BOTH its hourly cap (the new-sender warm-up
     # throttle) and its daily cap (free tier = 200/day); _headroom takes the
-    # tighter of the two. Resend's free tier is a flat daily cap.
+    # tighter of the two. Brevo (free tier 300/day), Sweego (100/day) and
+    # Resend (100/day) are flat daily caps. Brevo and Sweego run at
+    # batch_size=1 — see the atomicity note above their batch callers.
     available = {
         "mailjet": ("mailjet", _call_mailjet_batch, 50,
                     [(cfg.mailjet_hourly_quota, 3600),
                      (cfg.mailjet_daily_quota, 86400)]),
+        "brevo": ("brevo", _call_brevo_batch, 1,
+                  [(getattr(cfg, "brevo_daily_quota", 300), 86400)]),
+        "sweego": ("sweego", _call_sweego_batch, 1,
+                   [(getattr(cfg, "sweego_daily_quota", 100), 86400)]),
         "resend": ("resend", _call_resend_batch, 100,
                    [(cfg.resend_daily_quota, 86400)]),
     }
@@ -269,7 +383,8 @@ def _providers(cfg) -> list[tuple]:
         spec = available.get(name)
         if spec is None:
             continue
-        if name == "resend" and not os.environ.get("RESEND_API_KEY"):
+        env_key = _PROVIDER_API_KEYS.get(name)
+        if env_key and not os.environ.get(env_key):
             continue
         specs.append(spec)
     return specs
@@ -281,6 +396,16 @@ def _content_rejected(status: int | None) -> bool:
     """400/422: the provider parsed the request and rejected what was in it.
     For a batch send that points at a recipient, not at the provider."""
     return status in (400, 422)
+
+# When one provider rejects at least this many messages in a cycle while
+# delivering none, its 400/422s stop being believed as per-recipient verdicts
+# (see the guard in send_batch). One or two rejections is the everyday case
+# the failure counter exists for — a typo'd address. A whole cycle of them
+# with zero successes looks like the provider rejecting the sender's side
+# (bad payload shape, unverified From domain — every call 4xxes), and blaming
+# the recipients would silently retire every routed address within
+# max_send_failures_per_address cycles.
+_SYSTEMIC_REJECTION_MIN = 3
 
 def _deliver(send_fn, chunk: list[Outgoing]) -> tuple[list, list, bool]:
     """Send `chunk`. Returns (delivered, undeliverable, provider_unusable).
@@ -427,6 +552,13 @@ def send_batch(conn: sqlite3.Connection, items: list[Outgoing], cfg) -> BatchRes
                 # provider can take it. If every provider fails, the trailing
                 # deferral block releases them.
                 break
+        if (len(refused) >= _SYSTEMIC_REJECTION_MIN
+                and not result.sent_by_provider.get(name)):
+            # An unbroken rejection streak with nothing delivered: treat it as
+            # the provider being unusable, not as a verdict on the recipients.
+            # Hand the mail on to the next provider (or the deferral path at
+            # the bottom) with no failure strikes recorded.
+            remaining, refused = remaining + refused, []
 
     if refused:
         # Refused by every provider that could try it. Release the claim so a
@@ -476,6 +608,8 @@ def _daily_usage(conn: sqlite3.Connection, cfg) -> list[tuple[str, int, int]]:
     actually configured to send. Providers without a cap are skipped — there is
     nothing to be near the limit of."""
     caps = {"mailjet": getattr(cfg, "mailjet_daily_quota", 0),
+            "brevo": getattr(cfg, "brevo_daily_quota", 0),
+            "sweego": getattr(cfg, "sweego_daily_quota", 0),
             "resend": getattr(cfg, "resend_daily_quota", 0)}
     usage = []
     for name, _send_fn, _batch_size, _limits in _providers(cfg):
