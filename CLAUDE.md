@@ -58,7 +58,7 @@ links in already-sent mail silently misparse.
 how that key is built means re-notifying people about slots they were already told about.
 
 **Several providers, and the From domain must be verified in every one of them.**
-`EMAIL_PROVIDER_ORDER` falls back along the configured chain (Mailjet, Brevo, Sweego, Resend); an
+`EMAIL_PROVIDER_ORDER` falls back along the configured chain (Mailjet, Brevo, Sweego); an
 unverified sender domain makes a fallback provider reject the mail at exactly the moment it is
 needed. Quotas are enforced in config — see the DEPLOY runbook.
 

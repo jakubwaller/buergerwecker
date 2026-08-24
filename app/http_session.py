@@ -7,7 +7,7 @@ class CountingSession(requests.Session):
 
     Used to measure how many calls we make to upstream (Leipzig) endpoints.
     `Session.get`/`post`/etc. all funnel through `request()`, so overriding it
-    captures everything. Mailjet/Resend sends use their own `requests.post`,
+    captures everything. Mail-provider sends use their own `requests.post`,
     not this session, so they are deliberately not counted.
     """
 

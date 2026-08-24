@@ -82,7 +82,6 @@ def client(tmp_path, monkeypatch, catalog_root):
     monkeypatch.setenv("MAILJET_FROM_EMAIL", "x@x")
     monkeypatch.setenv("MAILJET_FROM_NAME", "x")
     monkeypatch.setenv("MAILJET_DAILY_QUOTA", "6000")
-    monkeypatch.setenv("RESEND_API_KEY", "re")
     monkeypatch.setenv("ADMIN_TOKEN", "a" * 32)
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://x")
     monkeypatch.setenv("DEDUP_WINDOW_HOURS", "24")

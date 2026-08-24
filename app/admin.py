@@ -80,10 +80,11 @@ def summary_anomalies(s: dict, *, now: datetime) -> list[str]:
     # 1. Send volume is climbing toward a configured cap — warns ahead of the
     #    hard quota block in mail.maybe_quota_alert.
     #    Daily is graded on the COMBINED pool, for the same reason the alert is:
-    #    Mailjet-first routing only spills to Resend once Mailjet is exhausted,
-    #    so "mailjet today 98%" fires on any busy day while the pool still has a
-    #    third of its capacity free. Monthly stays per-provider — those caps are
-    #    hard, per-account walls that no failover can borrow against.
+    #    Mailjet-first routing only spills down the chain once Mailjet is
+    #    exhausted, so "mailjet today 98%" fires on any busy day while the pool
+    #    still has a third of its capacity free. Monthly stays per-provider —
+    #    those caps are hard, per-account walls that no failover can borrow
+    #    against.
     usage = sorted((s.get("email_usage") or {}).items())
     day_used = sum((u.get("today") or 0) for _, u in usage if u.get("day_quota"))
     day_cap = sum(u["day_quota"] for _, u in usage if u.get("day_quota"))
@@ -214,18 +215,16 @@ def _email_usage(conn: sqlite3.Connection, cfg) -> dict:
     caps = {
         "mailjet": {"month_quota": getattr(cfg, "mailjet_monthly_quota", None),
                     "day_quota":   getattr(cfg, "mailjet_daily_quota", None)},
-        "resend":  {"month_quota": getattr(cfg, "resend_monthly_quota", None),
-                    "day_quota":   getattr(cfg, "resend_daily_quota", None)},
     }
     # Brevo/Sweego join the table only once they can actually send: API key
     # configured AND named in EMAIL_PROVIDER_ORDER — the same gate
     # mail._daily_usage applies via _providers. A provider that cannot send
     # (say, a key configured ahead of a smoke test while the order still
     # excludes it) must not add its cap to the combined-pool grading in
-    # summary_anomalies. The unconditional mailjet/resend rows above are
-    # transition-scoped on purpose: Mailjet is required config, and Resend
-    # keeps its row until the phase-out completes.
-    order = getattr(cfg, "email_provider_order", ("mailjet", "resend"))
+    # summary_anomalies. Only Mailjet gets an unconditional row: it is required
+    # config. Retired providers (e.g. Resend, phased out 2026-08) keep their
+    # historical counters and trail the table via chain_order, capless.
+    order = getattr(cfg, "email_provider_order", ("mailjet", "brevo", "sweego"))
     if getattr(cfg, "brevo_api_key", "") and "brevo" in order:
         caps["brevo"] = {"month_quota": getattr(cfg, "brevo_monthly_quota", None),
                          "day_quota":   getattr(cfg, "brevo_daily_quota", None)}
@@ -410,8 +409,9 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
             r["sub"] = (r["label"].split(":", 1)[1].strip()
                         if ":" in r["label"] else r["key"])
     cities.sort(key=lambda r: (-r["subs"], r["name"].lower(), r["key"]))
-    # Delivery provider mix (7d). A rising `resend` share means the Mailjet primary
-    # is rejecting sends and the failover is carrying the mail — an early warning.
+    # Delivery provider mix (7d). A rising fallback share means the Mailjet
+    # primary is rejecting sends and the failover is carrying the mail — an
+    # early warning.
     provider_7d: dict[str, int] = {}
     for r in conn.execute(
         "SELECT provider, COUNT(*) AS n FROM sent_idempotency "

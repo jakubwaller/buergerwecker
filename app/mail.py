@@ -48,24 +48,6 @@ def _mailjet_message(to: str, subject: str, body: str,
         message["ReplyTo"] = {"Email": reply_to}
     return message
 
-def _resend_email(to: str, subject: str, body: str,
-                  unsub_url: str | None = None,
-                  reply_to: str | None = None) -> dict:
-    """One Resend email object (shared by single `/emails` + `/emails/batch`)."""
-    payload = {
-        "from": f"{os.environ['MAILJET_FROM_NAME']} <{os.environ['MAILJET_FROM_EMAIL']}>",
-        "to": [to],
-        "subject": subject,
-        "text": body,
-    }
-    headers = _unsub_headers(unsub_url)
-    if headers:
-        payload["headers"] = headers
-    reply_to = reply_to or os.environ.get("REPLY_TO_EMAIL")
-    if reply_to:
-        payload["reply_to"] = reply_to
-    return payload
-
 def _brevo_email(to: str, subject: str, body: str,
                  unsub_url: str | None = None,
                  reply_to: str | None = None) -> dict:
@@ -128,16 +110,6 @@ def _call_mailjet(to: str, subject: str, body: str,
         timeout=30,
     )
 
-def _call_resend(to: str, subject: str, body: str,
-                 unsub_url: str | None = None,
-                 reply_to: str | None = None) -> Any:
-    return requests.post(
-        "https://api.resend.com/emails",
-        headers={"Authorization": f"Bearer {os.environ['RESEND_API_KEY']}"},
-        json=_resend_email(to, subject, body, unsub_url, reply_to),
-        timeout=30,
-    )
-
 def _call_brevo(to: str, subject: str, body: str,
                 unsub_url: str | None = None,
                 reply_to: str | None = None) -> Any:
@@ -170,8 +142,7 @@ def _record_send_count(conn: sqlite3.Connection, provider: str, n: int = 1) -> N
     )
 
 # Providers whose API key is optional; a missing key disables the provider.
-_PROVIDER_API_KEYS = {"brevo": "BREVO_API_KEY", "sweego": "SWEEGO_API_KEY",
-                      "resend": "RESEND_API_KEY"}
+_PROVIDER_API_KEYS = {"brevo": "BREVO_API_KEY", "sweego": "SWEEGO_API_KEY"}
 
 def _single_send_chain() -> list[tuple[str, Any]]:
     """Failover chain for transactional `send()`, gated by EMAIL_PROVIDER_ORDER
@@ -182,9 +153,10 @@ def _single_send_chain() -> list[tuple[str, Any]]:
     order names nothing usable, Mailjet (required config) is the last resort —
     transactional mail must always have a provider."""
     available = {"mailjet": _call_mailjet, "brevo": _call_brevo,
-                 "sweego": _call_sweego, "resend": _call_resend}
+                 "sweego": _call_sweego}
     order = [p.strip() for p in
-             os.environ.get("EMAIL_PROVIDER_ORDER", "mailjet,resend").split(",")
+             os.environ.get("EMAIL_PROVIDER_ORDER",
+                            "mailjet,brevo,sweego").split(",")
              if p.strip()]
     chain: list[tuple[str, Any]] = []
     for name in order:
@@ -241,7 +213,7 @@ def send(conn: sqlite3.Connection, to: str, subject: str, body: str,
 # Batched, quota-aware delivery (notification digests).
 #
 # Free-tier providers cap total sends (Mailjet ~10/hour, Brevo ~300/day,
-# Sweego and Resend ~100/day), so a notification burst must (a) be sent in as
+# Sweego ~100/day), so a notification burst must (a) be sent in as
 # few HTTP calls as possible and (b) stop before a provider's cap to avoid
 # account blocks. `send_batch` packs recipients into provider batch calls,
 # sends only within each provider's remaining rolling-window quota, and DEFERS
@@ -322,19 +294,10 @@ def _call_mailjet_batch(items: list[Outgoing]) -> ProviderResult:
     )
     return ProviderResult(resp.status_code, _mailjet_verdicts(resp, len(items)))
 
-def _call_resend_batch(items: list[Outgoing]) -> ProviderResult:
-    resp = requests.post(
-        "https://api.resend.com/emails/batch",
-        headers={"Authorization": f"Bearer {os.environ['RESEND_API_KEY']}"},
-        json=[_resend_email(i.to, i.subject, i.body, i.unsub_url) for i in items],
-        timeout=60,
-    )
-    return ProviderResult(resp.status_code)
-
 # Brevo and Sweego send ONE message per API call, on purpose. Neither API
 # documents whether a multi-message request is all-or-nothing, and our retry
 # logic is only safe under one of two regimes: per-message verdicts (Mailjet)
-# or a provably atomic batch (Resend). One recipient per call sidesteps the
+# or a provably atomic batch. One recipient per call sidesteps the
 # ambiguity — a 4xx is attributable to exactly that recipient, and nothing was
 # partially delivered. Both are registered with batch_size=1 to enforce it.
 
@@ -364,16 +327,16 @@ def _providers(cfg) -> list[tuple]:
     Order follows cfg.email_provider_order (default Mailjet-first, so Mailjet's
     account sees the notification traffic — the prerequisite for getting its
     new-sender throttle lifted; the rest of the order absorbs whatever exceeds
-    Mailjet's hourly allowance). Optional providers (Brevo, Sweego, Resend) are
+    Mailjet's hourly allowance). Optional providers (Brevo, Sweego) are
     skipped when their API key is not configured. Each provider's window usage
     already includes transactional emails sent via `send()`, since those are
     recorded under the same provider name.
     """
     # Mailjet is bounded by BOTH its hourly cap (the new-sender warm-up
     # throttle) and its daily cap (free tier = 200/day); _headroom takes the
-    # tighter of the two. Brevo (free tier 300/day), Sweego (100/day) and
-    # Resend (100/day) are flat daily caps. Brevo and Sweego run at
-    # batch_size=1 — see the atomicity note above their batch callers.
+    # tighter of the two. Brevo (free tier 300/day) and Sweego (100/day) are
+    # flat daily caps. Both run at batch_size=1 — see the atomicity note above
+    # their batch callers.
     available = {
         "mailjet": ("mailjet", _call_mailjet_batch, 50,
                     [(cfg.mailjet_hourly_quota, 3600),
@@ -382,10 +345,8 @@ def _providers(cfg) -> list[tuple]:
                   [(getattr(cfg, "brevo_daily_quota", 300), 86400)]),
         "sweego": ("sweego", _call_sweego_batch, 1,
                    [(getattr(cfg, "sweego_daily_quota", 100), 86400)]),
-        "resend": ("resend", _call_resend_batch, 100,
-                   [(cfg.resend_daily_quota, 86400)]),
     }
-    order = getattr(cfg, "email_provider_order", ("mailjet", "resend"))
+    order = getattr(cfg, "email_provider_order", ("mailjet", "brevo", "sweego"))
     specs: list[tuple] = []
     for name in order:
         spec = available.get(name)
@@ -617,8 +578,7 @@ def _daily_usage(conn: sqlite3.Connection, cfg) -> list[tuple[str, int, int]]:
     nothing to be near the limit of."""
     caps = {"mailjet": getattr(cfg, "mailjet_daily_quota", 0),
             "brevo": getattr(cfg, "brevo_daily_quota", 0),
-            "sweego": getattr(cfg, "sweego_daily_quota", 0),
-            "resend": getattr(cfg, "resend_daily_quota", 0)}
+            "sweego": getattr(cfg, "sweego_daily_quota", 0)}
     usage = []
     for name, _send_fn, _batch_size, _limits in _providers(cfg):
         cap = caps.get(name) or 0
@@ -632,17 +592,18 @@ def maybe_quota_alert(conn: sqlite3.Connection, cfg, *, deferred: int) -> None:
     Rate-limited to once per 24h via meta. This is the signal to upgrade.
 
     Combined, not per-provider, and that distinction is the whole point. With
-    Mailjet-first routing (EMAIL_PROVIDER_ORDER) a batch only reaches Resend
-    once Mailjet's headroom is exactly 0, so Mailjet crossing 80% of its own cap
-    is what an ordinary busy day looks like — it says nothing about whether
-    anyone goes un-notified. On 2026-08-19 the old per-provider rule mailed
-    "mailjet: 196/200 (98%)" while Resend's 100 sat untouched: 65% of real
-    capacity, nothing deferred. Summing the caps of every provider that can
-    actually send measures the thing that matters.
+    Mailjet-first routing (EMAIL_PROVIDER_ORDER) a batch only spills down the
+    chain once Mailjet's headroom is exactly 0, so Mailjet crossing 80% of its
+    own cap is what an ordinary busy day looks like — it says nothing about
+    whether anyone goes un-notified. On 2026-08-19 the old per-provider rule
+    mailed "mailjet: 196/200 (98%)" while the fallback's 100 sat untouched: 65%
+    of real capacity, nothing deferred. Summing the caps of every provider that
+    can actually send measures the thing that matters.
 
-    (An earlier version watched Resend alone, which was worse still — it read 0%
-    while Mailjet ran to 197/200 on 2026-07-27. Both bugs are the same mistake:
-    grading one provider against its own cap instead of grading the pool.)
+    (An earlier version watched the fallback provider alone, which was worse
+    still — it read 0% while Mailjet ran to 197/200 on 2026-07-27. Both bugs are
+    the same mistake: grading one provider against its own cap instead of
+    grading the pool.)
     """
     usage = _daily_usage(conn, cfg)
     threshold = cfg.quota_alert_threshold_pct / 100
