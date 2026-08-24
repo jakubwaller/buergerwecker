@@ -10,7 +10,7 @@ from app.confirmations import send_confirmation_now, send_pending_confirmations
 
 @pytest.fixture
 def db(tmp_path, monkeypatch):
-    monkeypatch.setenv("RESEND_API_KEY", "re")
+    monkeypatch.setenv("BREVO_API_KEY", "b")
     for k, v in {"MAILJET_API_KEY": "m", "MAILJET_API_SECRET": "s",
                  "MAILJET_FROM_EMAIL": "x@x", "MAILJET_FROM_NAME": "x"}.items():
         monkeypatch.setenv(k, v)
@@ -20,9 +20,9 @@ def db(tmp_path, monkeypatch):
 
 
 def _cfg(**over):
-    base = dict(resend_daily_quota=100, mailjet_hourly_quota=10,
+    base = dict(brevo_daily_quota=300, mailjet_hourly_quota=10,
                 mailjet_daily_quota=200, quota_alert_threshold_pct=80,
-                developer_email="dev@x", email_provider_order=("mailjet", "resend"),
+                developer_email="dev@x", email_provider_order=("mailjet", "brevo"),
                 token_secret_primary="x" * 32, token_secret_previous="",
                 public_base_url="https://x")
     base.update(over)
@@ -48,11 +48,11 @@ def test_deferred_confirmation_is_kept_then_delivered_by_retry(db):
     sid = _sub(db)
     # All quota exhausted → the immediate send defers.
     with patch("app.mail._call_mailjet_batch", return_value=200), \
-         patch("app.mail._call_resend_batch", return_value=200):
+         patch("app.mail._call_brevo_batch", return_value=201):
         delivered = send_confirmation_now(db, sid, "a@x.com", "de", "leipzig",
                                           _cfg(mailjet_hourly_quota=0,
                                                mailjet_daily_quota=0,
-                                               resend_daily_quota=0))
+                                               brevo_daily_quota=0))
     assert delivered is False
     assert _sent_at(db, sid) is None          # not marked sent
     assert sid in _pending_ids(db)            # still awaiting confirmation

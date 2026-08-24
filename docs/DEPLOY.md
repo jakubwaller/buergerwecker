@@ -13,18 +13,17 @@
   losing the disk. The off-host copy is what covers that; see "Off-host backup"
   below. (On the Pi this used to be a USB HDD auto-mounted via `/etc/fstab`.)
 - Email provider accounts with verified sender domain: Mailjet, Brevo and
-  Sweego (plus Resend while it is still in the chain — it is transitional and
-  on its way out).
+  Sweego.
 - SPF / DKIM / DMARC records configured on `buergerwecker.de` and the domain
-  validated in **every** configured provider (Mailjet, Brevo, Sweego, Resend)
+  validated in **every** configured provider (Mailjet, Brevo, Sweego)
   before any send — an unverified From domain makes a fallback provider reject
   mail. Mind the DMARC record when adding a provider: the domain must keep
   exactly one, so extend the existing record rather than letting a provider's
   automatic flow replace it. `REPLY_TO_EMAIL` points at a real mailbox on
   `jakubwaller.eu`; the From address itself doesn't receive mail.
 - A signed data-processing agreement (DPA / AVV) with every processor the
-  privacy page names — Mailjet, Brevo, Sweego and (while it remains) Resend,
-  besides Cloudflare and netcup. The Datenschutz page states unconditionally
+  privacy page names — Mailjet, Brevo and Sweego, besides Cloudflare and
+  netcup. The Datenschutz page states unconditionally
   that a DPA is in place with all listed providers, so concluding a new
   provider's DPA comes **before** deploying a version that lists it, not
   after.
@@ -35,11 +34,10 @@
 2. Copy `.env.example` to `.env` and fill in real secrets:
    - 32-byte `TOKEN_SECRET_PRIMARY` and `ADMIN_TOKEN` (e.g., `openssl rand -hex 32`).
    - The Mailjet API key + secret (required — Mailjet is the primary sender).
-     `BREVO_API_KEY`, `SWEEGO_API_KEY` and `RESEND_API_KEY` are optional:
-     leave a key blank to disable that provider. A fresh deploy has no reason
-     to create a Resend account — it is transitional and being phased out.
+     `BREVO_API_KEY` and `SWEEGO_API_KEY` are optional: leave a key blank to
+     disable that provider.
    - Review the email-delivery settings (`EMAIL_PROVIDER_ORDER`,
-     `BREVO_DAILY_QUOTA`, `SWEEGO_DAILY_QUOTA`, `RESEND_DAILY_QUOTA`,
+     `BREVO_DAILY_QUOTA`, `SWEEGO_DAILY_QUOTA`,
      `MAILJET_HOURLY_QUOTA`, `MAILJET_DAILY_QUOTA`,
      `QUOTA_ALERT_THRESHOLD_PCT`) — see "Email delivery & quotas" below.
 3. Verify `/mnt/backup` exists (and, where it is a separate device, that it is
@@ -54,7 +52,7 @@ Notification digests and confirmation emails are sent in quota-aware batches
 across several providers, so a traffic spike degrades gracefully instead of
 failing:
 
-- **Provider order** (`EMAIL_PROVIDER_ORDER`, default `mailjet,resend`).
+- **Provider order** (`EMAIL_PROVIDER_ORDER`, default `mailjet,brevo,sweego`).
   Digests try the first provider up to its remaining quota, then spill along
   the chain. Mailjet-first routes volume through Mailjet so its account accrues
   the traffic needed to lift a new-sender throttle. A provider named in the
@@ -72,20 +70,16 @@ failing:
   found, 2026-08-21, that Sweego rejects the RFC 8058 URL-only
   `List-Unsubscribe` header and requires the `<mailto:…>,<url>` form — which
   `app/mail.py` now builds for Sweego alone.) Only then add the provider to
-  the order.
-  **Recommended transition order once Brevo and Sweego are proven:
-  `mailjet,brevo,sweego,resend`** — the EU providers absorb the overflow and
-  Resend (US, being phased out) only sees traffic when everything else is
-  spent. To finish the phase-out, drop `resend` from the order (that removes
-  it from both send paths), then delete `RESEND_API_KEY` and trim Resend from
-  the Datenschutz page. The order is runtime-configurable (a
-  `docker compose restart web poller`, no rebuild).
+  the order. Retiring a provider runs the same steps in reverse: drop it from
+  the order (that removes it from both send paths), delete its API key from
+  `.env`, and trim it from the Datenschutz page in the same deploy. The order
+  is runtime-configurable (a `docker compose restart web poller`, no rebuild).
 - **Per-provider caps** (`BREVO_DAILY_QUOTA`, `SWEEGO_DAILY_QUOTA`,
-  `RESEND_DAILY_QUOTA`, `MAILJET_HOURLY_QUOTA`, `MAILJET_DAILY_QUOTA`). Sends
+  `MAILJET_HOURLY_QUOTA`, `MAILJET_DAILY_QUOTA`). Sends
   beyond the tighter of a provider's rolling windows are **deferred** to a
   later cycle, not dropped. Defaults match the free tiers (Brevo 300/day —
   shared with any marketing sends on the account, and free-tier mail carries a
-  Brevo footer logo; Sweego 100/day; Resend 100/day; Mailjet 10/hour warm-up +
+  Brevo footer logo; Sweego 100/day; Mailjet 10/hour warm-up +
   200/day). **When Mailjet lifts the throttle, raise these caps — not the
   provider order** (e.g. bump `MAILJET_HOURLY_QUOTA`); the daily cap then
   binds. Raise all of them after upgrading to a paid plan.
@@ -117,7 +111,7 @@ failing:
   Mailjet-first routing a batch only reaches the next provider in the chain
   once Mailjet's headroom is 0, so "Mailjet at 98%" is what a busy day looks
   like while a third of the pool is still free (2026-08-19, back when the pool
-  was Mailjet + Resend: 196/200 mailed as 98%, actually 196/300). Only the
+  was two providers: 196/200 mailed as 98%, actually 196/300). Only the
   deferral half of the alert means someone went un-notified — the subject line
   says which fired. That mail is the cue to upgrade to a paid plan and raise the
   matching `*_DAILY_QUOTA`.
@@ -125,8 +119,8 @@ failing:
 Delivery mix over the last 7 days is visible on `/admin`, along with an
 **Email quota** section showing month-to-date and today's sends per provider
 against `MAILJET_MONTHLY_QUOTA` / `BREVO_MONTHLY_QUOTA` /
-`SWEEGO_MONTHLY_QUOTA` / `RESEND_MONTHLY_QUOTA` (display-only caps, free
-tiers: 6000, 9000, 3000 and 3000/mo; Brevo and Sweego appear once their API
+`SWEEGO_MONTHLY_QUOTA` (display-only caps, free
+tiers: 6000, 9000 and 3000/mo; Brevo and Sweego appear once their API
 key is configured and they are named in `EMAIL_PROVIDER_ORDER`) — so you can
 watch quota burn without logging into the
 provider dashboards. Counts come from the app's own durable

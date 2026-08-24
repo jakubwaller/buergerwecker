@@ -13,7 +13,7 @@ from app.cycle import run_cycle, adaptive_rate_limit_minutes
 def db(tmp_path, monkeypatch):
     for k, v in {
         "MAILJET_API_KEY": "m", "MAILJET_API_SECRET": "m", "MAILJET_FROM_EMAIL": "x@x",
-        "MAILJET_FROM_NAME": "x", "MAILJET_DAILY_QUOTA": "6000", "RESEND_API_KEY": "r",
+        "MAILJET_FROM_NAME": "x", "MAILJET_DAILY_QUOTA": "6000", "BREVO_API_KEY": "b",
         "TOKEN_SECRET_PRIMARY": "x" * 32, "TOKEN_SECRET_PREVIOUS": "",
         "ADMIN_TOKEN": "a" * 32, "PUBLIC_BASE_URL": "https://x",
         "DEDUP_WINDOW_HOURS": "24", "RATE_LIMIT_MINUTES": "15",
@@ -22,7 +22,7 @@ def db(tmp_path, monkeypatch):
         "SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR": "99",
         "SUBSCRIBE_RATELIMIT_PER_EMAIL_PER_DAY": "99",
         "DEVELOPER_EMAIL": "dev@x", "KOFI_URL": "https://k",
-        "RESEND_DAILY_QUOTA": "100", "MAILJET_HOURLY_QUOTA": "100",
+        "BREVO_DAILY_QUOTA": "300", "MAILJET_HOURLY_QUOTA": "100",
     }.items():
         monkeypatch.setenv(k, v)
     conn = connect(str(tmp_path / "t.db"))
@@ -56,7 +56,7 @@ def _cycle(db, slots, cycle_id):
     scraper.poll.return_value = slots
     with patch("app.cycle.get_scraper", return_value=scraper), \
          patch("app.mail._call_mailjet_batch", return_value=200) as mb, \
-         patch("app.mail._call_resend_batch", return_value=200):
+         patch("app.mail._call_brevo_batch", return_value=201):
         run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15,
                   cycle_id=cycle_id)
     return mb
@@ -150,7 +150,7 @@ def test_deferred_digest_does_not_record_a_count(db):
     scraper.poll.return_value = _slots(30)
     with patch("app.cycle.get_scraper", return_value=scraper), \
          patch("app.mail._call_mailjet_batch", return_value=500), \
-         patch("app.mail._call_resend_batch", return_value=500):
+         patch("app.mail._call_brevo_batch", return_value=500):
         run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
     assert _state(db, sid) == (None, None)
 

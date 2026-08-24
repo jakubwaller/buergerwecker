@@ -19,7 +19,7 @@ def client(tmp_path, monkeypatch):
         "CONTACT_RATELIMIT_PER_IP_PER_HOUR": "2",
         "MAILJET_API_KEY": "m", "MAILJET_API_SECRET": "m",
         "MAILJET_FROM_EMAIL": "x@x", "MAILJET_FROM_NAME": "x",
-        "MAILJET_DAILY_QUOTA": "6000", "RESEND_API_KEY": "r",
+        "MAILJET_DAILY_QUOTA": "6000",
         "ADMIN_TOKEN": "a" * 32, "PUBLIC_BASE_URL": "https://x",
         "DEDUP_WINDOW_HOURS": "24", "RATE_LIMIT_MINUTES": "15",
         "RENEWAL_REMINDER_DAYS_BEFORE": "10", "MAX_PLANS_PER_CITY": "10",

@@ -11,7 +11,7 @@ def db(tmp_path, monkeypatch):
     # Set the env vars that `cfg=None → load_config()` requires inside run_cycle.
     for k, v in {
         "MAILJET_API_KEY":"m","MAILJET_API_SECRET":"m","MAILJET_FROM_EMAIL":"x@x",
-        "MAILJET_FROM_NAME":"x","MAILJET_DAILY_QUOTA":"6000","RESEND_API_KEY":"r",
+        "MAILJET_FROM_NAME":"x","MAILJET_DAILY_QUOTA":"6000",
         "TOKEN_SECRET_PRIMARY":"x"*32,"TOKEN_SECRET_PREVIOUS":"",
         "ADMIN_TOKEN":"a"*32,"PUBLIC_BASE_URL":"https://x",
         "DEDUP_WINDOW_HOURS":"24","RATE_LIMIT_MINUTES":"15",

@@ -10,9 +10,6 @@ class Config:
     mailjet_from_name: str
     mailjet_daily_quota: int
     mailjet_monthly_quota: int
-    resend_api_key: str
-    resend_daily_quota: int
-    resend_monthly_quota: int
     brevo_api_key: str
     brevo_daily_quota: int
     brevo_monthly_quota: int
@@ -63,20 +60,17 @@ def load_config() -> Config:
         mailjet_from_email=_req("MAILJET_FROM_EMAIL"),
         mailjet_from_name=_req("MAILJET_FROM_NAME"),
         mailjet_daily_quota=_req_int("MAILJET_DAILY_QUOTA"),
-        resend_api_key=os.environ.get("RESEND_API_KEY", ""),
         brevo_api_key=os.environ.get("BREVO_API_KEY", ""),
         sweego_api_key=os.environ.get("SWEEGO_API_KEY", ""),
         # Free-tier send caps used for quota-aware delivery + alerting. Defaults
-        # match the free tiers — Resend 100/day, Brevo 300/day, Sweego 100/day —
-        # and the current Mailjet allowance (10/hour). Raise these after
-        # upgrading to a paid plan.
-        resend_daily_quota=int(os.environ.get("RESEND_DAILY_QUOTA", "100")),
+        # match the free tiers — Brevo 300/day, Sweego 100/day — and the
+        # current Mailjet allowance (10/hour). Raise these after upgrading to a
+        # paid plan.
         brevo_daily_quota=int(os.environ.get("BREVO_DAILY_QUOTA", "300")),
         sweego_daily_quota=int(os.environ.get("SWEEGO_DAILY_QUOTA", "100")),
         # Monthly caps are display-only (admin quota view): free tiers allow
-        # Mailjet 6000/mo, Resend 3000/mo, Brevo 9000/mo, Sweego 3000/mo.
+        # Mailjet 6000/mo, Brevo 9000/mo, Sweego 3000/mo.
         mailjet_monthly_quota=int(os.environ.get("MAILJET_MONTHLY_QUOTA", "6000")),
-        resend_monthly_quota=int(os.environ.get("RESEND_MONTHLY_QUOTA", "3000")),
         brevo_monthly_quota=int(os.environ.get("BREVO_MONTHLY_QUOTA", "9000")),
         sweego_monthly_quota=int(os.environ.get("SWEEGO_MONTHLY_QUOTA", "3000")),
         mailjet_hourly_quota=int(os.environ.get("MAILJET_HOURLY_QUOTA", "10")),
@@ -87,10 +81,12 @@ def load_config() -> Config:
             os.environ.get("MAX_SEND_FAILURES_PER_ADDRESS", "3")),
         # Order in which providers are tried for notification digests. Default
         # Mailjet-first so its account sees the traffic (needed to get the
-        # new-sender throttle lifted); Resend absorbs the overflow.
+        # new-sender throttle lifted); Brevo and Sweego absorb the overflow,
+        # in order.
         email_provider_order=tuple(
             p.strip() for p in
-            os.environ.get("EMAIL_PROVIDER_ORDER", "mailjet,resend").split(",")
+            os.environ.get("EMAIL_PROVIDER_ORDER",
+                           "mailjet,brevo,sweego").split(",")
             if p.strip()),
         token_secret_primary=_req("TOKEN_SECRET_PRIMARY"),
         token_secret_previous=os.environ.get("TOKEN_SECRET_PREVIOUS", ""),

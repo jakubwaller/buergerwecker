@@ -11,7 +11,7 @@ from app.cycle import run_cycle
 def db(tmp_path, monkeypatch):
     for k, v in {
         "MAILJET_API_KEY": "m", "MAILJET_API_SECRET": "m", "MAILJET_FROM_EMAIL": "x@x",
-        "MAILJET_FROM_NAME": "x", "MAILJET_DAILY_QUOTA": "6000", "RESEND_API_KEY": "r",
+        "MAILJET_FROM_NAME": "x", "MAILJET_DAILY_QUOTA": "6000", "BREVO_API_KEY": "b",
         "TOKEN_SECRET_PRIMARY": "x" * 32, "TOKEN_SECRET_PREVIOUS": "",
         "ADMIN_TOKEN": "a" * 32, "PUBLIC_BASE_URL": "https://x",
         "DEDUP_WINDOW_HOURS": "24", "RATE_LIMIT_MINUTES": "15",
@@ -21,7 +21,7 @@ def db(tmp_path, monkeypatch):
         "SUBSCRIBE_RATELIMIT_PER_EMAIL_PER_DAY": "99",
         "DEVELOPER_EMAIL": "dev@x", "KOFI_URL": "https://k",
         # Only one email may go out per cycle; Mailjet disabled for the test.
-        "RESEND_DAILY_QUOTA": "1", "MAILJET_HOURLY_QUOTA": "0",
+        "BREVO_DAILY_QUOTA": "1", "MAILJET_HOURLY_QUOTA": "0",
     }.items():
         monkeypatch.setenv(k, v)
     conn = connect(str(tmp_path / "t.db"))
@@ -62,7 +62,7 @@ def test_quota_limited_cycle_serves_longest_waiting_first_and_defers_rest(db):
 
     scraper = MagicMock(); scraper.poll.return_value = slot
     with patch("app.cycle.get_scraper", return_value=scraper), \
-         patch("app.mail._call_resend_batch", return_value=200) as rb:
+         patch("app.mail._call_brevo_batch", return_value=201) as rb:
         run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
 
     # Exactly one email this cycle (quota = 1)...
@@ -80,7 +80,7 @@ def test_render_cap_still_marks_all_matched_slots_seen(db):
     emails on later cycles."""
     from app.digest import MAX_SLOTS_PER_DIGEST
     import os
-    os.environ["RESEND_DAILY_QUOTA"] = "100"; os.environ["MAILJET_HOURLY_QUOTA"] = "10"
+    os.environ["BREVO_DAILY_QUOTA"] = "100"; os.environ["MAILJET_HOURLY_QUOTA"] = "10"
     sid = insert_pending(db, email="cap@x.com", city="leipzig", language="de",
                          filter_=_f(), ttl_days=90); confirm(db, sid)
     n_total = MAX_SLOTS_PER_DIGEST + 15
@@ -89,7 +89,7 @@ def test_render_cap_still_marks_all_matched_slots_seen(db):
     scraper = MagicMock(); scraper.poll.return_value = slots
     with patch("app.cycle.get_scraper", return_value=scraper), \
          patch("app.mail._call_mailjet_batch", return_value=200) as mb, \
-         patch("app.mail._call_resend_batch", return_value=200):
+         patch("app.mail._call_brevo_batch", return_value=201):
         run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
     sent_bodies = [i.body for i in mb.call_args_list[0].args[0]]
     assert len(sent_bodies) == 1                       # one email, not a flood
@@ -102,6 +102,6 @@ def test_render_cap_still_marks_all_matched_slots_seen(db):
     db.execute("UPDATE subscriptions SET last_notified_at=NULL WHERE id=?", (sid,))
     with patch("app.cycle.get_scraper", return_value=scraper), \
          patch("app.mail._call_mailjet_batch", return_value=200) as mb2, \
-         patch("app.mail._call_resend_batch", return_value=200):
+         patch("app.mail._call_brevo_batch", return_value=201):
         run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c2")
     mb2.assert_not_called()

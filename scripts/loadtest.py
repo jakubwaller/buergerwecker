@@ -28,7 +28,7 @@ def _setenv(db_path: str) -> None:
         "ADMIN_TOKEN": "a" * 32, "PUBLIC_BASE_URL": "https://x",
         "MAILJET_API_KEY": "m", "MAILJET_API_SECRET": "m",
         "MAILJET_FROM_EMAIL": "x@x", "MAILJET_FROM_NAME": "x",
-        "MAILJET_DAILY_QUOTA": "200", "RESEND_API_KEY": "re",
+        "MAILJET_DAILY_QUOTA": "200", "BREVO_API_KEY": "b",
         "DEDUP_WINDOW_HOURS": "24", "RATE_LIMIT_MINUTES": "15",
         "SUBSCRIPTION_TTL_DAYS": "90", "RENEWAL_REMINDER_DAYS_BEFORE": "10",
         "MAX_PLANS_PER_CITY": "15", "PARSER_CANARY_THRESHOLD_HOURS": "2",
@@ -37,7 +37,7 @@ def _setenv(db_path: str) -> None:
         "DEVELOPER_EMAIL": "dev@x", "KOFI_URL": "https://k",
         # Free-tier quotas so the cycle test reflects production: delivery is
         # quota-bounded and the rest is deferred, exactly as it would be live.
-        "RESEND_DAILY_QUOTA": "100", "MAILJET_HOURLY_QUOTA": "10",
+        "BREVO_DAILY_QUOTA": "300", "MAILJET_HOURLY_QUOTA": "10",
     })
 
 
@@ -92,7 +92,7 @@ def test_cycle_scaling(db_path, n_subs):
     scraper = MagicMock(); scraper.poll.return_value = slots
     with patch("app.cycle.get_scraper", return_value=scraper), \
          patch("app.mail._call_mailjet_batch", return_value=True), \
-         patch("app.mail._call_resend_batch", return_value=True):
+         patch("app.mail._call_brevo_batch", return_value=True):
         t0 = _time.perf_counter()
         run_cycle(conn, max_plans_per_city=15, rate_limit_minutes=15,
                   cycle_id="load", cfg=cfg)

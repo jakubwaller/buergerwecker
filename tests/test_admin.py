@@ -13,7 +13,7 @@ def client(tmp_path, monkeypatch):
         "SUBSCRIPTION_TTL_DAYS":"90","SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR":"99",
         "SUBSCRIBE_RATELIMIT_PER_EMAIL_PER_DAY":"99",
         "MAILJET_API_KEY":"m","MAILJET_API_SECRET":"m","MAILJET_FROM_EMAIL":"x@x",
-        "MAILJET_FROM_NAME":"x","MAILJET_DAILY_QUOTA":"6000","RESEND_API_KEY":"r",
+        "MAILJET_FROM_NAME":"x","MAILJET_DAILY_QUOTA":"6000",
         "ADMIN_TOKEN":"admin-tok","PUBLIC_BASE_URL":"https://x",
         "DEDUP_WINDOW_HOURS":"24","RATE_LIMIT_MINUTES":"15",
         "RENEWAL_REMINDER_DAYS_BEFORE":"10","MAX_PLANS_PER_CITY":"10",
@@ -91,7 +91,7 @@ def test_run_cycle_writes_no_slot_cache_and_digest_links_city_page(client):
                 "29cd0a26-fe7a-4d65-88cd-1e05fd749c71", booking_token, "res-1")
     with patch("app.cycle.get_scraper") as gs, \
          patch("app.mail._call_mailjet_batch", return_value=200) as mb, \
-         patch("app.mail._call_resend_batch", return_value=200):
+         patch("app.mail._call_brevo_batch", return_value=201):
         sc = MagicMock(); sc.poll.return_value = [slot]; gs.return_value = sc
         run_cycle(conn, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
     cached = conn.execute("SELECT COUNT(*) AS n FROM slots_cache").fetchone()["n"]
@@ -149,6 +149,8 @@ def test_stats_includes_upstream_and_extra_metrics(tmp_path):
     conn.execute("INSERT INTO sent_idempotency (idem_key, provider) VALUES ('p', 'pending')")
     # Durable counters carry history that sent_idempotency has already pruned, so
     # they deliberately disagree with the row count above.
+    # 'resend' is a retired provider: it left the chain in 2026-08 and its
+    # historical counters stay in the table, so the all-time total spans it.
     conn.execute("INSERT INTO email_send_counts (provider, day, n) VALUES "
                  "('mailjet', '2026-07-01', 484), ('resend', '2026-07-02', 1)")
     conn.execute("INSERT INTO meta (key, value) VALUES ('last_failure_alert_at', '2026-06-01T00:00:00')")
@@ -177,7 +179,7 @@ def test_stats_notification_metrics(tmp_path):
     confirm(conn, s2)
     # s1 was served a slot 2h ago; s2 has never matched.
     conn.execute("UPDATE subscriptions SET last_notified_at=datetime('now','-2 hours') WHERE id=?", (s1,))
-    for k, p in (("m1", "mailjet"), ("r1", "resend"), ("p1", "pending")):
+    for k, p in (("m1", "mailjet"), ("r1", "brevo"), ("p1", "pending")):
         conn.execute("INSERT INTO sent_idempotency (idem_key, provider) VALUES (?, ?)", (k, p))
     s = stats(conn)
     assert s["notifications_24h"] == 1
@@ -185,7 +187,7 @@ def test_stats_notification_metrics(tmp_path):
     assert s["subscribers_ever_notified"] == 1
     assert s["active_awaiting_first_match"] == 1            # s2 still waiting
     assert s["last_notification"]["sub_id"] == s1
-    assert s["emails_by_provider_7d"] == {"mailjet": 1, "resend": 1}  # 'pending' excluded
+    assert s["emails_by_provider_7d"] == {"mailjet": 1, "brevo": 1}  # 'pending' excluded
 
 def test_stats_distinct_active_subscribers(tmp_path):
     from datetime import time
@@ -235,7 +237,7 @@ def _summary_stats(**over):
         "subscribers_ever_notified": 9,
         "active_awaiting_first_match": 4,
         "last_notification": {"sub_id": 5, "at": "2026-06-09T14:33:00"},
-        "emails_by_provider_7d": {"mailjet": 80, "resend": 8},
+        "emails_by_provider_7d": {"mailjet": 80, "brevo": 8},
         "email_usage": {"mailjet": {"month": 100, "today": 12,
                                     "month_quota": 6000, "day_quota": 200}},
         "last_failure_alert_at": None,
@@ -265,11 +267,12 @@ def test_anomaly_quota_near_cap():
 
 
 def test_anomaly_day_quota_grades_the_pool_not_one_provider():
-    """Mailjet-first routing exhausts Mailjet before Resend sees anything, so a
-    hot primary is a busy day, not a warning. 196 of a combined 300 is 65%."""
+    """Mailjet-first routing exhausts Mailjet before the fallback sees
+    anything, so a hot primary is a busy day, not a warning. 196 of a combined
+    300 is 65%."""
     a = summary_anomalies(_summary_stats(email_usage={
         "mailjet": {"month": 100, "today": 196, "month_quota": 6000, "day_quota": 200},
-        "resend": {"month": 0, "today": 0, "month_quota": 3000, "day_quota": 100},
+        "brevo": {"month": 0, "today": 0, "month_quota": 9000, "day_quota": 100},
     }), now=NOW)
     assert not any("day quota" in x for x in a)
 
@@ -279,7 +282,7 @@ def test_anomaly_month_quota_stays_per_provider():
     them, so they are graded one provider at a time."""
     a = summary_anomalies(_summary_stats(email_usage={
         "mailjet": {"month": 5400, "today": 10, "month_quota": 6000, "day_quota": 200},
-        "resend": {"month": 0, "today": 0, "month_quota": 3000, "day_quota": 100},
+        "brevo": {"month": 0, "today": 0, "month_quota": 9000, "day_quota": 300},
     }), now=NOW)
     assert any("mailjet month quota at 90% (5400/6000)" in x for x in a)
 
@@ -430,7 +433,9 @@ def test_stats_email_usage_windows_and_caps(tmp_path):
     conn.execute("INSERT INTO email_send_counts (provider, day, n) "
                  "VALUES ('mailjet', '2000-01-15', 99)")
     cfg = SimpleNamespace(mailjet_monthly_quota=6000, mailjet_daily_quota=200,
-                          resend_monthly_quota=3000, resend_daily_quota=100)
+                          brevo_api_key="k", brevo_monthly_quota=9000,
+                          brevo_daily_quota=300,
+                          email_provider_order=("mailjet", "brevo"))
     # Two sends inside the rolling window; the UTC-day counter above is separate
     # bookkeeping and the two are allowed to disagree.
     conn.executemany(
@@ -439,9 +444,9 @@ def test_stats_email_usage_windows_and_caps(tmp_path):
     u = stats(conn, cfg)["email_usage"]
     assert u["mailjet"] == {"month": 3, "today": 3, "rolling": 2,
                             "month_quota": 6000, "day_quota": 200}
-    # Resend has sent nothing yet but still shows up with its caps.
-    assert u["resend"] == {"month": 0, "today": 0, "rolling": 0,
-                           "month_quota": 3000, "day_quota": 100}
+    # Brevo has sent nothing yet but still shows up with its caps.
+    assert u["brevo"] == {"month": 0, "today": 0, "rolling": 0,
+                          "month_quota": 9000, "day_quota": 300}
 
 def test_stats_email_usage_lists_new_providers_only_when_configured(tmp_path):
     """Brevo/Sweego join the quota table (and thus the ops-summary combined
@@ -451,19 +456,18 @@ def test_stats_email_usage_lists_new_providers_only_when_configured(tmp_path):
     from types import SimpleNamespace
     conn = connect(str(tmp_path / "v.db")); init_schema(conn)
     base = dict(mailjet_monthly_quota=6000, mailjet_daily_quota=200,
-                resend_monthly_quota=3000, resend_daily_quota=100,
                 brevo_api_key="xkeysib-x", brevo_monthly_quota=9000,
                 brevo_daily_quota=300, sweego_api_key="",
                 sweego_monthly_quota=3000, sweego_daily_quota=100)
     cfg = SimpleNamespace(**base, email_provider_order=(
-        "mailjet", "brevo", "sweego", "resend"))
+        "mailjet", "brevo", "sweego"))
     u = stats(conn, cfg)["email_usage"]
     assert u["brevo"] == {"month": 0, "today": 0, "rolling": 0,
                           "month_quota": 9000, "day_quota": 300}
     assert "sweego" not in u                    # in the order, but keyless
-    # Keyed but NOT in the order — the smoke-test transition state: the cap
-    # must stay out of the pool, exactly as the digest path skips the provider.
-    cfg = SimpleNamespace(**base, email_provider_order=("mailjet", "resend"))
+    # Keyed but NOT in the order — the smoke-test state: the cap must stay out
+    # of the pool, exactly as the digest path skips the provider.
+    cfg = SimpleNamespace(**base, email_provider_order=("mailjet",))
     assert "brevo" not in stats(conn, cfg)["email_usage"]
 
 def test_stats_email_usage_follows_provider_chain_order(tmp_path):
@@ -476,15 +480,16 @@ def test_stats_email_usage_follows_provider_chain_order(tmp_path):
                  "VALUES ('acme-retired', date('now'), 7)")
     cfg = SimpleNamespace(
         mailjet_monthly_quota=6000, mailjet_daily_quota=200,
-        resend_monthly_quota=3000, resend_daily_quota=100,
         brevo_api_key="k", brevo_monthly_quota=9000, brevo_daily_quota=300,
         sweego_api_key="k", sweego_monthly_quota=3000, sweego_daily_quota=100,
-        email_provider_order=("mailjet", "brevo", "sweego", "resend"))
+        email_provider_order=("mailjet", "brevo", "sweego"))
     u = stats(conn, cfg)["email_usage"]
-    assert list(u) == ["mailjet", "brevo", "sweego", "resend", "acme-retired"]
+    assert list(u) == ["mailjet", "brevo", "sweego", "acme-retired"]
 
 def test_init_schema_backfills_counters_once(tmp_path):
     conn = connect(str(tmp_path / "b.db")); init_schema(conn)
+    # 'resend' stands in for a retired provider — no caps in config any more,
+    # but its backfilled counters must still surface.
     for k, p in (("k1", "mailjet"), ("k2", "mailjet"), ("k3", "resend"),
                  ("k4", "pending")):
         conn.execute("INSERT INTO sent_idempotency (idem_key, provider) "
@@ -505,7 +510,6 @@ def test_admin_renders_email_quota_section(client):
     html = client.get("/admin?token=admin-tok").data.decode()
     assert "Email quota" in html
     assert "483 / 6000" in html          # MAILJET_MONTHLY_QUOTA default
-    assert "0 / 3000" in html            # RESEND_MONTHLY_QUOTA default
     # combined + deferred lead the section; the per-provider rows follow.
     q = html.index("Email quota")
     assert (q < html.index(">combined</td>") < html.index(">deferred</td>")
@@ -514,10 +518,10 @@ def test_admin_renders_email_quota_section(client):
 def test_summary_email_quota_line_lists_each_provider():
     text = render_summary_email(_summary_stats(email_usage={
         "mailjet": {"month": 483, "today": 12, "month_quota": 6000, "day_quota": 200},
-        "resend":  {"month": 1, "today": 0, "month_quota": 3000, "day_quota": 100},
+        "brevo":   {"month": 1, "today": 0, "month_quota": 9000, "day_quota": 300},
     }), now=NOW, anomalies=[])
     q = _line(text, "Quota today")
-    assert "mailjet 12/200" in q and "resend 0/100" in q
+    assert "mailjet 12/200" in q and "brevo 0/300" in q
 
 
 def test_stats_and_anomaly_report_deferrals(tmp_path):
@@ -526,8 +530,7 @@ def test_stats_and_anomaly_report_deferrals(tmp_path):
     conn.executemany(
         "INSERT INTO email_deferral_counts (day, n) VALUES (?, ?)",
         [(datetime.utcnow().date().isoformat(), 12), ("2000-01-15", 99)])
-    cfg = SimpleNamespace(mailjet_monthly_quota=6000, mailjet_daily_quota=200,
-                          resend_monthly_quota=3000, resend_daily_quota=100)
+    cfg = SimpleNamespace(mailjet_monthly_quota=6000, mailjet_daily_quota=200)
     s = stats(conn, cfg)
     assert s["deferrals_today"] == 12
     assert s["deferrals_7d"] == 12          # the 2000 row is outside the window
