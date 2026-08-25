@@ -18,8 +18,14 @@ did not create mean someone else is mid-task, and a `git add -A` or `git checkou
 their work with no warning. Isolate instead:
 
 ```bash
-git worktree add -b <branch> ~/gitlab/.worktrees/buergerwecker-<task> main
+git fetch origin
+git worktree add -b <branch> ~/gitlab/.worktrees/buergerwecker-<task> origin/main
 ```
+
+Branch from `origin/main`, never the local `main` — that ref is whatever a past session left
+checked out, and fetching is safe from any session while pulling rewrites files under a
+concurrent one. For the same reason, read `git show origin/main:<path>` rather than the shared
+checkout when you need to know what is on `main`.
 
 Stage by naming paths, never `git add -A` / `git commit -a`, in any checkout you share.
 
