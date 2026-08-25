@@ -28,6 +28,73 @@
   provider's DPA comes **before** deploying a version that lists it, not
   after.
 
+## Redeploy
+
+The normal path after a merge to `main`. The VPS holds a clone of this repo at
+`~/termine-notifier` (containers `termine-notifier-web-1`, `-poller-1`, `-backup-1`):
+
+```bash
+ssh vps 'cd ~/termine-notifier && git pull --ff-only && docker compose up -d --build'
+```
+
+Then verify:
+
+```bash
+curl -sS https://buergerwecker.de/healthz
+ssh vps 'cd ~/termine-notifier && docker compose ps'                    # three services Up
+ssh vps 'cd ~/termine-notifier && docker compose logs --tail=50 poller'
+```
+
+`--build` is not optional. `app/` **and `catalog/` are copied into the web and poller images**
+(`Dockerfile.web`, `Dockerfile.poller`), not mounted from the host — so a new city, or an edited
+`scraper_config.json`, reaches production only through a rebuild. The one bind-mount is `./data`,
+which holds `app.db`: it survives every rebuild, and deleting it to "start clean" destroys every
+subscription.
+
+Recreating `web` drops in-flight requests for a moment — there is one container and no rolling
+deploy. Recreating `poller` cancels the cycle in progress, which is harmless: it re-reads its state
+from the database on the next wake, and the idempotency record for mail already sent lives in the
+database too, not in memory.
+
+### A config-only change needs `up -d`, not `restart`
+
+`.env` is read by Compose when a container is **created** and baked into that container's
+environment. `docker compose restart` starts the *same* container, so it cannot see an edited file
+— it reports success and changes nothing. Verified on the VPS 2026-08-25: after rewriting `.env`,
+`restart` still printed the old value and `up -d` printed the new one.
+
+```bash
+ssh vps 'cd ~/termine-notifier && docker compose up -d web poller'   # after any .env edit
+```
+
+Nothing rebuilds if no source changed, so this is quick. It is what makes a changed
+`EMAIL_PROVIDER_ORDER`, a rotated token secret or a raised quota actually take effect.
+
+### Rollback
+
+```bash
+ssh vps 'cd ~/termine-notifier && git checkout <last-good-sha> && docker compose up -d --build'
+```
+
+The database is not versioned with the code. Schema changes are additive — `_add_missing_columns`
+in `app/db.py` only ever runs `ALTER TABLE … ADD COLUMN` — so an older image tolerates a newer
+database, and rolling back the code is safe on its own. Restoring a snapshot from `/mnt/backup` is
+a separate and much bigger decision: it loses every sign-up since that snapshot was taken.
+
+## Ingress: the live vhost is not in this repo
+
+This stack runs no reverse proxy. `web` joins the external `web_proxy` network under the alias
+`termine-web`, and the shared Caddy container — `elternschule-caddy-1`, owned by the
+**elternschule-bot** stack in `~/elternschule` on the same host — terminates TLS and proxies to
+that alias. The `buergerwecker.de`, `www.buergerwecker.de` and `termine.jakubwaller.eu` vhosts all
+live in *that* repo's `Caddyfile`; changing any of them is that stack's deploy, not this one's, and
+its runbook has the procedure (a `Caddyfile` edit there needs a container restart — `caddy reload`
+reports success and reloads the old config).
+
+The `Caddyfile` at the root of *this* repo is a leftover from when the project fronted itself.
+Nothing reads it, and it has drifted: it proxies to `web:8000`, a name that does not resolve on the
+shared network. Editing it does not change the live site.
+
 ## First deploy
 
 1. Clone the repo to the host.
@@ -42,9 +109,16 @@
      `QUOTA_ALERT_THRESHOLD_PCT`) — see "Email delivery & quotas" below.
 3. Verify `/mnt/backup` exists (and, where it is a separate device, that it is
    mounted) — the compose backup service bind-mounts it.
-4. `docker compose up -d`.
-5. Watch logs: `docker compose logs -f`.
-6. Verify healthz: `curl https://buergerwecker.de/healthz`.
+4. `docker network create web_proxy` if no other stack has created it yet. The network is
+   declared `external: true`, so Compose will not create it and the stack refuses to start
+   without it.
+5. Arrange ingress. This stack has no reverse proxy of its own (see "Ingress" above): on a fresh
+   host, either bring up the elternschule-bot stack's Caddy, which already carries the
+   `buergerwecker.de` vhost, or put any proxy in front that terminates TLS and forwards to the
+   `termine-web` alias on `web_proxy`.
+6. `docker compose up -d`.
+7. Watch logs: `docker compose logs -f`.
+8. Verify healthz: `curl https://buergerwecker.de/healthz`.
 
 ## Email delivery & quotas
 
@@ -73,7 +147,8 @@ failing:
   the order. Retiring a provider runs the same steps in reverse: drop it from
   the order (that removes it from both send paths), delete its API key from
   `.env`, and trim it from the Datenschutz page in the same deploy. The order
-  is runtime-configurable (a `docker compose restart web poller`, no rebuild).
+  is runtime-configurable (a `docker compose up -d web poller`, no rebuild — `restart`
+  would leave the old order in place).
 - **Per-provider caps** (`BREVO_DAILY_QUOTA`, `SWEEGO_DAILY_QUOTA`,
   `MAILJET_HOURLY_QUOTA`, `MAILJET_DAILY_QUOTA`). Sends
   beyond the tighter of a provider's rolling windows are **deferred** to a
@@ -154,7 +229,8 @@ python scripts/loadtest.py --subs 50000    # single size
 
 1. Set `TOKEN_SECRET_PREVIOUS=$TOKEN_SECRET_PRIMARY` in `.env`.
 2. Generate a new secret: `openssl rand -hex 32` → `TOKEN_SECRET_PRIMARY`.
-3. `docker compose restart web poller`.
+3. `docker compose up -d web poller` — **not `restart`**, which cannot see the edited
+   `.env` (see "A config-only change needs `up -d`" above).
 4. Existing tokens remain valid; next rotation invalidates them.
 
 ## SMART monitoring (host-side systemd timer)
