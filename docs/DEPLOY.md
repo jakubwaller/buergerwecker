@@ -213,6 +213,27 @@ polled less often (e.g. 180 for a city that mandates one request per three
 minutes). Skipped cycles leave the tenant's counters, canary, and
 last-polled timestamp untouched.
 
+## Notification granularity
+
+A tenant can set `notify_granularity` in its `scraper_config.json` to decide
+what counts as one piece of news:
+
+- `slot` (default, and what every tenant gets by omitting the key) — a distinct
+  (day, time, office, service).
+- `day` — (day, office, service), the time dropped. Only correct for a vendor
+  that exposes the *earliest* free slot per office (TEVIS): there, the slot
+  that appears the moment somebody books is the same inventory a minute later,
+  and mailing about it again tells the subscriber nothing new. On a vendor that
+  lists real inventory (smartCJM), `day` would withhold genuine second chances
+  — do not set it.
+
+**Changing it re-notifies once.** The old and new keys are different values in
+`seen_slots`, so on the first cycle after the deploy every affected subscriber
+with a currently-matching slot gets one digest, and only then does the new
+suppression apply. That is a one-time burst of up to one mail per affected
+subscriber — deploy a granularity change when the mail pool has headroom, not
+during a saturated morning. Check the pool first: `/admin` → Email quota.
+
 ## Load testing
 
 `scripts/loadtest.py` measures sign-up write contention and `run_cycle` time at

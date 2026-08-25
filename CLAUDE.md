@@ -63,6 +63,16 @@ links in already-sent mail silently misparse.
 **Mail sends are idempotent by key** — `subscription_id | sorted slot hashes | cycle_id`. Changing
 how that key is built means re-notifying people about slots they were already told about.
 
+**What counts as "already told you" is per tenant** — `notify_granularity` in
+`scraper_config.json`, read by `Catalog.seen_key`. `slot` (the default) keys `seen_slots` on
+(day, time, office, service); `day` drops the time, and is only correct for a tenant whose vendor
+exposes just the *earliest* slot per office, where the replacement slot appearing after a booking
+is the same inventory rather than new availability. Getting this backwards on a tenant that lists
+real inventory silently withholds genuine second chances. The cycle filters on `seen_key` and the
+flush records the key the cycle computed (carried on `QueuedDigest.seen_keys`) — never recompute it
+on the recording side, because a check/record mismatch is either a digest every cycle forever or
+silence forever, both invisible.
+
 **Several providers, and the From domain must be verified in every one of them.**
 `EMAIL_PROVIDER_ORDER` falls back along the configured chain (Mailjet, Brevo, Sweego); an
 unverified sender domain makes a fallback provider reject the mail at exactly the moment it is
