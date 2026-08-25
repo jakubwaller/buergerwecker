@@ -103,6 +103,20 @@ def _poll_interval_s(city: str) -> int:
         return 60
 
 
+def _seen_key_fn(city: str):
+    """Return this tenant's slot → seen_slots key function.
+
+    Falls back to per-slot identity when the catalog cannot be read: a missing
+    or malformed file must never coarsen a tenant's notifications, because the
+    coarse direction is the one that can *withhold* mail.
+    """
+    try:
+        from app.catalog import load_catalog
+        return load_catalog(city).seen_key
+    except Exception:
+        return Slot.hash
+
+
 def _due_cities(conn: sqlite3.Connection, cities: set[str]) -> set[str]:
     """Cities whose poll interval has elapsed since city_state.last_polled_at.
 
@@ -249,6 +263,8 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
     # deferred tail is whoever was most recently served — so nobody is
     # permanently starved across cycles. datetime.min sorts NULLs to the front.
     outbox: list = []
+    # Per-cycle memo so a tenant's catalog is resolved once, not per subscriber.
+    seen_key_fns: dict = {}
     for sub in sorted(subs, key=lambda s: s.last_notified_at or datetime.min):
         # Each subscriber's floor is their own: scarce filters keep the base
         # interval, filters swimming in slots wait longer. Cheap to evaluate
@@ -277,8 +293,12 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
         # service) can surface from two resources (counters) or two overlapping
         # plans — Slot.hash() excludes the resource, so collapse them to one line.
         candidates: list[Slot] = []
+        candidate_keys: list[str] = []
         seen_in_cycle: set[str] = set()
         matched_total = 0
+        if sub.city not in seen_key_fns:
+            seen_key_fns[sub.city] = _seen_key_fn(sub.city)
+        seen_key = seen_key_fns[sub.city]
         for plan in plans:
             if plan.city != sub.city:
                 continue
@@ -297,9 +317,15 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
                 # of thirty standing ones is the abundant case, not the scarce
                 # one, and counting only candidates would read it backwards.
                 matched_total += 1
-                if has_seen_slot(conn, sub.id, slot_hash):
+                # What counts as already-told is the tenant's call, not the
+                # slot's: an earliest-slot-only tenant keys on the day, so the
+                # replacement slot that appears the moment someone books is
+                # not news. See Catalog.seen_key.
+                key = seen_key(slot)
+                if has_seen_slot(conn, sub.id, key):
                     continue
                 candidates.append(slot)
+                candidate_keys.append(key)
         if not candidates:
             continue
         # No per-slot slots_cache writes anymore: Smart-CJM bookings are
@@ -315,5 +341,6 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
         # quota-deferred ones stay unrecorded so a later cycle re-sends them.
         send_digest(conn=conn, subscription=sub, matched_slots=candidates,
                     cycle_id=cycle_id, cfg=cfg, sink=outbox,
-                    match_count=matched_total)
+                    match_count=matched_total,
+                    seen_keys=candidate_keys)
     flush_digests(conn, outbox, cfg)

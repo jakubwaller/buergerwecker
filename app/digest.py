@@ -176,18 +176,29 @@ class QueuedDigest:
     # Slots the filter matched this cycle, already-seen ones included. Recorded
     # on delivery as the subscriber's abundance, which sets their next interval.
     match_count: int | None = None
+    # The seen_slots keys to write once this digest is actually delivered, as
+    # computed by the caller that decided these slots were unseen. Carried
+    # rather than recomputed so the check and the record cannot drift apart
+    # under a tenant's notify_granularity. None = per-slot identity.
+    seen_keys: list[str] | None = None
 
 def send_digest(*, conn: sqlite3.Connection, subscription: Subscription,
                 matched_slots: list[Slot], cycle_id: str, cfg,
                 sink: list | None = None,
-                match_count: int | None = None) -> None:
+                match_count: int | None = None,
+                seen_keys: list[str] | None = None) -> None:
     """Render a digest and stage it for delivery. `cfg` is the loaded Config
     (passed in by callers that already have it loaded — never re-read from
     os.environ here). render_digest_text loads the per-city catalog itself.
 
     With a `sink` list (the normal cycle path), the rendered digest is appended
     for batched delivery via `flush_digests`. Without one, it is delivered
-    immediately (used for one-off sends outside a poll cycle)."""
+    immediately (used for one-off sends outside a poll cycle).
+
+    `seen_keys` are the seen_slots keys to record on delivery, one per slot in
+    `matched_slots` as judged unseen by the caller. Omitted (the one-off path)
+    they default to per-slot identity, which is the pre-existing behaviour and
+    the safe side of a tenant with coarser granularity."""
     from app.tokens import sign
     unsub_token = sign(subscription.id, "unsubscribe",
                        primary=cfg.token_secret_primary,
@@ -228,6 +239,8 @@ def send_digest(*, conn: sqlite3.Connection, subscription: Subscription,
         subscription=subscription,
         slots=list(matched_slots),
         match_count=match_count,
+        seen_keys=(list(seen_keys) if seen_keys is not None
+                   else [s.hash() for s in matched_slots]),
     )
     if sink is None:
         flush_digests(conn, [queued], cfg)
@@ -258,7 +271,11 @@ def flush_digests(conn: sqlite3.Connection, sink: list, cfg) -> None:
         if q.item.idem_key not in result.delivered:
             continue
         with transaction(conn):
-            for slot in q.slots:
-                record_seen_slot(conn, q.subscription.id, slot.hash())
+            # Several slots can share one key at day granularity (the whole
+            # point), so write each distinct key once.
+            keys = (q.seen_keys if q.seen_keys is not None
+                    else [slot.hash() for slot in q.slots])
+            for key in dict.fromkeys(keys):
+                record_seen_slot(conn, q.subscription.id, key)
             set_last_notified(conn, q.subscription.id, q.match_count)
     maybe_quota_alert(conn, cfg, deferred=result.deferred)

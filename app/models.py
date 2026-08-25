@@ -70,6 +70,18 @@ class Slot:
         payload = f"{self.date}|{self.time_str}|{self.location_uuid}|{self.service_uuid}"
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
+    def day_hash(self) -> str:
+        """Identity at day granularity: (day, office, service), no time.
+
+        The coarse half of `Catalog.seen_key` — see `notify_granularity` there.
+        Deliberately a different payload *shape* from `hash()` rather than the
+        same string with a blank time, so the two key spaces cannot alias: a
+        subscriber's seen_slots rows may hold both after a tenant switches
+        granularity, and a coarse key must never be mistaken for a fine one.
+        """
+        payload = f"{self.date}|{self.location_uuid}|{self.service_uuid}"
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
 @dataclass(frozen=True)
 class Subscription:
     id: int
