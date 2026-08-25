@@ -11,6 +11,9 @@ CATALOG_ROOT = Path(__file__).parent.parent / "catalog"
 # will look up. Notably excludes "/", "\" and "." — see load_catalog.
 _SLUG_RE = re.compile(r"[a-z0-9][a-z0-9-]*")
 
+_NOTIFY_GRANULARITIES = ("slot", "day")
+
+
 class CatalogError(Exception):
     pass
 
@@ -68,6 +71,48 @@ class Catalog:
     # (confirmation, digest), so folding the Amt into it would give the game
     # away there.
     sensitive_services: frozenset = field(default_factory=frozenset)
+    # What counts as one piece of news for this tenant, from
+    # `notify_granularity` in scraper_config.json:
+    #
+    #   "slot" (default) — every distinct (day, time, office, service). Right
+    #       for a vendor that lists real inventory: each slot is a separate
+    #       perishable opportunity, and a subscriber told about a 09:00 that
+    #       someone else then books genuinely wants to hear about the 14:00.
+    #   "day" — (day, office, service), the time dropped. Right for a tenant
+    #       that only ever exposes the *earliest* slot per office (TEVIS): the
+    #       "new" slot appearing after someone books is the same inventory
+    #       seen a minute later, not new availability, so notifying again says
+    #       nothing the subscriber does not already know.
+    #
+    # Unknown values fall back to "slot", the never-suppress-anything side.
+    #
+    # Known limitation, and the reason "day" is not simply switched on for
+    # every TEVIS tenant: the key cannot tell the earliest slot moving
+    # *forward* (someone booked — redundant news) from it moving *back* (a
+    # cancellation — real news). Once a day is recorded, an earlier slot
+    # opening on that same day is suppressed until housekeeping prunes the row
+    # at 7 days.
+    #
+    # This applies to muenster-kfz too — probed live 2026-08-25, its 2407 was a
+    # day out and its 2408 sixteen days out, so the tenant is NOT the same-day
+    # -only case an earlier draft of this comment assumed. Accepted knowingly:
+    # the loss is confined to a day that was reported, vanished, and reopened
+    # inside a week, against 4-8 mails a day telling subscribers about times on
+    # a day they had already been told about. Weigh it again for any other
+    # tenant, and prefer teaching the key "earlier than last told" over
+    # widening the rollout on this trade alone.
+    notify_granularity: str = "slot"
+
+    def seen_key(self, slot) -> str:
+        """The seen_slots key for `slot` under this tenant's granularity.
+
+        Single source of truth: the cycle filters on it and the flush records
+        it, and those two must never disagree — checking one key while
+        recording another means either a digest every cycle forever or silence
+        forever, both silent.
+        """
+        return (slot.day_hash() if self.notify_granularity == "day"
+                else slot.hash())
 
     def is_sensitive(self, uuid: str) -> bool:
         """Does subscribing to this service reveal special-category data?
@@ -158,11 +203,19 @@ def load_catalog(city: str) -> Catalog:
         ats_en = {n: u for n, u in ats_en.items() if u not in excluded}
         svc_locs = {u: v for u, v in svc_locs.items() if u not in excluded}
     sensitive = frozenset(str(s) for s in (scfg.get("sensitive_services") or ()))
+    granularity = str(scfg.get("notify_granularity") or "slot")
+    if granularity not in _NOTIFY_GRANULARITIES:
+        # A typo ("Day", "daily") would otherwise leave the tenant looking
+        # correctly configured while the intended suppression never happens.
+        print(f"catalog {city}: unknown notify_granularity "
+              f"{granularity!r}, using 'slot'", flush=True)
+        granularity = "slot"
     return Catalog(city=city, appointment_types=ats, locations=locs,
                    scraper_config=scfg,
                    appointment_types_en=ats_en, locations_en=locs_en,
                    display=display, service_locations=svc_locs,
-                   sensitive_services=sensitive)
+                   sensitive_services=sensitive,
+                   notify_granularity=granularity)
 
 
 def city_display_name(city: str, lang: str) -> str | None:

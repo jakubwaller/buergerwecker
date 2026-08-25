@@ -4,5 +4,9 @@ COPY pyproject.toml ./
 RUN pip install --no-cache-dir .
 COPY app/ app/
 COPY catalog/ catalog/
+# Operational one-offs the DEPLOY runbook invokes with `docker compose run`
+# (e.g. the notify_granularity backfill). Without this they are simply
+# absent from the image and the documented command fails on a missing file.
+COPY scripts/ scripts/
 ENV PYTHONUNBUFFERED=1
 CMD ["python", "-m", "app.poller"]

@@ -213,6 +213,84 @@ polled less often (e.g. 180 for a city that mandates one request per three
 minutes). Skipped cycles leave the tenant's counters, canary, and
 last-polled timestamp untouched.
 
+## Notification granularity
+
+A tenant can set `notify_granularity` in its `scraper_config.json` to decide
+what counts as one piece of news:
+
+- `slot` (default, and what every tenant gets by omitting the key) — a distinct
+  (day, time, office, service).
+- `day` — (day, office, service), the time dropped. Only correct for a vendor
+  that exposes the *earliest* free slot per office (TEVIS): there, the slot
+  that appears the moment somebody books is the same inventory a minute later,
+  and mailing about it again tells the subscriber nothing new. On a vendor that
+  lists real inventory (smartCJM), `day` would withhold genuine second chances
+  — do not set it.
+
+**Only `muenster-kfz` is set to `day` today**, and the other 30 TEVIS tenants
+deliberately are not. `day` cannot distinguish the earliest slot moving forward
+(booked — nothing new to say) from it moving back (a cancellation — worth
+saying), so once a day has been reported, an earlier slot on that day stays
+quiet until housekeeping prunes the row after 7 days.
+
+That is a real trade even on Münster-KFZ, whose horizon is **not** same-day:
+probed live on 2026-08-25, service 2407 stood a day out and 2408 sixteen days
+out. It is accepted there because the alternative is measured at 4-8 mails per
+subscriber per day, every one of them a different time on a day they had
+already been told about, and because the earliest slot usually moves *within* a
+day (a day holds many slots, so a booking rarely exhausts it). The loss is
+confined to a day that was reported, vanished, and reopened within the week.
+**Before enabling `day` on any further tenant, teach the key
+"earlier than last told" rather than re-making this trade by hand.**
+
+Whether a tenant shows only its earliest slot is measurable rather than assumed:
+`SELECT city, MAX(n_slots) FROM availability_samples WHERE location_uuid <> ''
+GROUP BY city` — TEVIS tenants read exactly 1, smartCJM tenants read hundreds
+or thousands.
+
+**Changing it re-notifies once unless you backfill first.** The old and new keys
+are different values in `seen_slots`, so on the first cycle after the deploy
+every affected subscriber with a currently-matching slot gets one digest — which
+is one last round of exactly the noise the setting removes.
+
+`scripts/backfill_day_keys.py` prevents that. The stored hashes cannot be read
+back, but the tenant's slot space (date x time x office x service) is small
+enough to enumerate and match, which recovers every date each subscriber has
+already been told about and writes the day key for it. Run the dry run first and
+check `unrecognized` is at or near zero — each unrecognized row is one
+subscriber who may still get a single redundant mail:
+
+**The backfill has to run between the build and the restart**, and the ordering
+below is the only one that works. `docker exec` into the *running* poller cannot
+do it: that container is the old image, which has neither the script nor
+`Slot.day_hash`. And once `up -d` has recreated the poller there is no window to
+catch — it sleeps to the next minute boundary and runs a cycle, so the burst has
+already gone out. `docker compose run` threads the needle: it uses the freshly
+built image while the old poller keeps running, unchanged, on the old
+granularity.
+
+```bash
+ssh vps 'cd ~/termine-notifier && git pull --ff-only && docker compose build poller'
+
+# Dry run first: check `unrecognized` is at or near zero before applying.
+ssh vps 'cd ~/termine-notifier && docker compose run --rm poller \
+    python scripts/backfill_day_keys.py <tenant> --db /data/app.db'
+ssh vps 'cd ~/termine-notifier && docker compose run --rm poller \
+    python scripts/backfill_day_keys.py <tenant> --db /data/app.db --apply'
+
+ssh vps 'cd ~/termine-notifier && docker compose up -d --build'
+```
+
+The keys are inert until the new poller asks for them, so the gap between the
+backfill and `up -d` is safe to take at whatever pace you like. The script is
+idempotent — rerun it freely — and it waits out the live poller's write lock
+rather than failing on it.
+
+Measured on muenster-kfz on 2026-08-25: 557 of 557 rows recovered, 231 day keys
+written, first-cycle burst 35 digests → 2 (those 2 being subscribers genuinely
+never told about that date). If you deploy *without* the backfill anyway, do it
+when the pool has headroom and check `/admin` → Email quota first.
+
 ## Load testing
 
 `scripts/loadtest.py` measures sign-up write contention and `run_cycle` time at
