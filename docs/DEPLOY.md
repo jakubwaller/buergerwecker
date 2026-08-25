@@ -248,12 +248,32 @@ Whether a tenant shows only its earliest slot is measurable rather than assumed:
 GROUP BY city` — TEVIS tenants read exactly 1, smartCJM tenants read hundreds
 or thousands.
 
-**Changing it re-notifies once.** The old and new keys are different values in
-`seen_slots`, so on the first cycle after the deploy every affected subscriber
-with a currently-matching slot gets one digest, and only then does the new
-suppression apply. That is a one-time burst of up to one mail per affected
-subscriber — deploy a granularity change when the mail pool has headroom, not
-during a saturated morning. Check the pool first: `/admin` → Email quota.
+**Changing it re-notifies once unless you backfill first.** The old and new keys
+are different values in `seen_slots`, so on the first cycle after the deploy
+every affected subscriber with a currently-matching slot gets one digest — which
+is one last round of exactly the noise the setting removes.
+
+`scripts/backfill_day_keys.py` prevents that. The stored hashes cannot be read
+back, but the tenant's slot space (date x time x office x service) is small
+enough to enumerate and match, which recovers every date each subscriber has
+already been told about and writes the day key for it. Run the dry run first and
+check `unrecognized` is at or near zero — each unrecognized row is one
+subscriber who may still get a single redundant mail:
+
+```bash
+# on the VPS, where the DB lives inside the poller container
+docker exec termine-notifier-poller-1 \
+    python scripts/backfill_day_keys.py <tenant> --db /data/app.db
+docker exec termine-notifier-poller-1 \
+    python scripts/backfill_day_keys.py <tenant> --db /data/app.db --apply
+```
+
+Idempotent, and safe to run *before* the new code is deployed — the keys sit
+unused until something asks for them. Measured on muenster-kfz on 2026-08-25:
+557 of 557 rows recovered, 231 day keys written, first-cycle burst 35 digests →
+2 (those 2 being subscribers genuinely never told about that date). Without the
+backfill, deploy when the pool has headroom and check `/admin` → Email quota
+first.
 
 ## Load testing
 
