@@ -261,9 +261,10 @@ def test_healthy_baseline_has_no_anomalies():
 def test_anomaly_quota_near_cap():
     # Mailjet alone in the pool, so its 170/200 IS the combined 85%.
     a = summary_anomalies(_summary_stats(email_usage={
-        "mailjet": {"month": 100, "today": 170, "month_quota": 6000, "day_quota": 200},
+        "mailjet": {"month": 100, "today": 170, "rolling": 170,
+                    "month_quota": 6000, "day_quota": 200},
     }), now=NOW)
-    assert any("combined day quota at 85% (170/200)" in x for x in a)
+    assert any("combined rolling 24h quota at 85% (170/200)" in x for x in a)
 
 
 def test_anomaly_day_quota_grades_the_pool_not_one_provider():
@@ -271,10 +272,54 @@ def test_anomaly_day_quota_grades_the_pool_not_one_provider():
     anything, so a hot primary is a busy day, not a warning. 196 of a combined
     300 is 65%."""
     a = summary_anomalies(_summary_stats(email_usage={
-        "mailjet": {"month": 100, "today": 196, "month_quota": 6000, "day_quota": 200},
-        "brevo": {"month": 0, "today": 0, "month_quota": 9000, "day_quota": 100},
+        "mailjet": {"month": 100, "today": 196, "rolling": 196,
+                    "month_quota": 6000, "day_quota": 200},
+        "brevo": {"month": 0, "today": 0, "rolling": 0,
+                  "month_quota": 9000, "day_quota": 100},
     }), now=NOW)
-    assert not any("day quota" in x for x in a)
+    assert not any("quota at" in x and "rolling" in x for x in a)
+
+
+def test_anomaly_quota_grades_the_window_that_actually_gates_sending():
+    """The admin page showed `combined day quota at 89% (532/600)` in the alert
+    box while the Email quota section right below it showed the gating figure at
+    92% (555/600) — the same page disagreeing with itself, because the alert
+    read the UTC-day counters and the gate is the rolling 24h window."""
+    a = summary_anomalies(_summary_stats(email_usage={
+        "mailjet": {"month": 100, "today": 193, "rolling": 200,
+                    "month_quota": 6000, "day_quota": 200},
+        "brevo": {"month": 100, "today": 258, "rolling": 274,
+                  "month_quota": 9000, "day_quota": 300},
+        "sweego": {"month": 100, "today": 81, "rolling": 81,
+                   "month_quota": 3000, "day_quota": 100},
+    }), now=NOW)
+    assert any("combined rolling 24h quota at 92% (555/600)" in x for x in a)
+
+
+def test_anomaly_quota_still_warns_just_after_utc_midnight():
+    """The failure this fixes. At 00:05 UTC the day counters have snapped to 0
+    while the rolling window still carries last evening's sends, so the old
+    grading reported all-clear at the exact moment the real gate was closest to
+    deferring — and Bürgerwecker sends heavily in the evening."""
+    a = summary_anomalies(_summary_stats(email_usage={
+        "mailjet": {"month": 0, "today": 0, "rolling": 200,
+                    "month_quota": 6000, "day_quota": 200},
+        "brevo": {"month": 0, "today": 0, "rolling": 290,
+                  "month_quota": 9000, "day_quota": 300},
+        "sweego": {"month": 0, "today": 0, "rolling": 60,
+                   "month_quota": 3000, "day_quota": 100},
+    }), now=NOW)
+    assert any("combined rolling 24h quota at 92% (550/600)" in x for x in a)
+
+
+def test_anomaly_quota_falls_back_to_today_when_rolling_is_absent():
+    """A pre-migration DB returns usage without `rolling`. Reading the missing
+    key as zero sends would silence the warning entirely."""
+    a = summary_anomalies(_summary_stats(email_usage={
+        "mailjet": {"month": 100, "today": 190, "month_quota": 6000,
+                    "day_quota": 200},
+    }), now=NOW)
+    assert any("combined rolling 24h quota at 95% (190/200)" in x for x in a)
 
 
 def test_anomaly_month_quota_stays_per_provider():
