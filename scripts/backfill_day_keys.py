@@ -114,8 +114,8 @@ def backfill(conn: sqlite3.Connection, city: str, *, apply: bool,
 
     seen = _seen_rows(conn, city)
     if not seen:
-        return {"subs": 0, "rows": 0, "recognized": 0, "unrecognized": 0,
-                "keys": 0, "written": 0}
+        return {"subs": 0, "rows": 0, "recognized": 0, "already_day_keys": 0,
+                "unrecognized": 0, "keys": 0, "written": 0}
 
     services = _services_in_play(conn, city, catalog)
     locations = _locations_in_play(conn, city, catalog)
@@ -126,18 +126,27 @@ def backfill(conn: sqlite3.Connection, city: str, *, apply: bool,
     # hundreds of megabytes on a multi-office tenant, while the rows we are
     # trying to explain number in the hundreds.
     found: dict[str, tuple[str, str, str]] = {}
+    already_day: set[str] = set()
     start = date.today() - timedelta(days=DAYS_BACK)
     for offset in range(DAYS_BACK + days_ahead):
         day = (start + timedelta(days=offset)).isoformat()
         for loc in locations:
             for svc in services:
+                # A rerun sees the day keys a previous run wrote. They can never
+                # match a slot hash, so without recognising them here every one
+                # of them lands in `unrecognized` — the single number the
+                # runbook tells you to check before applying — and a clean
+                # second run reads as a broken one.
+                day_key = Slot(day, "00:00", loc, svc, "").day_hash()
+                if day_key in wanted:
+                    already_day.add(day_key)
                 for minute in range(24 * 60):
                     slot = Slot(day, f"{minute // 60:02d}:{minute % 60:02d}",
                                 loc, svc, "")
                     h = slot.hash()
                     if h in wanted:
                         found[h] = (day, loc, svc)
-        if len(found) == len(wanted):
+        if len(found) + len(already_day) == len(wanted):
             break  # every row explained; the rest of the calendar is empty
 
     # Earliest sighting wins, so the day key ages out on the same schedule the
@@ -167,9 +176,11 @@ def backfill(conn: sqlite3.Connection, city: str, *, apply: bool,
                 written += cur.rowcount
 
     total_rows = sum(len(r) for r in seen.values())
+    already = sum(1 for rows in seen.values() for h in rows if h in already_day)
     return {"subs": len(seen), "rows": total_rows, "recognized": recognized,
-            "unrecognized": total_rows - recognized, "keys": len(to_write),
-            "written": written}
+            "already_day_keys": already,
+            "unrecognized": total_rows - recognized - already,
+            "keys": len(to_write), "written": written}
 
 
 def main(argv=None) -> int:
@@ -199,6 +210,7 @@ def main(argv=None) -> int:
     print(f"active subscribers:  {stats['subs']}")
     print(f"seen_slots rows:     {stats['rows']}")
     print(f"  recognized:        {stats['recognized']}")
+    print(f"  already day keys:  {stats['already_day_keys']}")
     print(f"  unrecognized:      {stats['unrecognized']}")
     print(f"day keys implied:    {stats['keys']}")
     if args.apply:
