@@ -85,6 +85,17 @@ class Catalog:
     #       nothing the subscriber does not already know.
     #
     # Unknown values fall back to "slot", the never-suppress-anything side.
+    #
+    # Known limitation, and the reason "day" is not simply switched on for
+    # every TEVIS tenant: the key cannot tell the earliest slot moving
+    # *forward* (someone booked — redundant news) from it moving *back* (a
+    # cancellation — real news). Once a day is recorded, an earlier slot
+    # opening on that same day is suppressed until housekeeping prunes the row
+    # at 7 days. Harmless where the tenant only ever offers same-day slots, so
+    # a day is reported once and never revisited; a genuine loss on a tenant
+    # whose horizon is weeks, where the earliest can walk out to a distant date
+    # and a cancellation pull it back. Fix that before enabling "day" on any
+    # multi-day tenant.
     notify_granularity: str = "slot"
 
     def seen_key(self, slot) -> str:
@@ -189,6 +200,10 @@ def load_catalog(city: str) -> Catalog:
     sensitive = frozenset(str(s) for s in (scfg.get("sensitive_services") or ()))
     granularity = str(scfg.get("notify_granularity") or "slot")
     if granularity not in _NOTIFY_GRANULARITIES:
+        # A typo ("Day", "daily") would otherwise leave the tenant looking
+        # correctly configured while the intended suppression never happens.
+        print(f"catalog {city}: unknown notify_granularity "
+              f"{granularity!r}, using 'slot'", flush=True)
         granularity = "slot"
     return Catalog(city=city, appointment_types=ats, locations=locs,
                    scraper_config=scfg,

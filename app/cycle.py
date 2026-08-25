@@ -103,17 +103,28 @@ def _poll_interval_s(city: str) -> int:
         return 60
 
 
+# Cities already warned about a catalog that would not load, so a persistent
+# failure says so once per process rather than once a minute forever.
+_KEY_FALLBACK_WARNED: set[str] = set()
+
+
 def _seen_key_fn(city: str):
     """Return this tenant's slot → seen_slots key function.
 
     Falls back to per-slot identity when the catalog cannot be read: a missing
     or malformed file must never coarsen a tenant's notifications, because the
-    coarse direction is the one that can *withhold* mail.
+    coarse direction is the one that can *withhold* mail. The fallback is loud
+    — silently reverting a `day` tenant to per-slot keys shows up only as mail
+    volume creeping back, which nothing alerts on.
     """
     try:
         from app.catalog import load_catalog
         return load_catalog(city).seen_key
-    except Exception:
+    except Exception as exc:
+        if city not in _KEY_FALLBACK_WARNED:
+            _KEY_FALLBACK_WARNED.add(city)
+            print(f"notify_granularity: catalog unreadable for {city}, "
+                  f"falling back to per-slot keys: {exc}", flush=True)
         return Slot.hash
 
 

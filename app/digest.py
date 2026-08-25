@@ -239,8 +239,14 @@ def send_digest(*, conn: sqlite3.Connection, subscription: Subscription,
         subscription=subscription,
         slots=list(matched_slots),
         match_count=match_count,
+        # Falling back to the tenant's own key, not to slot.hash(): recording
+        # a key the cycle will never query is how a `day` tenant would mail
+        # twice about one day. `catalog` is already loaded above; without it
+        # (unknown tenant) per-slot identity is the safe default.
         seen_keys=(list(seen_keys) if seen_keys is not None
-                   else [s.hash() for s in matched_slots]),
+                   else [(catalog.seen_key(s) if catalog is not None
+                          else s.hash())
+                         for s in matched_slots]),
     )
     if sink is None:
         flush_digests(conn, [queued], cfg)

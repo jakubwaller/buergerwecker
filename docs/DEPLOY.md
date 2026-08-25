@@ -227,6 +227,23 @@ what counts as one piece of news:
   lists real inventory (smartCJM), `day` would withhold genuine second chances
   — do not set it.
 
+**Only `muenster-kfz` is set to `day` today**, and the other 30 TEVIS tenants
+deliberately are not. `day` cannot distinguish the earliest slot moving forward
+(booked — nothing new to say) from it moving back (a cancellation — worth
+saying), so once a day has been reported, an earlier slot on that day stays
+quiet until housekeeping prunes the row after 7 days. Münster-KFZ releases
+same-day slots each morning and nothing further ahead, so a day is reported
+once and never revisited and the limitation cannot bite. On a tenant whose
+horizon is weeks — Braunschweig, Mainz, Kiel — the earliest slot can walk out
+to a distant date and a cancellation pull it back, and that is exactly the mail
+a subscriber wants. **Teach the key about earlier-than-last-told before
+enabling `day` anywhere with a multi-day horizon.**
+
+Whether a tenant shows only its earliest slot is measurable rather than assumed:
+`SELECT city, MAX(n_slots) FROM availability_samples WHERE location_uuid <> ''
+GROUP BY city` — TEVIS tenants read exactly 1, smartCJM tenants read hundreds
+or thousands.
+
 **Changing it re-notifies once.** The old and new keys are different values in
 `seen_slots`, so on the first cycle after the deploy every affected subscriber
 with a currently-matching slot gets one digest, and only then does the new

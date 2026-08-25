@@ -267,3 +267,48 @@ def test_a_deferred_digest_records_nothing(db):
     sent = []
     _run(db, [slot], cycle_id="c2", sent=sent)
     assert len(sent) == 1
+
+
+def test_an_earlier_slot_on_an_already_reported_day_is_suppressed(db):
+    """Pins the known limitation, so it stays a decision rather than a
+    surprise: the day key cannot tell a booking (earliest moves forward,
+    redundant) from a cancellation (earliest moves back, real news), and
+    suppresses both. Harmless on a same-day-release tenant like Münster-KFZ,
+    where a day is reported once and never revisited — which is why `day` must
+    not be switched on for a tenant with a multi-day horizon until the key
+    learns about earlier-than-last-told.
+    """
+    sid = insert_pending(db, email="a@example.com", city="muenster-kfz",
+                         language="de", filter_=_f(["2408"]), ttl_days=90)
+    confirm(db, sid)
+    sent = []
+    _run(db, [Slot("2026-06-10", "11:00", "243", "2408", "tok")],
+         cycle_id="c1", sent=sent)
+    assert len(sent) == 1
+
+    _make_due_again(db)
+    _run(db, [Slot("2026-06-10", "08:30", "243", "2408", "tok2")],
+         cycle_id="c2", sent=sent)
+    assert len(sent) == 1
+
+
+def test_a_one_off_send_records_the_tenants_own_key(db):
+    """send_digest without `seen_keys` (the one-off path, no cycle) must still
+    record what the cycle would later query — recording a slot hash for a `day`
+    tenant would earn the subscriber a second mail about the same day."""
+    from app.config import load_config
+    from app.digest import send_digest
+    from app.repo import active_subscriptions
+
+    sid = insert_pending(db, email="a@example.com", city="muenster-kfz",
+                         language="de", filter_=_f(["2408"]), ttl_days=90)
+    confirm(db, sid)
+    sub = next(s for s in active_subscriptions(db) if s.id == sid)
+    slot = Slot("2026-06-10", "09:00", "243", "2408", "tok")
+    sent = []
+    with patch("app.digest.send_batch", side_effect=_deliver_everything(sent)):
+        send_digest(conn=db, subscription=sub, matched_slots=[slot],
+                    cycle_id="one-off", cfg=load_config())
+    assert len(sent) == 1
+    assert has_seen_slot(db, sid, slot.day_hash()) is True
+    assert has_seen_slot(db, sid, slot.hash()) is False
