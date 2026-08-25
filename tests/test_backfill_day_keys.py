@@ -139,5 +139,21 @@ def test_a_service_no_longer_in_the_catalog_is_still_recovered(db):
 
 def test_a_tenant_with_no_subscribers_is_a_no_op(db):
     stats = backfill(db, "muenster-kfz", apply=True, days_ahead=30)
-    assert stats == {"subs": 0, "rows": 0, "recognized": 0, "unrecognized": 0,
-                     "keys": 0, "written": 0}
+    assert stats == {"subs": 0, "rows": 0, "recognized": 0,
+                     "already_day_keys": 0, "unrecognized": 0, "keys": 0,
+                     "written": 0}
+
+
+def test_a_rerun_reports_existing_day_keys_as_such_not_as_unrecognized(db):
+    """The keys a first run writes are themselves seen_slots rows, and no slot
+    hash can ever equal one. Counting them as unrecognized made a clean rerun on
+    prod report 266 unexplained rows — the exact number it had just written, and
+    the exact number the runbook says to check before applying."""
+    sid = _sub(db)
+    record_seen_slot(db, sid, Slot(_soon(), "09:00", "243", "2408", "t").hash())
+    backfill(db, "muenster-kfz", apply=True, days_ahead=30)
+
+    again = backfill(db, "muenster-kfz", apply=True, days_ahead=30)
+    assert again["written"] == 0
+    assert again["already_day_keys"] == 1
+    assert again["unrecognized"] == 0

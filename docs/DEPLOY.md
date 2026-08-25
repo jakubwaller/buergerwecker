@@ -284,7 +284,8 @@ ssh vps 'cd ~/termine-notifier && docker compose up -d --build'
 The keys are inert until the new poller asks for them, so the gap between the
 backfill and `up -d` is safe to take at whatever pace you like. The script is
 idempotent — rerun it freely — and it waits out the live poller's write lock
-rather than failing on it.
+rather than failing on it. On a rerun the keys from the first run show up under
+`already day keys`, not `unrecognized`; `written: 0` is the expected result.
 
 Measured on muenster-kfz on 2026-08-25: 557 of 557 rows recovered, 231 day keys
 written, first-cycle burst 35 digests → 2 (those 2 being subscribers genuinely
