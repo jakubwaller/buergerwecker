@@ -80,7 +80,7 @@ When a real address triggers a bug, reproduce its *shape* — the 2026-07-24 cas
 Branch, PR, squash-merge — never push to `main` directly, even for a one-line docs change.
 
 1. `pytest -m "not live"` and `ruff check .` green before anything else.
-2. Branch off `main`, commit, `gh pr create`, let CI run.
+2. Branch off `origin/main`, commit, `gh pr create`, let CI run.
 3. `gh pr merge --squash --delete-branch`.
 4. Deploy and verify per **[`docs/DEPLOY.md`](docs/DEPLOY.md)** — that file is the runbook and the
    only place deploy commands live. Do not copy them here; a second copy is what rots.
