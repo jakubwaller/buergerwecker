@@ -85,12 +85,28 @@ def summary_anomalies(s: dict, *, now: datetime) -> list[str]:
     #    still has a third of its capacity free. Monthly stays per-provider —
     #    those caps are hard, per-account walls that no failover can borrow
     #    against.
+    #    Graded on the ROLLING 24h window, not the UTC-day counters, because
+    #    that is what mail._send_batch actually gates on. The two diverge, and
+    #    the divergence is worst exactly when it matters: just after UTC
+    #    midnight `today` snaps to 0 while `rolling` still carries last
+    #    evening's traffic, so grading on `today` reports all-clear at the
+    #    moment the real gate is closest to deferring. It also read low the rest
+    #    of the day — on 2026-08-25 the alert said 89% (532/600) while the gate
+    #    stood at 92% (555/600), i.e. the warning fired late and disagreed with
+    #    the Email quota section of the same page.
     usage = sorted((s.get("email_usage") or {}).items())
-    day_used = sum((u.get("today") or 0) for _, u in usage if u.get("day_quota"))
-    day_cap = sum(u["day_quota"] for _, u in usage if u.get("day_quota"))
-    if day_cap and day_used >= day_cap * QUOTA_WARN_PCT / 100:
-        out.append(f"combined day quota at {round(day_used * 100 / day_cap)}% "
-                   f"({day_used}/{day_cap})")
+    capped = [(p, u) for p, u in usage if u.get("day_quota")]
+    #    `rolling` is missing only on a pre-migration DB, where the counters are
+    #    all zero anyway. Fall back to `today` rather than let a missing key
+    #    read as "no sends" and silence the warning.
+    roll_used = sum(u["rolling"] if u.get("rolling") is not None
+                    else (u.get("today") or 0)
+                    for _, u in capped)
+    roll_cap = sum(u["day_quota"] for _, u in capped)
+    if roll_cap and roll_used >= roll_cap * QUOTA_WARN_PCT / 100:
+        out.append(f"combined rolling 24h quota at "
+                   f"{round(roll_used * 100 / roll_cap)}% "
+                   f"({roll_used}/{roll_cap})")
     for prov, u in usage:
         cap, used = u.get("month_quota"), u.get("month") or 0
         if cap and used >= cap * QUOTA_WARN_PCT / 100:
