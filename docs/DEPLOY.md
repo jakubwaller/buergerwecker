@@ -231,13 +231,17 @@ what counts as one piece of news:
 deliberately are not. `day` cannot distinguish the earliest slot moving forward
 (booked — nothing new to say) from it moving back (a cancellation — worth
 saying), so once a day has been reported, an earlier slot on that day stays
-quiet until housekeeping prunes the row after 7 days. Münster-KFZ releases
-same-day slots each morning and nothing further ahead, so a day is reported
-once and never revisited and the limitation cannot bite. On a tenant whose
-horizon is weeks — Braunschweig, Mainz, Kiel — the earliest slot can walk out
-to a distant date and a cancellation pull it back, and that is exactly the mail
-a subscriber wants. **Teach the key about earlier-than-last-told before
-enabling `day` anywhere with a multi-day horizon.**
+quiet until housekeeping prunes the row after 7 days.
+
+That is a real trade even on Münster-KFZ, whose horizon is **not** same-day:
+probed live on 2026-08-25, service 2407 stood a day out and 2408 sixteen days
+out. It is accepted there because the alternative is measured at 4-8 mails per
+subscriber per day, every one of them a different time on a day they had
+already been told about, and because the earliest slot usually moves *within* a
+day (a day holds many slots, so a booking rarely exhausts it). The loss is
+confined to a day that was reported, vanished, and reopened within the week.
+**Before enabling `day` on any further tenant, teach the key
+"earlier than last told" rather than re-making this trade by hand.**
 
 Whether a tenant shows only its earliest slot is measurable rather than assumed:
 `SELECT city, MAX(n_slots) FROM availability_samples WHERE location_uuid <> ''

@@ -91,11 +91,16 @@ class Catalog:
     # *forward* (someone booked — redundant news) from it moving *back* (a
     # cancellation — real news). Once a day is recorded, an earlier slot
     # opening on that same day is suppressed until housekeeping prunes the row
-    # at 7 days. Harmless where the tenant only ever offers same-day slots, so
-    # a day is reported once and never revisited; a genuine loss on a tenant
-    # whose horizon is weeks, where the earliest can walk out to a distant date
-    # and a cancellation pull it back. Fix that before enabling "day" on any
-    # multi-day tenant.
+    # at 7 days.
+    #
+    # This applies to muenster-kfz too — probed live 2026-08-25, its 2407 was a
+    # day out and its 2408 sixteen days out, so the tenant is NOT the same-day
+    # -only case an earlier draft of this comment assumed. Accepted knowingly:
+    # the loss is confined to a day that was reported, vanished, and reopened
+    # inside a week, against 4-8 mails a day telling subscribers about times on
+    # a day they had already been told about. Weigh it again for any other
+    # tenant, and prefer teaching the key "earlier than last told" over
+    # widening the rollout on this trade alone.
     notify_granularity: str = "slot"
 
     def seen_key(self, slot) -> str:
