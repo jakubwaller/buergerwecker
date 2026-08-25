@@ -260,20 +260,36 @@ already been told about and writes the day key for it. Run the dry run first and
 check `unrecognized` is at or near zero — each unrecognized row is one
 subscriber who may still get a single redundant mail:
 
+**The backfill has to run between the build and the restart**, and the ordering
+below is the only one that works. `docker exec` into the *running* poller cannot
+do it: that container is the old image, which has neither the script nor
+`Slot.day_hash`. And once `up -d` has recreated the poller there is no window to
+catch — it sleeps to the next minute boundary and runs a cycle, so the burst has
+already gone out. `docker compose run` threads the needle: it uses the freshly
+built image while the old poller keeps running, unchanged, on the old
+granularity.
+
 ```bash
-# on the VPS, where the DB lives inside the poller container
-docker exec termine-notifier-poller-1 \
-    python scripts/backfill_day_keys.py <tenant> --db /data/app.db
-docker exec termine-notifier-poller-1 \
-    python scripts/backfill_day_keys.py <tenant> --db /data/app.db --apply
+ssh vps 'cd ~/termine-notifier && git pull --ff-only && docker compose build poller'
+
+# Dry run first: check `unrecognized` is at or near zero before applying.
+ssh vps 'cd ~/termine-notifier && docker compose run --rm poller \
+    python scripts/backfill_day_keys.py <tenant> --db /data/app.db'
+ssh vps 'cd ~/termine-notifier && docker compose run --rm poller \
+    python scripts/backfill_day_keys.py <tenant> --db /data/app.db --apply'
+
+ssh vps 'cd ~/termine-notifier && docker compose up -d --build'
 ```
 
-Idempotent, and safe to run *before* the new code is deployed — the keys sit
-unused until something asks for them. Measured on muenster-kfz on 2026-08-25:
-557 of 557 rows recovered, 231 day keys written, first-cycle burst 35 digests →
-2 (those 2 being subscribers genuinely never told about that date). Without the
-backfill, deploy when the pool has headroom and check `/admin` → Email quota
-first.
+The keys are inert until the new poller asks for them, so the gap between the
+backfill and `up -d` is safe to take at whatever pace you like. The script is
+idempotent — rerun it freely — and it waits out the live poller's write lock
+rather than failing on it.
+
+Measured on muenster-kfz on 2026-08-25: 557 of 557 rows recovered, 231 day keys
+written, first-cycle burst 35 digests → 2 (those 2 being subscribers genuinely
+never told about that date). If you deploy *without* the backfill anyway, do it
+when the pool has headroom and check `/admin` → Email quota first.
 
 ## Load testing
 

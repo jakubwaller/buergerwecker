@@ -34,12 +34,21 @@ On the VPS the DB lives inside the poller container:
 from __future__ import annotations
 
 import argparse
+import pathlib
 import sqlite3
 import sys
 from datetime import date, timedelta
 
-from app.catalog import load_catalog
-from app.models import Filter, Slot
+# Running `python scripts/backfill_day_keys.py` puts *this* directory on
+# sys.path, not the repo root, so `app` would not import. The poller image
+# installs only the dependencies from pyproject.toml (the `app/` tree is copied
+# in afterwards and reached via WORKDIR), so there is no installed copy to fall
+# back on there either — in-container this bootstrap is the only thing that
+# makes the runbook's command work.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+
+from app.catalog import load_catalog  # noqa: E402
+from app.models import Filter, Slot  # noqa: E402
 
 # seen_slots rows are pruned at 7 days, so anything still present was recorded
 # recently — but the *slot* it points at can sit far in the future (Münster's
@@ -177,7 +186,11 @@ def main(argv=None) -> int:
                          "offices if the run drags.")
     args = ap.parse_args(argv)
 
-    conn = sqlite3.connect(args.db)
+    # The live poller writes to this DB while the backfill runs (that is the
+    # point — it runs before the stack is recreated), so wait out a held write
+    # lock rather than dying on it. Python's default is 5s; a cycle mid-flush
+    # can exceed that.
+    conn = sqlite3.connect(args.db, timeout=30.0)
     conn.row_factory = sqlite3.Row
     stats = backfill(conn, args.city, apply=args.apply,
                      days_ahead=args.days_ahead)
