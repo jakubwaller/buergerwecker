@@ -106,10 +106,37 @@ def test_the_two_key_spaces_cannot_alias():
 
 # --- reading the tenant declaration ---------------------------------------
 
-def test_shipped_tenants_declare_the_granularity_they_need():
+def test_the_default_follows_the_vendor():
+    """TEVIS is earliest-slot-only by construction of our scraper, so every
+    TEVIS tenant is `day` without saying so; real-inventory vendors are
+    `slot`."""
     assert load_catalog("muenster-kfz").notify_granularity == "day"
-    # Everyone else keeps per-slot identity by omitting the key entirely.
-    assert load_catalog("leipzig").notify_granularity == "slot"
+    assert load_catalog("mainz").notify_granularity == "day"
+    assert load_catalog("leipzig").notify_granularity == "slot"     # smartcjm
+    assert load_catalog("bonn").notify_granularity == "slot"        # smartcjm
+    for city in (d.name for d in catalog_mod.CATALOG_ROOT.iterdir()
+                 if (d / "scraper_config.json").exists()):
+        cat = load_catalog(city)
+        vendor = cat.scraper_config.get("vendor")
+        assert cat.notify_granularity == ("day" if vendor == "tevis" else "slot"), city
+
+
+def test_an_explicit_key_overrides_the_vendor_default(tmp_path, monkeypatch):
+    city = tmp_path / "testcity"
+    city.mkdir()
+    (city / "scraper_config.json").write_text(json.dumps(
+        {"vendor": "tevis", "base_url": "https://x", "md": 1, "mdt": 2,
+         "notify_granularity": "slot"}), encoding="utf-8")
+    (city / "appointment_type.json").write_text(json.dumps({"A": "svc-A"}),
+                                                encoding="utf-8")
+    (city / "locations.json").write_text(json.dumps({"Amt": "loc-1"}),
+                                         encoding="utf-8")
+    monkeypatch.setattr(catalog_mod, "CATALOG_ROOT", tmp_path)
+    catalog_mod.load_catalog.cache_clear()
+    try:
+        assert catalog_mod.load_catalog("testcity").notify_granularity == "slot"
+    finally:
+        catalog_mod.load_catalog.cache_clear()
 
 
 def test_seen_key_follows_the_declaration():
@@ -123,7 +150,8 @@ def test_seen_key_follows_the_declaration():
 
 def test_unknown_granularity_falls_back_to_per_slot(tmp_path, monkeypatch):
     """The fail-safe direction is the one that can only ever send *more* mail:
-    a typo must not silently start suppressing notifications."""
+    a typo must not silently start suppressing notifications — so it falls to
+    'slot' even on a TEVIS tenant whose default would be 'day'."""
     city = tmp_path / "testcity"
     city.mkdir()
     (city / "scraper_config.json").write_text(json.dumps(

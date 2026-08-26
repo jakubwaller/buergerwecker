@@ -383,40 +383,36 @@ last-polled timestamp untouched.
 
 ## Notification granularity
 
-A tenant can set `notify_granularity` in its `scraper_config.json` to decide
-what counts as one piece of news:
+What counts as one piece of news is decided per tenant by `notify_granularity`,
+which **defaults by vendor** — `day` for TEVIS, `slot` for everything else — and
+can be overridden per tenant in `scraper_config.json`:
 
-- `slot` (default, and what every tenant gets by omitting the key) — a distinct
-  (day, time, office, service).
+- `slot` — a distinct (day, time, office, service). Right for a vendor that
+  lists real inventory (smartCJM): each slot is a separate perishable
+  opportunity, and `day` there would withhold genuine second chances.
 - `day` — (day, office, service), and the row remembers the **earliest time
   already reported** on that day. A slot at the same or a later time on a
-  reported day stays quiet; a strictly earlier one goes out. Only correct for a
-  vendor that exposes the *earliest* free slot per office (TEVIS): there, the
-  slot that appears the moment somebody books is the same inventory a minute
-  later, and mailing about it again tells the subscriber nothing new — while
-  the earliest slot only ever moves *back* when somebody cancels, which is
-  exactly the news worth sending. On a vendor that lists real inventory
-  (smartCJM), `day` would withhold genuine second chances — do not set it.
+  reported day stays quiet; a strictly earlier one goes out. Right for TEVIS
+  because earliest-slot-only is how *our* scraper reads it
+  (`app/scrapers/tevis.py::parse_slots` yields one earliest slot per office),
+  not a property any tenant could differ on: the slot that appears the moment
+  somebody books is the same inventory a minute later, while the earliest slot
+  only ever moves *back* when somebody cancels — exactly the news worth sending.
 
-**Only `muenster-kfz` is set to `day` today.** The first version of `day` was a
-plain date key that could not tell a booking (earliest moves forward — nothing
-to say) from a cancellation (earliest moves back — worth saying) and suppressed
-both, which is why the other TEVIS tenants were held back: that loss is small on
-a same-day horizon and real on a multi-day one. The key remembers the time now,
-so the horizon no longer matters. What decides whether a tenant should be `day`
-is only whether its vendor shows one slot per office, and that is measurable
-rather than assumed:
-`SELECT city, MAX(n_slots) FROM availability_samples WHERE location_uuid <> ''
-GROUP BY city` — TEVIS tenants read exactly 1, smartCJM tenants read hundreds
-or thousands. Flip one tenant at a time, backfill first (below), and watch
-`/admin` → Email quota over the first cycles.
+History, for anyone tempted to narrow this again: the first version of `day`
+was a plain date key that suppressed cancellations along with bookings, so it
+ran on `muenster-kfz` alone from 2026-08-25. The key learnt the time on
+2026-08-26 (schema 11) and the vendor default followed the same day. If a
+vendor ever needs checking, `SELECT city, MAX(n_slots) FROM availability_samples
+WHERE location_uuid <> '' GROUP BY city` reads exactly 1 for earliest-slot-only
+tenants and hundreds or thousands for real inventory.
 
 Rows written under `day` before `seen_slots.best_time` existed (schema 11)
 carry no time and keep suppressing the whole day, as they always did, until
 housekeeping prunes them at 7 days — the migration cannot recover a time the
 old key never stored. Nothing to do; it works itself out within the week.
 
-**Changing it re-notifies once unless you backfill first.** The old and new keys
+**Changing a tenant's granularity re-notifies once unless you backfill first.** The old and new keys
 are different values in `seen_slots`, so on the first cycle after the deploy
 every affected subscriber with a currently-matching slot gets one digest — which
 is one last round of exactly the noise the setting removes.
