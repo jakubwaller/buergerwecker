@@ -3,7 +3,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from app.i18n import t
-from app.models import Subscription, Slot
+from app.models import SeenKey, Subscription, Slot, per_slot_key
 from app.mail import (send, send_batch, maybe_quota_alert, Outgoing,
                       _idem_key)
 
@@ -186,13 +186,13 @@ class QueuedDigest:
     # computed by the caller that decided these slots were unseen. Carried
     # rather than recomputed so the check and the record cannot drift apart
     # under a tenant's notify_granularity. None = per-slot identity.
-    seen_keys: list[str] | None = None
+    seen_keys: list[SeenKey] | None = None
 
 def send_digest(*, conn: sqlite3.Connection, subscription: Subscription,
                 matched_slots: list[Slot], cycle_id: str, cfg,
                 sink: list | None = None,
                 match_count: int | None = None,
-                seen_keys: list[str] | None = None) -> None:
+                seen_keys: list[SeenKey] | None = None) -> None:
     """Render a digest and stage it for delivery. `cfg` is the loaded Config
     (passed in by callers that already have it loaded — never re-read from
     os.environ here). render_digest_text loads the per-city catalog itself.
@@ -256,7 +256,7 @@ def send_digest(*, conn: sqlite3.Connection, subscription: Subscription,
         # (unknown tenant) per-slot identity is the safe default.
         seen_keys=(list(seen_keys) if seen_keys is not None
                    else [(catalog.seen_key(s) if catalog is not None
-                          else s.hash())
+                          else per_slot_key(s))
                          for s in matched_slots]),
     )
     if sink is None:
@@ -290,11 +290,13 @@ def flush_digests(conn: sqlite3.Connection, sink: list, cfg) -> None:
             continue
         with transaction(conn):
             # Several slots can share one key at day granularity (the whole
-            # point), so write each distinct key once.
+            # point); record_seen_slot keeps the earliest time among them,
+            # so the order they are written in does not matter.
             keys = (q.seen_keys if q.seen_keys is not None
-                    else [slot.hash() for slot in q.slots])
+                    else [per_slot_key(slot) for slot in q.slots])
             for key in dict.fromkeys(keys):
-                record_seen_slot(conn, q.subscription.id, key)
+                record_seen_slot(conn, q.subscription.id, key.key,
+                                 key.best_time)
             set_last_notified(conn, q.subscription.id, q.match_count)
             record_digest_delivery(conn, q.subscription.id)
     maybe_quota_alert(conn, cfg, deferred=result.deferred)

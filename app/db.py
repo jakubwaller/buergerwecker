@@ -3,7 +3,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS subscriptions (
@@ -32,6 +32,10 @@ CREATE TABLE IF NOT EXISTS seen_slots (
   subscription_id INTEGER NOT NULL,
   slot_hash       TEXT NOT NULL,
   sent_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  -- HH:MM of the earliest slot reported under a key coarser than the slot
+  -- (a day key). NULL = the key names the slot exactly, or the row predates
+  -- the column: either way "already told, whatever the time".
+  best_time       TEXT,
   PRIMARY KEY (subscription_id, slot_hash),
   FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
 );
@@ -265,6 +269,12 @@ def init_schema(conn: sqlite3.Connection) -> None:
         "consecutive_digests": "INTEGER NOT NULL DEFAULT 0",
         "consent_special_at": "TIMESTAMP",
     })
+    # best_time: the earliest time told under a day key. Existing day-key rows
+    # get NULL, which has_seen_slot reads as "told at an unknown time" and
+    # keeps suppressing the whole day exactly as before the column existed —
+    # the migration can't recover a time the old key never stored, and those
+    # rows are pruned within 7 days anyway.
+    _add_missing_columns(conn, "seen_slots", {"best_time": "TEXT"})
     # Durable per-day send counters power the admin page's provider-quota view.
     # sent_idempotency only lives 14 days (housekeeping prune), so month-to-date
     # can't be derived from it — seed the counters once from whatever history is

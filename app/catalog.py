@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
+from app.models import SeenKey, per_slot_key
+
 CATALOG_ROOT = Path(__file__).parent.parent / "catalog"
 
 # The shape of every tenant directory name, and the only thing load_catalog
@@ -78,32 +80,30 @@ class Catalog:
     #       for a vendor that lists real inventory: each slot is a separate
     #       perishable opportunity, and a subscriber told about a 09:00 that
     #       someone else then books genuinely wants to hear about the 14:00.
-    #   "day" — (day, office, service), the time dropped. Right for a tenant
-    #       that only ever exposes the *earliest* slot per office (TEVIS): the
-    #       "new" slot appearing after someone books is the same inventory
-    #       seen a minute later, not new availability, so notifying again says
-    #       nothing the subscriber does not already know.
+    #   "day" — (day, office, service), and the row remembers the earliest
+    #       time already reported on that day. Right for a tenant that only
+    #       ever exposes the *earliest* slot per office (TEVIS): the "new" slot
+    #       appearing after someone books is the same inventory seen a minute
+    #       later, not new availability, so a same-or-later time on a reported
+    #       day stays quiet. A strictly *earlier* time can only mean a
+    #       cancellation opened a better slot, and that goes out. See
+    #       `SeenKey` in app.models for the rule and `repo.has_seen_slot` for
+    #       where it is applied.
     #
     # Unknown values fall back to "slot", the never-suppress-anything side.
     #
-    # Known limitation, and the reason "day" is not simply switched on for
-    # every TEVIS tenant: the key cannot tell the earliest slot moving
-    # *forward* (someone booked — redundant news) from it moving *back* (a
-    # cancellation — real news). Once a day is recorded, an earlier slot
-    # opening on that same day is suppressed until housekeeping prunes the row
-    # at 7 days.
-    #
-    # This applies to muenster-kfz too — probed live 2026-08-25, its 2407 was a
-    # day out and its 2408 sixteen days out, so the tenant is NOT the same-day
-    # -only case an earlier draft of this comment assumed. Accepted knowingly:
-    # the loss is confined to a day that was reported, vanished, and reopened
-    # inside a week, against 4-8 mails a day telling subscribers about times on
-    # a day they had already been told about. Weigh it again for any other
-    # tenant, and prefer teaching the key "earlier than last told" over
-    # widening the rollout on this trade alone.
+    # Why the time is remembered at all: a plain date key cannot tell the
+    # earliest slot moving *forward* (someone booked — redundant) from it
+    # moving *back* (a cancellation — real news), and the first version of
+    # "day" suppressed both. That was accepted for muenster-kfz against 4-8
+    # mails a day, but it is a real loss on any tenant with a multi-day
+    # horizon — and Münster's own 2408 stood sixteen days out when probed on
+    # 2026-08-25 — so the horizon was never the discriminator. What decides
+    # whether a tenant should be "day" is only whether its vendor shows one
+    # slot per office; docs/DEPLOY.md has the query that measures it.
     notify_granularity: str = "slot"
 
-    def seen_key(self, slot) -> str:
+    def seen_key(self, slot) -> SeenKey:
         """The seen_slots key for `slot` under this tenant's granularity.
 
         Single source of truth: the cycle filters on it and the flush records
@@ -111,8 +111,9 @@ class Catalog:
         recording another means either a digest every cycle forever or silence
         forever, both silent.
         """
-        return (slot.day_hash() if self.notify_granularity == "day"
-                else slot.hash())
+        if self.notify_granularity == "day":
+            return SeenKey(slot.day_hash(), best_time=slot.time_str)
+        return per_slot_key(slot)
 
     def is_sensitive(self, uuid: str) -> bool:
         """Does subscribing to this service reveal special-category data?

@@ -121,17 +121,48 @@ def reset_digest_streak(conn: sqlite3.Connection, sub_id: int) -> None:
     conn.execute("UPDATE subscriptions SET consecutive_digests=0 WHERE id=?",
                  (sub_id,))
 
-def record_seen_slot(conn: sqlite3.Connection, sub_id: int, slot_hash: str) -> None:
+def record_seen_slot(conn: sqlite3.Connection, sub_id: int, slot_hash: str,
+                     best_time: str | None = None) -> None:
+    """Record that `sub_id` was told about `slot_hash`.
+
+    `best_time` is the slot's HH:MM under a key coarser than the slot (see
+    models.SeenKey). A row that already exists is only touched when the new
+    time is strictly earlier than the one it holds: the row then remembers the
+    better time, and its sent_at moves to now because a genuinely better slot
+    was just delivered. A same-or-later time, or no time at all, leaves the
+    row alone — including a row whose best_time is NULL, which means "told at
+    an unknown time" and must keep suppressing the whole day.
+    """
     conn.execute(
-        "INSERT OR IGNORE INTO seen_slots (subscription_id, slot_hash) VALUES (?,?)",
-        (sub_id, slot_hash),
+        "INSERT INTO seen_slots (subscription_id, slot_hash, best_time) "
+        "VALUES (?,?,?) "
+        "ON CONFLICT (subscription_id, slot_hash) DO UPDATE SET "
+        "  best_time=excluded.best_time, sent_at=CURRENT_TIMESTAMP "
+        "WHERE excluded.best_time < seen_slots.best_time",
+        (sub_id, slot_hash, best_time),
     )
 
-def has_seen_slot(conn: sqlite3.Connection, sub_id: int, slot_hash: str) -> bool:
-    return conn.execute(
-        "SELECT 1 FROM seen_slots WHERE subscription_id=? AND slot_hash=?",
+def has_seen_slot(conn: sqlite3.Connection, sub_id: int, slot_hash: str,
+                  at: str | None = None) -> bool:
+    """Has `sub_id` already been told about `slot_hash` — or, with `at` (the
+    slot's HH:MM under a day key), about this key at `at` or an earlier time?
+
+    A slot strictly earlier than the recorded best_time is news: the earliest
+    slot only moves *back* when a cancellation opens a better one. Same or
+    later is the same inventory seen again. A row without a best_time was told
+    at an unknown time (a per-slot key, or a day key from before the column
+    existed) and counts as seen whatever `at` is.
+    """
+    row = conn.execute(
+        "SELECT best_time FROM seen_slots WHERE subscription_id=? AND slot_hash=?",
         (sub_id, slot_hash),
-    ).fetchone() is not None
+    ).fetchone()
+    if row is None:
+        return False
+    best = row[0]
+    if at is None or best is None:
+        return True
+    return at >= best
 
 def record_digest_delivery(conn: sqlite3.Connection, sub_id: int) -> None:
     """One delivered digest — what the per-subscriber daily cap counts."""

@@ -8,7 +8,7 @@ from app.repo import (active_subscriptions, digests_in_window, has_seen_slot,
                       record_cap_hold, reset_digest_streak)
 from app.scrapers import get_scraper
 from app.http_session import CountingSession
-from app.models import Slot
+from app.models import SeenKey, Slot, per_slot_key
 from app.analytics import record_availability
 
 # Imported here so tests can monkey-patch it.
@@ -126,7 +126,7 @@ def _seen_key_fn(city: str):
             _KEY_FALLBACK_WARNED.add(city)
             print(f"notify_granularity: catalog unreadable for {city}, "
                   f"falling back to per-slot keys: {exc}", flush=True)
-        return Slot.hash
+        return per_slot_key
 
 
 def _due_cities(conn: sqlite3.Connection, cities: set[str]) -> set[str]:
@@ -305,7 +305,7 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
         # service) can surface from two resources (counters) or two overlapping
         # plans — Slot.hash() excludes the resource, so collapse them to one line.
         candidates: list[Slot] = []
-        candidate_keys: list[str] = []
+        candidate_keys: list[SeenKey] = []
         seen_in_cycle: set[str] = set()
         matched_total = 0
         if sub.city not in seen_key_fns:
@@ -332,9 +332,11 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
                 # What counts as already-told is the tenant's call, not the
                 # slot's: an earliest-slot-only tenant keys on the day, so the
                 # replacement slot that appears the moment someone books is
-                # not news. See Catalog.seen_key.
+                # not news — unless it is *earlier* than the time already
+                # reported, which only a cancellation can produce. See
+                # Catalog.seen_key and models.SeenKey.
                 key = seen_key(slot)
-                if has_seen_slot(conn, sub.id, key):
+                if has_seen_slot(conn, sub.id, key.key, at=key.best_time):
                     continue
                 candidates.append(slot)
                 candidate_keys.append(key)

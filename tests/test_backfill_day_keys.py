@@ -86,6 +86,13 @@ def test_many_times_on_one_day_collapse_to_a_single_key(db):
     stats = backfill(db, "muenster-kfz", apply=True, days_ahead=30)
     assert stats["recognized"] == 3
     assert stats["written"] == 1
+    # …remembering the earliest of them, so that after the flip only a slot
+    # before 08:00 on that day counts as news.
+    best = db.execute("SELECT best_time FROM seen_slots WHERE subscription_id=? "
+                      "AND slot_hash=?",
+                      (sid, Slot(day, "00:00", "243", "2408", "t").day_hash())
+                      ).fetchone()["best_time"]
+    assert best == "08:00"
 
 
 def test_the_backfilled_key_inherits_the_earliest_sighting(db):
@@ -109,6 +116,21 @@ def test_the_backfilled_key_inherits_the_earliest_sighting(db):
         "SELECT sent_at FROM seen_slots WHERE subscription_id=? AND slot_hash=?",
         (sid, Slot(day, "00:00", "243", "2408", "t").day_hash())).fetchone()["sent_at"]
     assert sent_at == "2026-01-01 07:00:00"
+
+
+def test_the_backfilled_key_carries_the_time_the_cycle_will_compare(db):
+    """End to end: a subscriber told about 09:00 under per-slot keys, the
+    tenant flips to day, and the next cycle sees a 10:00 (quiet) and later an
+    08:30 (news) — the backfill must leave the row in the state a delivered
+    day-key digest would have."""
+    from app.repo import has_seen_slot
+    sid = _sub(db)
+    day = _soon()
+    record_seen_slot(db, sid, Slot(day, "09:00", "243", "2408", "t").hash())
+    backfill(db, "muenster-kfz", apply=True, days_ahead=30)
+    key = Slot(day, "00:00", "243", "2408", "t").day_hash()
+    assert has_seen_slot(db, sid, key, at="10:00") is True
+    assert has_seen_slot(db, sid, key, at="08:30") is False
 
 
 def test_an_unexplainable_row_is_reported_not_swallowed(db):

@@ -44,3 +44,34 @@ def test_seen_slot_dedup(db):
     assert has_seen_slot(db, sid, "hash1") is False
     record_seen_slot(db, sid, "hash1")
     assert has_seen_slot(db, sid, "hash1") is True
+
+
+def test_seen_slot_remembers_the_earliest_time_told(db):
+    """A day key answers "seen?" relative to the best time already sent:
+    same or later is seen, strictly earlier is not. Re-recording only ever
+    moves the record earlier."""
+    sid = insert_pending(db, email="a@example.com", city="leipzig",
+                         language="de", filter_=_f(), ttl_days=90)
+    record_seen_slot(db, sid, "day1", "11:00")
+    assert has_seen_slot(db, sid, "day1", at="11:00") is True
+    assert has_seen_slot(db, sid, "day1", at="14:00") is True
+    assert has_seen_slot(db, sid, "day1", at="08:30") is False
+    # No time asked → seen, whatever the row holds.
+    assert has_seen_slot(db, sid, "day1") is True
+
+    record_seen_slot(db, sid, "day1", "14:00")  # later: no-op
+    assert has_seen_slot(db, sid, "day1", at="11:00") is True
+    record_seen_slot(db, sid, "day1", "08:30")  # earlier: the record moves
+    assert has_seen_slot(db, sid, "day1", at="09:00") is True
+    assert has_seen_slot(db, sid, "day1", at="08:00") is False
+
+
+def test_a_timeless_seen_row_suppresses_every_time(db):
+    """NULL best_time = told at an unknown time (a per-slot key, or a day key
+    from before the column existed). Nothing recorded later may loosen it."""
+    sid = insert_pending(db, email="a@example.com", city="leipzig",
+                         language="de", filter_=_f(), ttl_days=90)
+    record_seen_slot(db, sid, "day1")
+    assert has_seen_slot(db, sid, "day1", at="00:01") is True
+    record_seen_slot(db, sid, "day1", "08:30")
+    assert has_seen_slot(db, sid, "day1", at="00:01") is True
