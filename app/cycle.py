@@ -4,7 +4,8 @@ from datetime import datetime, timedelta
 import requests
 from app.filters import matches
 from app.planning import build_plans
-from app.repo import active_subscriptions, has_seen_slot, reset_digest_streak
+from app.repo import (active_subscriptions, digests_in_window, has_seen_slot,
+                      record_cap_hold, reset_digest_streak)
 from app.scrapers import get_scraper
 from app.http_session import CountingSession
 from app.models import Slot
@@ -338,6 +339,15 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
                 candidates.append(slot)
                 candidate_keys.append(key)
         if not candidates:
+            continue
+        # The per-subscriber daily cap, checked only once there is something
+        # to send so a hold always means a real digest was held. Nothing is
+        # recorded as seen and last_notified_at is not stamped: the first
+        # cycle after the rolling window frees re-evaluates the live slots
+        # and sends whatever is still open — never a queued, stale digest.
+        cap = getattr(cfg, "max_digests_per_subscriber_per_day", 0)
+        if cap and digests_in_window(conn, sub.id) >= cap:
+            record_cap_hold(conn, sub.id)
             continue
         # No per-slot slots_cache writes anymore: Smart-CJM bookings are
         # session-bound (the step machine rejects /booking without walking

@@ -258,6 +258,12 @@ def render_summary_email(s: dict, *, now: datetime, anomalies: list[str],
         lines.append(f"  Deferred      today {s.get('deferrals_today', 0)}"
                      f" · 7d {s.get('deferrals_7d', 0)}"
                      f"{_walls_detail(s.get('deferral_walls_today'))}")
+    if s.get("subscriber_cap"):
+        d = s.get("digests_per_sub_24h") or {}
+        lines.append(f"  Sub cap {s['subscriber_cap']}/24h  held today "
+                     f"{s.get('cap_holds_today', 0)} · capped now "
+                     f"{s.get('capped_now', 0)} · {d.get('digests', 0)} digests "
+                     f"to {d.get('subs', 0)} subscribers, {d.get('mean', 0)}/sub")
 
     admin = f"{base_url.rstrip('/')}/admin" if base_url else "/admin"
     lines += ["", f"Full dashboard → {admin}"]
@@ -424,6 +430,24 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
     def scalar(q, *args):
         row = conn.execute(q, args).fetchone()
         return row[0] if row else 0
+
+    # The per-subscriber daily cap and what it is doing: who is capped right
+    # now, who it held today, and the number it exists to move — digests per
+    # notified subscriber over the last 24h (was 4.6 with 57 of 103 at 5+
+    # when it was introduced).
+    sub_cap = getattr(cfg, "max_digests_per_subscriber_per_day", 0) or 0
+    capped_now = scalar(
+        "SELECT COUNT(*) FROM (SELECT subscription_id FROM digest_deliveries "
+        "WHERE sent_at > datetime('now','-24 hours') "
+        "GROUP BY subscription_id HAVING COUNT(*) >= ?)", sub_cap) if sub_cap else 0
+    row = conn.execute(
+        "SELECT COUNT(DISTINCT subscription_id) AS subs, COUNT(*) AS digests "
+        "FROM digest_deliveries WHERE sent_at > datetime('now','-24 hours')"
+    ).fetchone()
+    digests_per_sub = {
+        "subs": row["subs"], "digests": row["digests"],
+        "mean": round(row["digests"] / row["subs"], 1) if row["subs"] else 0,
+    }
 
     def meta_val(key):
         row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
@@ -652,6 +676,14 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
                    "WHERE day >= date('now','-7 days')"),
         "last_deferral": last_deferral(conn),
         "deferral_walls_today": deferral_walls_today(conn),
+        "subscriber_cap": sub_cap,
+        "cap_holds_today":
+            scalar("SELECT COUNT(*) FROM digest_cap_holds WHERE day = date('now')"),
+        "cap_holds_7d":
+            scalar("SELECT COUNT(DISTINCT subscription_id) FROM digest_cap_holds "
+                   "WHERE day >= date('now','-7 days')"),
+        "capped_now": capped_now,
+        "digests_per_sub_24h": digests_per_sub,
         "last_failure_alert_at": meta_val("last_failure_alert_at"),
         "last_housekeeping_at": meta_val("last_housekeeping_at"),
         "last_backup_at":       meta_val("last_backup_at"),

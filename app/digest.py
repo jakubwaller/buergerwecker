@@ -270,7 +270,8 @@ def flush_digests(conn: sqlite3.Connection, sink: list, cfg) -> None:
     if not sink:
         return
     from app.db import transaction
-    from app.repo import record_seen_slot, set_last_notified
+    from app.repo import (record_digest_delivery, record_seen_slot,
+                          set_last_notified)
     sink = sorted(sink, key=lambda q: str(q.subscription.last_notified_at or ""))
     result = send_batch(conn, [q.item for q in sink], cfg)
     for q in sink:
@@ -284,4 +285,5 @@ def flush_digests(conn: sqlite3.Connection, sink: list, cfg) -> None:
             for key in dict.fromkeys(keys):
                 record_seen_slot(conn, q.subscription.id, key)
             set_last_notified(conn, q.subscription.id, q.match_count)
+            record_digest_delivery(conn, q.subscription.id)
     maybe_quota_alert(conn, cfg, deferred=result.deferred)

@@ -3,7 +3,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS subscriptions (
@@ -77,6 +77,28 @@ CREATE TABLE IF NOT EXISTS email_deferrals (
   frees_at TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_email_deferrals_at ON email_deferrals(at);
+
+-- One row per delivered digest. subscriptions.last_notified_at only keeps the
+-- latest, and the per-subscriber daily cap (MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY)
+-- needs to count them over a rolling 24h window. Goes with the subscription;
+-- housekeeping prunes after 7 days.
+CREATE TABLE IF NOT EXISTS digest_deliveries (
+  subscription_id INTEGER NOT NULL,
+  sent_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (subscription_id, sent_at),
+  FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
+);
+
+-- Subscribers the cap held back, one row per subscriber per UTC day. A held
+-- digest is not queued: its slots stay unseen and go out once the window
+-- frees. This is the measurement behind the cap's value, so it deliberately
+-- has no FOREIGN KEY — a subscriber who churns the same day still counts.
+-- Pruned after 90 days.
+CREATE TABLE IF NOT EXISTS digest_cap_holds (
+  day             TEXT NOT NULL,
+  subscription_id INTEGER NOT NULL,
+  PRIMARY KEY (day, subscription_id)
+);
 
 -- Per-address delivery failures. A provider that parses our request and still
 -- rejects it (HTTP 400/422) is refusing the recipient, not failing itself; once
@@ -255,6 +277,22 @@ def init_schema(conn: sqlite3.Connection) -> None:
             "INSERT OR IGNORE INTO email_send_counts (provider, day, n) "
             "SELECT provider, date(sent_at), COUNT(*) FROM sent_idempotency "
             "WHERE provider != 'pending' GROUP BY provider, date(sent_at)"
+        )
+    # The per-subscriber cap counts digest_deliveries over the last 24h. A
+    # migrated DB has none, which would lift the cap for everyone on the first
+    # day — seed it once from seen_slots, where every delivered digest wrote
+    # its slots under one timestamp, so distinct minutes ≈ digests. The
+    # (subscription_id, sent_at) key plus OR IGNORE keeps the web workers and
+    # the poller from seeding twice when they all start on the same `up -d`.
+    empty = conn.execute(
+        "SELECT NOT EXISTS (SELECT 1 FROM digest_deliveries)"
+    ).fetchone()[0]
+    if empty:
+        conn.execute(
+            "INSERT OR IGNORE INTO digest_deliveries (subscription_id, sent_at) "
+            "SELECT subscription_id, MIN(sent_at) FROM seen_slots "
+            "WHERE sent_at > datetime('now','-1 day') "
+            "GROUP BY subscription_id, strftime('%Y-%m-%d %H:%M', sent_at)"
         )
     conn.execute(
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?) "

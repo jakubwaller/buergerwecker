@@ -22,6 +22,8 @@ def run_once(conn: sqlite3.Connection) -> None:
     _prune_seen_slots(conn)
     _prune_idempotency(conn)
     _prune_deferrals(conn)
+    _prune_digest_deliveries(conn)
+    _prune_cap_holds(conn)
     _prune_email_failures(conn)
     _prune_suppressions(conn, cfg)
     _prune_slots_cache(conn)
@@ -132,6 +134,15 @@ def _prune_deferrals(conn):
     # The event log is one row per deferring cycle — bounded by the poll
     # cadence, but unbounded in time. The per-day counter keeps the totals.
     conn.execute("DELETE FROM email_deferrals WHERE at < datetime('now','-90 days')")
+
+def _prune_digest_deliveries(conn):
+    # The cap reads a rolling 24h; a week keeps /admin's per-subscriber
+    # volume readable without holding a per-digest row forever.
+    conn.execute("DELETE FROM digest_deliveries "
+                 "WHERE sent_at < datetime('now','-7 days')")
+
+def _prune_cap_holds(conn):
+    conn.execute("DELETE FROM digest_cap_holds WHERE day < date('now','-90 days')")
 
 def _prune_email_failures(conn):
     """The bounce counter is keyed by the address itself, so it has to age out
