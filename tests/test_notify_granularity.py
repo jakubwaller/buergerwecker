@@ -3,8 +3,11 @@
 A tenant whose vendor only ever exposes the *earliest* slot per office keys
 seen_slots on the day, not on the slot: the "new" slot that appears the moment
 somebody books is the same inventory a minute later, and re-notifying about it
-tells the subscriber nothing they don't already know. Every other tenant keeps
-per-slot identity, where a different time genuinely is a different opportunity.
+tells the subscriber nothing they don't already know. The day key remembers the
+earliest time it reported, so the one case that *is* news — a cancellation
+opening an earlier slot on a day already reported — still goes out. Every other
+tenant keeps per-slot identity, where a different time genuinely is a different
+opportunity.
 """
 import json
 from datetime import time
@@ -16,8 +19,8 @@ from app import catalog as catalog_mod
 from app.catalog import Catalog, load_catalog
 from app.db import connect, init_schema
 from app.mail import BatchResult
-from app.models import Filter, Slot
-from app.repo import confirm, has_seen_slot, insert_pending
+from app.models import Filter, SeenKey, Slot
+from app.repo import confirm, has_seen_slot, insert_pending, record_seen_slot
 from app.cycle import run_cycle
 
 
@@ -111,8 +114,11 @@ def test_shipped_tenants_declare_the_granularity_they_need():
 
 def test_seen_key_follows_the_declaration():
     slot = Slot("2026-06-10", "09:00", "243", "2408", "tok")
-    assert load_catalog("muenster-kfz").seen_key(slot) == slot.day_hash()
-    assert load_catalog("leipzig").seen_key(slot) == slot.hash()
+    # A day key carries the time it is about to report, so the row can later
+    # tell a better slot from a worse one; a per-slot key needs no such memory.
+    assert (load_catalog("muenster-kfz").seen_key(slot)
+            == SeenKey(slot.day_hash(), best_time="09:00"))
+    assert load_catalog("leipzig").seen_key(slot) == SeenKey(slot.hash())
 
 
 def test_unknown_granularity_falls_back_to_per_slot(tmp_path, monkeypatch):
@@ -133,7 +139,7 @@ def test_unknown_granularity_falls_back_to_per_slot(tmp_path, monkeypatch):
         cat = catalog_mod.load_catalog("testcity")
         assert cat.notify_granularity == "slot"
         slot = Slot("2026-06-10", "09:00", "loc-1", "svc-A", "tok")
-        assert cat.seen_key(slot) == slot.hash()
+        assert cat.seen_key(slot) == SeenKey(slot.hash())
     finally:
         catalog_mod.load_catalog.cache_clear()
 
@@ -144,7 +150,7 @@ def test_a_catalog_object_with_a_bogus_value_still_keys_per_slot():
     slot = Slot("2026-06-10", "09:00", "loc-1", "svc-A", "tok")
     cat = Catalog(city="x", appointment_types={}, locations={},
                   scraper_config={}, notify_granularity="hourly")
-    assert cat.seen_key(slot) == slot.hash()
+    assert cat.seen_key(slot) == SeenKey(slot.hash())
 
 
 # --- behaviour through a real cycle ---------------------------------------
@@ -234,9 +240,10 @@ def test_day_tenant_collapses_a_whole_day_into_one_seen_row(db):
              Slot("2026-06-10", "15:00", "243", "2408", "t3")]
     _run(db, slots, cycle_id="c1", sent=sent)
     assert len(sent) == 1
-    rows = db.execute("SELECT COUNT(*) c FROM seen_slots WHERE subscription_id=?",
-                      (sid,)).fetchone()["c"]
-    assert rows == 1
+    rows = db.execute("SELECT best_time FROM seen_slots WHERE subscription_id=?",
+                      (sid,)).fetchall()
+    assert [r["best_time"] for r in rows] == ["09:00"], \
+        "one row, remembering the earliest of the three times"
 
     _make_due_again(db)
     _run(db, slots, cycle_id="c2", sent=sent)
@@ -269,15 +276,11 @@ def test_a_deferred_digest_records_nothing(db):
     assert len(sent) == 1
 
 
-def test_an_earlier_slot_on_an_already_reported_day_is_suppressed(db):
-    """Pins the known limitation, so it stays a decision rather than a
-    surprise: the day key cannot tell a booking (earliest moves forward,
-    redundant) from a cancellation (earliest moves back, real news), and
-    suppresses both. Harmless on a same-day-release tenant like Münster-KFZ,
-    where a day is reported once and never revisited — which is why `day` must
-    not be switched on for a tenant with a multi-day horizon until the key
-    learns about earlier-than-last-told.
-    """
+def test_an_earlier_slot_on_an_already_reported_day_is_news(db):
+    """The earliest slot only ever moves *back* when somebody cancels — and a
+    cancellation on a day the subscriber was already told about is exactly
+    the moment they want to hear from us. The day key remembers the time it
+    reported, so it can tell this from the redundant forward move above."""
     sid = insert_pending(db, email="a@example.com", city="muenster-kfz",
                          language="de", filter_=_f(["2408"]), ttl_days=90)
     confirm(db, sid)
@@ -289,7 +292,76 @@ def test_an_earlier_slot_on_an_already_reported_day_is_suppressed(db):
     _make_due_again(db)
     _run(db, [Slot("2026-06-10", "08:30", "243", "2408", "tok2")],
          cycle_id="c2", sent=sent)
+    assert len(sent) == 2, "a cancellation opened an earlier slot: real news"
+    assert "08:30" in sent[-1].body
+
+
+def test_the_same_time_again_is_not_news(db):
+    """Equal is not earlier: the slot still sitting there next cycle is the
+    same slot, not a cancellation."""
+    sid = insert_pending(db, email="a@example.com", city="muenster-kfz",
+                         language="de", filter_=_f(["2408"]), ttl_days=90)
+    confirm(db, sid)
+    sent = []
+    slot = Slot("2026-06-10", "11:00", "243", "2408", "tok")
+    _run(db, [slot], cycle_id="c1", sent=sent)
+    _make_due_again(db)
+    _run(db, [slot], cycle_id="c2", sent=sent)
     assert len(sent) == 1
+
+
+def test_the_reported_time_ratchets_earlier_and_never_later(db, monkeypatch):
+    """Told 11:00, then a cancellation opens 08:30: the row now remembers
+    08:30, so when *that* gets booked and the 09:00 surfaces, nothing goes
+    out — 09:00 is worse than what they already heard. A second cancellation
+    at 08:00 beats the record and is news again."""
+    # Three digests in one day would trip the per-subscriber cap, which is
+    # not what this test is about.
+    monkeypatch.setenv("MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY", "0")
+    sid = insert_pending(db, email="a@example.com", city="muenster-kfz",
+                         language="de", filter_=_f(["2408"]), ttl_days=90)
+    confirm(db, sid)
+    sent = []
+    day = "2026-06-10"
+    key = Slot(day, "00:00", "243", "2408", "").day_hash()
+
+    def best_time():
+        return db.execute("SELECT best_time FROM seen_slots WHERE "
+                          "subscription_id=? AND slot_hash=?",
+                          (sid, key)).fetchone()["best_time"]
+
+    _run(db, [Slot(day, "11:00", "243", "2408", "t1")], cycle_id="c1", sent=sent)
+    assert best_time() == "11:00"
+    _make_due_again(db)
+    _run(db, [Slot(day, "08:30", "243", "2408", "t2")], cycle_id="c2", sent=sent)
+    assert len(sent) == 2 and best_time() == "08:30"
+    _make_due_again(db)
+    _run(db, [Slot(day, "09:00", "243", "2408", "t3")], cycle_id="c3", sent=sent)
+    assert len(sent) == 2, "09:00 is later than the 08:30 already reported"
+    assert best_time() == "08:30", "a worse slot must not loosen the record"
+    _make_due_again(db)
+    _run(db, [Slot(day, "08:00", "243", "2408", "t4")], cycle_id="c4", sent=sent)
+    assert len(sent) == 3 and best_time() == "08:00"
+
+
+def test_a_day_key_without_a_time_keeps_suppressing_the_whole_day(db):
+    """Rows written before best_time existed carry NULL. The migration cannot
+    recover the time the old key never stored, so those rows mean "told at an
+    unknown time" and behave exactly as the old day key did — suppress every
+    time on that day — until housekeeping prunes them. Anything else would
+    mail every Münster subscriber once about a day they already know."""
+    sid = insert_pending(db, email="a@example.com", city="muenster-kfz",
+                         language="de", filter_=_f(["2408"]), ttl_days=90)
+    confirm(db, sid)
+    legacy = Slot("2026-06-10", "11:00", "243", "2408", "t")
+    record_seen_slot(db, sid, legacy.day_hash())  # no time, as before
+    sent = []
+    _run(db, [Slot("2026-06-10", "08:30", "243", "2408", "t2")],
+         cycle_id="c1", sent=sent)
+    assert sent == []
+    row = db.execute("SELECT best_time FROM seen_slots WHERE subscription_id=?",
+                     (sid,)).fetchone()
+    assert row["best_time"] is None, "nothing may loosen a legacy row"
 
 
 def test_a_one_off_send_records_the_tenants_own_key(db):
@@ -312,3 +384,5 @@ def test_a_one_off_send_records_the_tenants_own_key(db):
     assert len(sent) == 1
     assert has_seen_slot(db, sid, slot.day_hash()) is True
     assert has_seen_slot(db, sid, slot.hash()) is False
+    # …with the time, so a later cancellation on that day is still news.
+    assert has_seen_slot(db, sid, slot.day_hash(), at="08:00") is False

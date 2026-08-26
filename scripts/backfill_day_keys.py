@@ -125,7 +125,7 @@ def backfill(conn: sqlite3.Connection, city: str, *, apply: bool,
     # held. Inverted deliberately: building the full hash→slot map would be
     # hundreds of megabytes on a multi-office tenant, while the rows we are
     # trying to explain number in the hundreds.
-    found: dict[str, tuple[str, str, str]] = {}
+    found: dict[str, tuple[str, str, str, str]] = {}
     already_day: set[str] = set()
     start = date.today() - timedelta(days=DAYS_BACK)
     for offset in range(DAYS_BACK + days_ahead):
@@ -141,17 +141,18 @@ def backfill(conn: sqlite3.Connection, city: str, *, apply: bool,
                 if day_key in wanted:
                     already_day.add(day_key)
                 for minute in range(24 * 60):
-                    slot = Slot(day, f"{minute // 60:02d}:{minute % 60:02d}",
-                                loc, svc, "")
-                    h = slot.hash()
+                    hhmm = f"{minute // 60:02d}:{minute % 60:02d}"
+                    h = Slot(day, hhmm, loc, svc, "").hash()
                     if h in wanted:
-                        found[h] = (day, loc, svc)
+                        found[h] = (day, hhmm, loc, svc)
         if len(found) + len(already_day) == len(wanted):
             break  # every row explained; the rest of the calendar is empty
 
     # Earliest sighting wins, so the day key ages out on the same schedule the
-    # original rows would have — a backfilled key must not outlive them.
-    to_write: dict[tuple[int, str], str] = {}
+    # original rows would have — a backfilled key must not outlive them. The
+    # earliest *time* wins too: that is what the day key remembers, so a slot
+    # on that day is news again only if it beats the best one already sent.
+    to_write: dict[tuple[int, str], tuple[str, str]] = {}
     recognized = 0
     for sid, rows in seen.items():
         for h, sent_at in rows.items():
@@ -159,20 +160,22 @@ def backfill(conn: sqlite3.Connection, city: str, *, apply: bool,
             if hit is None:
                 continue
             recognized += 1
-            day, loc, svc = hit
+            day, hhmm, loc, svc = hit
             key = Slot(day, "00:00", loc, svc, "").day_hash()
             prev = to_write.get((sid, key))
-            if prev is None or sent_at < prev:
-                to_write[(sid, key)] = sent_at
+            to_write[(sid, key)] = (
+                sent_at if prev is None else min(sent_at, prev[0]),
+                hhmm if prev is None else min(hhmm, prev[1]))
 
     written = 0
     if apply and to_write:
         with conn:
-            for (sid, key), sent_at in to_write.items():
+            for (sid, key), (sent_at, best_time) in to_write.items():
                 cur = conn.execute(
                     "INSERT OR IGNORE INTO seen_slots "
-                    "(subscription_id, slot_hash, sent_at) VALUES (?,?,?)",
-                    (sid, key, sent_at))
+                    "(subscription_id, slot_hash, sent_at, best_time) "
+                    "VALUES (?,?,?,?)",
+                    (sid, key, sent_at, best_time))
                 written += cur.rowcount
 
     total_rows = sum(len(r) for r in seen.values())

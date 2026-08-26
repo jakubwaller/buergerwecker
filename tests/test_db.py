@@ -97,6 +97,26 @@ def test_migration_adds_counters_to_preexisting_city_state(tmp_path):
         assert c in cols, f"migration missed column: {c}"
     assert conn.execute("SELECT city FROM city_state").fetchone()["city"] == "leipzig"
 
+def test_migration_adds_best_time_to_preexisting_seen_slots(tmp_path):
+    """A DB whose seen_slots predates best_time must gain the column with
+    existing rows left NULL — which has_seen_slot reads as "told at an
+    unknown time", i.e. the old day-key behaviour, until they are pruned."""
+    from app.db import SCHEMA_SQL
+    old_sql = SCHEMA_SQL.replace("  best_time       TEXT,\n", "")
+    assert old_sql != SCHEMA_SQL, "the column line moved; update this fixture"
+    db = str(tmp_path / "old.db")
+    raw = sqlite3.connect(db)
+    raw.executescript(old_sql)
+    raw.execute("INSERT INTO subscriptions (id, email, city, filters_json, "
+                "expires_at) VALUES (1, 'a@example.com', 'leipzig', '{}', "
+                "'2099-01-01')")
+    raw.execute("INSERT INTO seen_slots (subscription_id, slot_hash) VALUES (1, 'k')")
+    raw.commit(); raw.close()
+    conn = connect(db)
+    init_schema(conn)
+    row = conn.execute("SELECT best_time FROM seen_slots").fetchone()
+    assert row["best_time"] is None
+
 def test_wal_mode_enabled(tmp_path):
     db_path = tmp_path / "test.db"
     conn = connect(str(db_path))

@@ -82,6 +82,32 @@ class Slot:
         payload = f"{self.date}|{self.location_uuid}|{self.service_uuid}"
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
+
+@dataclass(frozen=True)
+class SeenKey:
+    """What a delivered slot leaves behind in seen_slots, as decided by the
+    tenant's `notify_granularity` (see `Catalog.seen_key`).
+
+    `key` is the row identity. `best_time` is the slot's HH:MM when the key is
+    coarser than the slot — a day key — so the row remembers the earliest time
+    the subscriber was told about on that day. The rule the cycle applies
+    against it: a slot at the same or a later time is the same inventory seen
+    again and stays quiet; a strictly earlier one is a cancellation that opened
+    a better slot, and goes out. None means the key already names the slot
+    exactly (per-slot identity), so there is nothing to compare.
+
+    Zero-padded HH:MM strings sort as times do, which is what makes the
+    comparison a plain string one in both Python and SQL.
+    """
+    key: str
+    best_time: str | None = None
+
+
+def per_slot_key(slot: Slot) -> SeenKey:
+    """Per-slot identity — the default granularity, and the never-suppress-
+    anything fallback when a tenant's declaration cannot be read."""
+    return SeenKey(slot.hash())
+
 @dataclass(frozen=True)
 class Subscription:
     id: int
