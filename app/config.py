@@ -31,6 +31,7 @@ class Config:
     dedup_window_hours: int
     rate_limit_minutes: int
     adaptive_rate_limit_max_multiplier: int
+    max_digests_per_subscriber_per_day: int
     subscription_ttl_days: int
     sensitive_subscription_ttl_days: int
     renewal_reminder_days_before: int
@@ -128,6 +129,15 @@ def load_config() -> Config:
         # put everyone back on the flat floor — the kill switch, no redeploy.
         adaptive_rate_limit_max_multiplier=int(
             os.environ.get("ADAPTIVE_RATE_LIMIT_MAX_MULTIPLIER", "8")),
+        # Hard ceiling on digests per subscriber in any rolling 24h. The
+        # adaptive ladder only stretches the interval, and it disengages on
+        # exactly the earliest-slot-only tenants that produce most of the
+        # volume ("the earliest slot changed again", several times a day —
+        # the shape that draws spam complaints). A held digest is dropped,
+        # not queued: its slots stay unseen and go out in the first cycle
+        # after the window frees. 0 disables the cap.
+        max_digests_per_subscriber_per_day=int(
+            os.environ.get("MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY", "2")),
         subscription_ttl_days=_req_int("SUBSCRIPTION_TTL_DAYS"),
         # Special-category subscriptions (Art. 9 GDPR) expire sooner than
         # ordinary ones: the data is more sensitive, so it should exist for

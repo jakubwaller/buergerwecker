@@ -178,7 +178,20 @@ failing:
   `frees_at`, the earliest moment a retry can succeed. `/admin` shows the last
   event next to the counter and the ops summary splits the day's total by wall:
   "3 deferred" against the hourly wall is noise, against the daily wall it is
-  the case for a per-subscriber daily cap.
+  the case for a tighter per-subscriber daily cap.
+- **Each subscriber gets at most `MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY` digests
+  per rolling 24h** (default 2, `0` disables — env only, no redeploy). The
+  adaptive cadence only stretches the interval and disengages on the
+  earliest-slot-only tenants that generate most of the volume, so before the
+  cap the mean was 4.6 digests per notified subscriber per day with more than
+  half at 5+. A held digest is **dropped, not queued**: nothing is recorded as
+  seen, so the first cycle after the subscriber's window frees re-evaluates the
+  live slots and sends what is still open. `/admin` shows who is capped right
+  now, how many subscribers were held today (`digest_cap_holds`, one row per
+  subscriber per UTC day, 90-day prune) and the digests-per-subscriber number
+  the cap exists to move; the ops summary carries the same line. Deliveries
+  are counted in `digest_deliveries` (7-day prune), seeded once at migration
+  from `seen_slots` so the cap binds from the first cycle.
 - **The deferred tail rotates.** Batches are filled in list order, so without
   care the same subscribers land at the back of every saturated cycle.
   `flush_digests` sorts by `last_notified_at` (never-notified first), and a

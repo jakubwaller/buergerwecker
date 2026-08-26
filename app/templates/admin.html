@@ -206,6 +206,14 @@
           {%- if s.last_deferral %} · last {{ s.last_deferral.at[11:16] }} UTC, {{ s.last_deferral.n }} against the <span{% if s.last_deferral.wall == 'daily' %} class="quota-hot"{% endif %}>{{ s.last_deferral.wall }} wall</span>{% if s.last_deferral.frees_at %}, frees {{ s.last_deferral.frees_at[:16] }} UTC{% endif %}{% endif %}
           <span class="adm-muted">· notifications the quota could not send — re-tried next cycle, longest wait first · an hourly wall clears within the hour, a daily wall waits for the rolling 24h window</span></td>
       </tr>
+      {% if s.subscriber_cap %}
+      <tr>
+        <td class="k">per-subscriber cap</td>
+        <td class="v">{{ s.subscriber_cap }} per rolling 24h · held today <span{% if s.cap_holds_today %} class="quota-hot"{% endif %}>{{ s.cap_holds_today }}</span> subscriber(s) · 7d {{ s.cap_holds_7d }} · capped now {{ s.capped_now }}
+          {%- if s.digests_per_sub_24h and s.digests_per_sub_24h.subs %} · last 24h {{ s.digests_per_sub_24h.digests }} digests to {{ s.digests_per_sub_24h.subs }} subscribers, {{ s.digests_per_sub_24h.mean }}/sub{% endif %}
+          <span class="adm-muted">· a held digest is dropped, not queued — its slots stay unseen and go out in the first cycle after that subscriber's window frees · MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY, 0 disables</span></td>
+      </tr>
+      {% endif %}
       {# per-provider rows follow in EMAIL_PROVIDER_ORDER — the fallback chain #}
       {% for p, u in s.email_usage.items() %}
         <tr>

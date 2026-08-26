@@ -133,6 +133,27 @@ def has_seen_slot(conn: sqlite3.Connection, sub_id: int, slot_hash: str) -> bool
         (sub_id, slot_hash),
     ).fetchone() is not None
 
+def record_digest_delivery(conn: sqlite3.Connection, sub_id: int) -> None:
+    """One delivered digest — what the per-subscriber daily cap counts."""
+    conn.execute("INSERT INTO digest_deliveries (subscription_id) VALUES (?)",
+                 (sub_id,))
+
+def digests_in_window(conn: sqlite3.Connection, sub_id: int, *,
+                      hours: int = 24) -> int:
+    """Digests delivered to this subscriber in the last `hours` (rolling)."""
+    return conn.execute(
+        "SELECT COUNT(*) FROM digest_deliveries "
+        "WHERE subscription_id=? AND sent_at > datetime('now', ?)",
+        (sub_id, f"-{int(hours)} hours"),
+    ).fetchone()[0]
+
+def record_cap_hold(conn: sqlite3.Connection, sub_id: int) -> None:
+    """This subscriber had a digest ready and the cap held it back today
+    (UTC). Idempotent per day — a capped subscriber is re-evaluated every
+    cycle, and the record is 'was held', not 'how many cycles'."""
+    conn.execute("INSERT OR IGNORE INTO digest_cap_holds (day, subscription_id) "
+                 "VALUES (date('now'), ?)", (sub_id,))
+
 # --------------------------------------------------------------------------
 # Suppression list (see the email_suppressions comment in app/db.py).
 # --------------------------------------------------------------------------

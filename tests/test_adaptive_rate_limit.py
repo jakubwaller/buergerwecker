@@ -23,6 +23,9 @@ def db(tmp_path, monkeypatch):
         "SUBSCRIBE_RATELIMIT_PER_EMAIL_PER_DAY": "99",
         "DEVELOPER_EMAIL": "dev@x", "KOFI_URL": "https://k",
         "BREVO_DAILY_QUOTA": "300", "MAILJET_HOURLY_QUOTA": "100",
+        # These tests measure the ladder alone; the per-subscriber daily cap
+        # (tests/test_subscriber_cap.py) would hold the runs they build.
+        "MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY": "0",
     }.items():
         monkeypatch.setenv(k, v)
     conn = connect(str(tmp_path / "t.db"))
