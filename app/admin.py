@@ -2,7 +2,8 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta
 
-from app.analytics import availability_daily, availability_summary, usage_daily
+from app.analytics import (availability_daily, availability_summary,
+                           cancellations_daily, subscribers_daily, usage_daily)
 
 # Thresholds for summary_anomalies(). Kept as module constants so the tests can
 # pin exact boundaries and prod can be retuned in one place.
@@ -695,6 +696,8 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         "availability": _availability(conn, city_labels),
         "availability_daily": availability_daily(conn),
         "usage_daily": usage_daily(conn),
+        "subscribers_daily": subscribers_daily(conn),
+        "cancellations_daily": cancellations_daily(conn),
     }
 
 

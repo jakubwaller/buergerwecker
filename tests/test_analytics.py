@@ -1,7 +1,8 @@
 from datetime import datetime, timedelta
 
 from app.analytics import (availability_daily, availability_summary,
-                           prune_availability, record_availability, usage_daily)
+                           cancellations_daily, prune_availability,
+                           record_availability, subscribers_daily, usage_daily)
 from app.db import connect, init_schema
 from app.models import Slot
 
@@ -111,3 +112,39 @@ def test_usage_daily_buckets_signups(tmp_path):
     (d,) = usage_daily(conn)
     assert d["signups"] == 3 and d["confirmed"] == 2 and d["deleted"] == 0
     assert d["by_city"] == {"leipzig": 2, "dresden": 1}
+
+
+def _sub(conn, email, *, confirmed="-10 days", expires="+30 days", deleted=None):
+    conn.execute(
+        "INSERT INTO subscriptions (email, city, filters_json, created_at, "
+        " confirmed_at, expires_at, deleted_at) VALUES (?, 'leipzig', '{}', "
+        " COALESCE(datetime('now', ?), CURRENT_TIMESTAMP), datetime('now', ?), "
+        " datetime('now', ?), datetime('now', ?))",
+        (email, confirmed, confirmed, expires, deleted))
+
+
+def test_subscribers_daily_reconstructs_active_people_per_day(tmp_path):
+    conn = _conn(tmp_path)
+    _sub(conn, "a@example.com", confirmed="-10 days", deleted="-3 days")
+    _sub(conn, "A@example.com", confirmed="-1 days")            # same person
+    _sub(conn, "a@example.com", confirmed="-1 days")            # second sub
+    _sub(conn, "b@example.com", confirmed="-40 days", expires="-20 days")
+    _sub(conn, "c@example.com", confirmed=None)                 # never confirmed
+    days = subscribers_daily(conn, days=14)
+    assert [d["day"] for d in days] == sorted(d["day"] for d in days)
+    assert len(days) == 14
+    assert [d["people"] for d in days] == [0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1]
+    assert days[-1]["subscriptions"] == 2 and days[-1]["people"] == 1
+
+
+def test_cancellations_daily_splits_unsubscribed_from_expired(tmp_path):
+    conn = _conn(tmp_path)
+    _sub(conn, "a@example.com", deleted="-3 days")                       # chose to leave
+    _sub(conn, "A@example.com", deleted="-3 days")                       # same person
+    _sub(conn, "b@example.com", expires="-20 days", deleted="-3 days")   # ran out
+    _sub(conn, "c@example.com", confirmed=None, deleted="-3 days")       # never subscribed
+    days = cancellations_daily(conn, days=7)
+    assert len(days) == 7
+    (d,) = [d for d in days if d["people"]]
+    assert (d["people"], d["subscriptions"], d["unsubscribed"], d["expired"]) == (2, 3, 1, 1)
+    assert all(d["people"] == 0 for d in days[:3] + days[4:])

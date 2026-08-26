@@ -626,3 +626,17 @@ def test_admin_page_shows_the_last_deferral_and_its_wall(client):
     html = client.get("/admin?token=admin-tok").data.decode()
     assert "last 12:05 UTC, 1 against the" in html
     assert "daily wall" in html and "frees 2026-08-27 09:31 UTC" in html
+
+
+def test_admin_renders_subscriber_and_cancellation_charts(client):
+    from app.db import connect
+    conn = connect(os.environ["DB_PATH"])
+    conn.execute(
+        "INSERT INTO subscriptions (email, city, filters_json, confirmed_at, "
+        " expires_at, deleted_at) VALUES ('x@example.com', 'leipzig', '{}', "
+        " datetime('now','-5 days'), datetime('now','+30 days'), datetime('now','-2 days'))")
+    conn.commit()
+    html = client.get("/admin?token=admin-tok").get_data(as_text=True)
+    assert "Subscribers" in html and "Cancellations" in html
+    assert "Expired, not renewed" in html
+    assert "1 people (1 unsubscribed, 0 expired)" in html
