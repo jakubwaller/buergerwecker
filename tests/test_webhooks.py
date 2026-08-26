@@ -502,12 +502,23 @@ def test_signing_up_again_does_not_lift_a_complaint(db):
     assert is_suppressed(db, "angry@example.com")
 
 
+# The per-IP sign-up limiter is a module-level global shared by every test in
+# the session (app.ratelimit.GLOBAL_IP_LIMITER), so a POST to /subscribe from
+# the default client address spends budget that tests/test_subscribe.py needs.
+# It only passes today because pytest happens to collect that file first. Give
+# each sign-up here its own address.
+def _signup(c, email, ip):
+    return c.post("/subscribe",
+                  data={"email": email, "city": "leipzig",
+                        "appointment_type": "A", "all_locations": "1",
+                        "lang": "de"},
+                  headers={"X-Forwarded-For": ip})
+
+
 def test_a_bounced_address_can_sign_up_again_and_is_mailed(client):
     c, conn = client
     suppress_address(conn, "fixed@example.com", reason=HARD_BOUNCE)
-    r = c.post("/subscribe", data={"email": "fixed@example.com",
-                                   "city": "leipzig", "appointment_type": "A",
-                                   "all_locations": "1", "lang": "de"})
+    r = _signup(c, "fixed@example.com", "203.0.113.41")
     assert r.status_code in (200, 302)
     assert not is_suppressed(conn, "fixed@example.com")
     assert _live(conn, "fixed@example.com") == 1
@@ -518,9 +529,7 @@ def test_a_complainant_signing_up_is_told_instead_of_silently_dropped(client):
     # by the suppression list, and the page still said "check your inbox".
     c, conn = client
     suppress_address(conn, "angry@example.com", reason=COMPLAINT)
-    r = c.post("/subscribe", data={"email": "angry@example.com",
-                                   "city": "leipzig", "appointment_type": "A",
-                                   "all_locations": "1", "lang": "de"})
+    r = _signup(c, "angry@example.com", "203.0.113.42")
     assert r.status_code == 403
     body = r.data.decode()
     assert "Spam" in body
@@ -799,3 +808,129 @@ def test_an_idle_provider_leg_is_not_reported_as_a_broken_webhook(db):
     assert d["providers_silent"] == ["mailjet"]
     # Sweego sent nothing, so its silence says nothing.
     assert by_name["sweego"]["silent"] is False
+
+
+# --------------------------------------------------------------------------
+# Regressions found in review
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("parser,payload", [
+    (parse_mailjet, {"event": "bounce", "email": "Gone@Example.COM ",
+                     "hard_bounce": True}),
+    (parse_brevo, {"event": "hard_bounce", "email": "Gone@Example.COM "}),
+    (parse_sweego, {"event_type": "hard_bounce",
+                    "recipient": "Gone@Example.COM "}),
+])
+def test_a_reported_address_is_normalised_the_way_we_store_it(parser, payload):
+    # Sign-up lowercases (web.subscribe), and every effect matches on equality.
+    # A provider echoing back the case somebody typed would otherwise write a
+    # suppression that blocks nothing and ends no subscription — and look
+    # exactly like a working one on /admin.
+    assert [e.email for e in parser(payload)] == ["gone@example.com"]
+
+
+def test_a_mixed_case_bounce_still_stops_the_mail(db):
+    _sub(db, "gone@example.com")
+    apply_events(db, parse_brevo({"event": "hard_bounce",
+                                  "email": "GONE@Example.com"}))
+    assert is_suppressed(db, "gone@example.com")
+    assert "gone@example.com" in suppressed_addresses(db)
+    assert _live(db, "gone@example.com") == 0
+
+
+def test_a_non_ascii_secret_is_a_403_not_a_crash(client):
+    # `hmac.compare_digest` raises TypeError on non-ASCII str, and this one is
+    # a URL path segment: anybody can put an accent in it.
+    c, _ = client
+    assert _post(c, "brevo", "sécret", {}).status_code == 403
+
+
+def test_a_non_ascii_signature_header_is_a_403_not_a_crash(client, monkeypatch):
+    c, conn = client
+    monkeypatch.setenv("SWEEGO_WEBHOOK_SECRET",
+                       base64.b64encode(b"k" * 32).decode())
+    from app.web import create_app
+    app = create_app()
+    app.config["TESTING"] = True
+    r = app.test_client().post(
+        f"/webhooks/sweego/{SECRET}", data=b"{}",
+        headers={"webhook-id": "id1", "webhook-timestamp": "1",
+                 "webhook-signature": "sécret"},
+        content_type="application/json")
+    assert r.status_code == 403
+
+
+def test_sweego_signature_accepts_the_standard_webhooks_spelling():
+    # These header names are Standard Webhooks', and that spec prefixes the
+    # secret with `whsec_` and the signature with a version tag. Reading only
+    # the bare form would 403 every delivery, forever, silently.
+    raw = base64.b64encode(b"k" * 32).decode()
+    body = b'{"event_type":"hard_bounce","recipient":"a@example.com"}'
+    sig = _sweego_sign(body, raw)
+    assert verify_sweego_signature(webhook_id="id1", timestamp="1769696506",
+                                   signature=f"v1,{sig}", body=body,
+                                   secret=raw)
+    assert verify_sweego_signature(webhook_id="id1", timestamp="1769696506",
+                                   signature=f"v1,{sig} v1a,other", body=body,
+                                   secret=f"whsec_{raw}")
+
+
+def test_sweego_signature_accepts_a_secret_that_is_not_base64():
+    # `b64decode` does not validate — handed a non-base64 secret it silently
+    # returns a wrong key, so a misread of the format is not a startup error,
+    # it is every delivery rejected with nothing to show for it.
+    secret = "not-base64-at-all!"
+    body = b'{"event_type":"complaint","recipient":"a@example.com"}'
+    signed = b"id1.1769696506." + body
+    sig = base64.b64encode(
+        hmac.new(secret.encode(), signed, hashlib.sha256).digest()).decode()
+    assert verify_sweego_signature(webhook_id="id1", timestamp="1769696506",
+                                   signature=sig, body=body, secret=secret)
+
+
+def test_sweego_still_rejects_a_signature_made_with_the_wrong_secret():
+    body = b'{"event_type":"hard_bounce","recipient":"a@example.com"}'
+    good = base64.b64encode(b"k" * 32).decode()
+    assert not verify_sweego_signature(
+        webhook_id="id1", timestamp="1769696506",
+        signature=f"v1,{_sweego_sign(body, base64.b64encode(b'x' * 32).decode())}",
+        body=body, secret=good)
+
+
+def test_a_payload_in_an_unrecognised_shape_is_counted(client):
+    # The quiet half of a stale parser: valid JSON, wrong envelope. The
+    # receipt is stamped either way, so without this /admin shows a talkative,
+    # healthy webhook that has learned nothing for weeks.
+    c, conn = client
+    r = _post(c, "brevo", SECRET, {"type": "email.bounced",
+                                   "data": {"to": "a@example.com"}})
+    assert r.status_code == 200
+    assert conn.execute("SELECT value FROM meta WHERE key=?",
+                        ("webhook_errors_brevo",)).fetchone()["value"] == "1"
+
+
+def test_an_empty_payload_is_not_counted_as_a_parse_error(client):
+    # `[]` is a provider with nothing to report, not a format we misread.
+    c, conn = client
+    assert _post(c, "brevo", SECRET, []).status_code == 200
+    assert conn.execute("SELECT value FROM meta WHERE key=?",
+                        ("webhook_errors_brevo",)).fetchone() is None
+
+
+def test_opens_and_clicks_are_not_counted_as_parse_errors(client):
+    c, conn = client
+    assert _post(c, "mailjet", SECRET,
+                 {"event": "open", "email": "a@example.com"}).status_code == 200
+    assert conn.execute("SELECT value FROM meta WHERE key=?",
+                        ("webhook_errors_mailjet",)).fetchone() is None
+
+
+def test_admin_renders_on_a_db_that_predates_the_suppression_table(client):
+    # The fallback in `_deliverability` must return every key the template
+    # reads: the one instrument for a stalled migration cannot be the page
+    # that fails to render during one.
+    c, conn = client
+    conn.execute("DROP TABLE email_suppressions")
+    r = c.get("/admin?token=" + "a" * 32)
+    assert r.status_code == 200
+    assert b"Deliverability" in r.data

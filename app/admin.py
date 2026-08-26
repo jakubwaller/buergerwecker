@@ -332,9 +332,17 @@ def _deliverability(conn: sqlite3.Connection, cfg=None) -> dict:
         row = conn.execute(q, args).fetchone()
         return row[0] if row else 0
 
+    # Every key the template and `summary_anomalies` read is seeded here, not
+    # only on the way out: the `except` below returns this dict as-is on a DB
+    # that predates the table, and a missing key is not a blank cell — Jinja
+    # hands `'%.2f'|format(...)` an Undefined and the whole admin page 500s.
+    # The one instrument for a stalled migration must not be the page that
+    # cannot render during one.
     out: dict = {"configured": bool(getattr(cfg, "webhook_secret", "")),
                  "by_reason": {}, "providers": [], "providers_silent": [],
-                 "parse_errors": {}}
+                 "parse_errors": {}, "suppressed": 0, "watchlist": 0,
+                 "sent_30d": 0, "complaint_rate": None, "bounce_rate": None,
+                 "complaint_30d": 0, "hard_bounce_30d": 0}
     try:
         for r in conn.execute(
             "SELECT reason, COUNT(*) AS n FROM email_suppressions "

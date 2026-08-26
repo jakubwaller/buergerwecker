@@ -45,6 +45,20 @@ def _clean(value) -> str:
     return value.strip().lower() if isinstance(value, str) else ""
 
 
+def _email(value) -> str:
+    """Normalise a provider-reported address to the form we store it in.
+
+    `web.subscribe` lowercases on sign-up, and every effect here matches on
+    equality: `soft_delete_by_email`, `mail._dead_addresses` and `is_suppressed`
+    all compare the address exactly. A provider that echoes back the mixed case
+    somebody typed — or, for a blocklist event, an address that never went
+    through this service at all — would otherwise write a suppression row that
+    blocks nothing and ends no subscription, and look identical on /admin to one
+    that works. Returns "" for anything that is not a usable address, which the
+    parsers treat as "skip this event"."""
+    return value.strip().lower() if isinstance(value, str) else ""
+
+
 def _detail(*parts) -> str | None:
     """Join whatever the provider said about the failure, for the admin page.
 
@@ -77,8 +91,8 @@ def parse_mailjet(payload) -> list[Event]:
     for raw in events:
         if not isinstance(raw, dict):
             continue
-        email = raw.get("email")
-        if not isinstance(email, str) or not email:
+        email = _email(raw.get("email"))
+        if not email:
             continue
         name = _clean(raw.get("event"))
         related = _clean(raw.get("error_related_to"))
@@ -137,8 +151,8 @@ def parse_brevo(payload) -> list[Event]:
     for raw in events:
         if not isinstance(raw, dict):
             continue
-        email = raw.get("email")
-        if not isinstance(email, str) or not email:
+        email = _email(raw.get("email"))
+        if not email:
             continue
         kind = _BREVO_KINDS.get(_clean(raw.get("event")), IGNORE)
         out.append(Event(email=email, kind=kind, provider="brevo",
@@ -168,8 +182,8 @@ def parse_sweego(payload) -> list[Event]:
     for raw in events:
         if not isinstance(raw, dict):
             continue
-        email = raw.get("recipient")
-        if not isinstance(email, str) or not email:
+        email = _email(raw.get("recipient"))
+        if not email:
             continue
         name = _clean(raw.get("event_type")).replace("-", "_")
         out.append(Event(email=email, kind=_SWEEGO_KINDS.get(name, IGNORE),
@@ -188,6 +202,20 @@ PARSERS = {
 # Authentication
 # --------------------------------------------------------------------------
 
+def _eq(supplied: str, expected: str) -> bool:
+    """Constant-time compare of two strings that came off the wire.
+
+    `hmac.compare_digest` refuses a `str` containing non-ASCII and raises
+    TypeError. Both callers below hand it attacker-chosen text — a URL path
+    segment and an HTTP header — so comparing the strings directly turns a
+    request with one accented character into a 500 and a stack trace in the
+    log, where it should be a flat 403. Comparing the encoded bytes keeps the
+    timing property and answers every input.
+    """
+    return hmac.compare_digest(supplied.encode("utf-8", "surrogatepass"),
+                               expected.encode("utf-8", "surrogatepass"))
+
+
 def check_secret(supplied: str, expected: str) -> bool:
     """Constant-time compare of the secret carried in the webhook URL.
 
@@ -198,14 +226,62 @@ def check_secret(supplied: str, expected: str) -> bool:
     this vhost and gunicorn has no access log) and rotate it by changing one
     env var and the URL in each provider's dashboard.
     """
-    return bool(supplied) and bool(expected) and hmac.compare_digest(
-        supplied, expected)
+    return bool(supplied) and bool(expected) and _eq(supplied, expected)
+
+
+def _signing_keys(secret: str) -> list[bytes]:
+    """The HMAC keys a dashboard-copied Sweego secret can plausibly mean.
+
+    Documented as base64, but `base64.b64decode` does not validate: handed a
+    secret that is not base64 it silently discards the characters outside the
+    alphabet and returns a wrong key, so a misread of the format is not an
+    error at startup — it is every Sweego webhook rejected with 403, forever,
+    with only /admin's silent-provider line to show for it. Standard Webhooks,
+    whose header names Sweego uses, additionally prefixes the secret with
+    `whsec_`, which is exactly such a non-alphabet character.
+
+    So derive both readings and accept a signature matching either. This does
+    not weaken anything: each candidate key still has to produce the signature
+    that arrived, and both are derived from the same shared secret.
+    """
+    raw = secret[len("whsec_"):] if secret.startswith("whsec_") else secret
+    keys = [raw.encode()]
+    try:
+        decoded = base64.b64decode(raw)
+    except (ValueError, TypeError):
+        decoded = b""
+    if decoded and decoded not in keys:
+        keys.append(decoded)
+    return keys
+
+
+def _offered_signatures(header: str) -> list[str]:
+    """Every signature the `webhook-signature` header offers.
+
+    A plain HMAC implementation sends one bare base64 digest. Standard
+    Webhooks — again, the source of these header names — sends a
+    space-separated list of versioned ones, `v1,<base64> v1a,<base64>`, so that
+    a provider can rotate keys without a flag day. Reading only the bare form
+    would reject every delivery in the second shape.
+    """
+    out: list[str] = []
+    for part in header.split():
+        out.append(part)
+        _, sep, rest = part.partition(",")
+        if sep and rest:
+            out.append(rest)
+    return out
 
 
 def verify_sweego_signature(*, webhook_id: str, timestamp: str,
                             signature: str, body: bytes, secret: str) -> bool:
     """HMAC-SHA256 over `{webhook-id}.{webhook-timestamp}.{body}`, base64, with
     a base64-encoded secret (learn.sweego.io/docs/webhooks/webhook_signature).
+
+    Both the secret and the header are read in the two encodings that spelling
+    can have — see `_signing_keys` and `_offered_signatures`. Getting either
+    wrong fails closed and silently: a 403 on every delivery, no data, and only
+    the silent-provider line on /admin to notice it by.
 
     `body` must be the raw request bytes: re-serialising the parsed JSON
     changes whitespace and key order and the signature stops matching.
@@ -217,14 +293,13 @@ def verify_sweego_signature(*, webhook_id: str, timestamp: str,
     """
     if not (webhook_id and timestamp and signature and secret):
         return False
-    try:
-        key = base64.b64decode(secret)
-    except (ValueError, TypeError):
-        return False
     signed = f"{webhook_id}.{timestamp}.".encode() + body
-    expected = base64.b64encode(
-        hmac.new(key, signed, hashlib.sha256).digest()).decode()
-    return hmac.compare_digest(expected, signature)
+    candidates = {base64.b64encode(hmac.new(key, signed, hashlib.sha256)
+                                   .digest()).decode()
+                  for key in _signing_keys(secret)}
+    return any(_eq(expected, offered)
+               for expected in candidates
+               for offered in _offered_signatures(signature))
 
 
 # --------------------------------------------------------------------------

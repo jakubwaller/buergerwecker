@@ -243,8 +243,12 @@ endpoint answers 403 and events are lost, so do it in one sitting.
   and `delivered`. One event per request.
 - **Sweego** — Webhooks → new webhook, attached to the `buergerwecker.de`
   domain. Enable hard bounce, soft bounce, spam-complaints, list-unsubscribe
-  and delivered. Copy the webhook secret into `SWEEGO_WEBHOOK_SECRET`; it is
-  base64 and is verified as HMAC-SHA256 over `{id}.{timestamp}.{raw body}`.
+  and delivered. Copy the webhook secret into `SWEEGO_WEBHOOK_SECRET`
+  **verbatim**, including a `whsec_` prefix if the dashboard shows one — it is
+  verified as HMAC-SHA256 over `{id}.{timestamp}.{raw body}`, and both the
+  base64 and the literal reading of the secret are accepted, because a
+  misread here is not an error at startup but a silent 403 on every delivery.
+  Leave it empty and only the URL secret gates the endpoint.
 
 `delivered`/`sent` matter as much as the failures: they clear a soft-bounce run
 so a temporarily full mailbox does not creep up to the threshold over months.
