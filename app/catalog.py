@@ -16,6 +16,17 @@ _SLUG_RE = re.compile(r"[a-z0-9][a-z0-9-]*")
 _NOTIFY_GRANULARITIES = ("slot", "day")
 
 
+def _default_granularity(scfg: dict) -> str:
+    """The granularity a tenant gets by saying nothing.
+
+    TEVIS is "day" because earliest-slot-only is how *our* scraper reads it
+    (tevis.parse_slots: one earliest Slot per office), so every TEVIS tenant
+    has the same shape and the same redundancy. Everything else lists real
+    inventory and keeps per-slot identity.
+    """
+    return "day" if scfg.get("vendor") == "tevis" else "slot"
+
+
 class CatalogError(Exception):
     pass
 
@@ -73,10 +84,11 @@ class Catalog:
     # (confirmation, digest), so folding the Amt into it would give the game
     # away there.
     sensitive_services: frozenset = field(default_factory=frozenset)
-    # What counts as one piece of news for this tenant, from
-    # `notify_granularity` in scraper_config.json:
+    # What counts as one piece of news for this tenant. Defaults by vendor
+    # (see _default_granularity); `notify_granularity` in scraper_config.json
+    # overrides it for one tenant:
     #
-    #   "slot" (default) — every distinct (day, time, office, service). Right
+    #   "slot" — every distinct (day, time, office, service). Right
     #       for a vendor that lists real inventory: each slot is a separate
     #       perishable opportunity, and a subscriber told about a 09:00 that
     #       someone else then books genuinely wants to hear about the 14:00.
@@ -100,7 +112,10 @@ class Catalog:
     # horizon — and Münster's own 2408 stood sixteen days out when probed on
     # 2026-08-25 — so the horizon was never the discriminator. What decides
     # whether a tenant should be "day" is only whether its vendor shows one
-    # slot per office; docs/DEPLOY.md has the query that measures it.
+    # slot per office — and for TEVIS that is not a tenant property but how
+    # our scraper is built (tevis.parse_slots yields one earliest slot per
+    # office), which is why it is the vendor default rather than 30 config
+    # keys.
     notify_granularity: str = "slot"
 
     def seen_key(self, slot) -> SeenKey:
@@ -204,10 +219,13 @@ def load_catalog(city: str) -> Catalog:
         ats_en = {n: u for n, u in ats_en.items() if u not in excluded}
         svc_locs = {u: v for u, v in svc_locs.items() if u not in excluded}
     sensitive = frozenset(str(s) for s in (scfg.get("sensitive_services") or ()))
-    granularity = str(scfg.get("notify_granularity") or "slot")
+    granularity = str(scfg.get("notify_granularity")
+                      or _default_granularity(scfg))
     if granularity not in _NOTIFY_GRANULARITIES:
         # A typo ("Day", "daily") would otherwise leave the tenant looking
         # correctly configured while the intended suppression never happens.
+        # Falling back to 'slot' rather than the vendor default keeps the
+        # failure on the side that can only send *more* mail.
         print(f"catalog {city}: unknown notify_granularity "
               f"{granularity!r}, using 'slot'", flush=True)
         granularity = "slot"
