@@ -135,8 +135,8 @@ def has_seen_slot(conn: sqlite3.Connection, sub_id: int, slot_hash: str) -> bool
 
 def record_digest_delivery(conn: sqlite3.Connection, sub_id: int) -> None:
     """One delivered digest — what the per-subscriber daily cap counts."""
-    conn.execute("INSERT OR IGNORE INTO digest_deliveries (subscription_id) "
-                 "VALUES (?)", (sub_id,))
+    conn.execute("INSERT INTO digest_deliveries (subscription_id) VALUES (?)",
+                 (sub_id,))
 
 def digests_in_window(conn: sqlite3.Connection, sub_id: int, *,
                       hours: int = 24) -> int:

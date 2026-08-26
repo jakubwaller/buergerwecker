@@ -85,9 +85,10 @@ CREATE INDEX IF NOT EXISTS idx_email_deferrals_at ON email_deferrals(at);
 CREATE TABLE IF NOT EXISTS digest_deliveries (
   subscription_id INTEGER NOT NULL,
   sent_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (subscription_id, sent_at),
   FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
 );
+CREATE INDEX IF NOT EXISTS idx_digest_deliveries_sub_at
+  ON digest_deliveries(subscription_id, sent_at);
 
 -- Subscribers the cap held back, one row per subscriber per UTC day. A held
 -- digest is not queued: its slots stay unseen and go out once the window
@@ -281,19 +282,26 @@ def init_schema(conn: sqlite3.Connection) -> None:
     # The per-subscriber cap counts digest_deliveries over the last 24h. A
     # migrated DB has none, which would lift the cap for everyone on the first
     # day — seed it once from seen_slots, where every delivered digest wrote
-    # its slots under one timestamp, so distinct minutes ≈ digests. The
-    # (subscription_id, sent_at) key plus OR IGNORE keeps the web workers and
-    # the poller from seeding twice when they all start on the same `up -d`.
-    empty = conn.execute(
-        "SELECT NOT EXISTS (SELECT 1 FROM digest_deliveries)"
-    ).fetchone()[0]
-    if empty:
-        conn.execute(
-            "INSERT OR IGNORE INTO digest_deliveries (subscription_id, sent_at) "
-            "SELECT subscription_id, MIN(sent_at) FROM seen_slots "
-            "WHERE sent_at > datetime('now','-1 day') "
-            "GROUP BY subscription_id, strftime('%Y-%m-%d %H:%M', sent_at)"
-        )
+    # its slots under one timestamp, so distinct minutes ≈ digests. The web
+    # workers and the poller all run this on the same `up -d`; BEGIN IMMEDIATE
+    # takes the write lock before the emptiness check, so the second process
+    # waits and then sees the seed instead of adding its own.
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        empty = conn.execute(
+            "SELECT NOT EXISTS (SELECT 1 FROM digest_deliveries)"
+        ).fetchone()[0]
+        if empty:
+            conn.execute(
+                "INSERT INTO digest_deliveries (subscription_id, sent_at) "
+                "SELECT subscription_id, MIN(sent_at) FROM seen_slots "
+                "WHERE sent_at > datetime('now','-1 day') "
+                "GROUP BY subscription_id, strftime('%Y-%m-%d %H:%M', sent_at)"
+            )
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
     conn.execute(
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?) "
         "ON CONFLICT (key) DO UPDATE SET value=excluded.value, "
