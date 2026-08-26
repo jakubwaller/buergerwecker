@@ -431,18 +431,24 @@ def test_bounce_suppressions_die_with_the_subscription_that_justified_them(db):
     assert not is_suppressed(db, "gone@example.com")
 
 
-def test_complaints_are_never_pruned(db):
-    # Someone telling their provider we are spam does not expire, and
-    # re-mailing them is the worst thing this service can do to its sending
-    # domain.
+def test_complaints_outlive_the_subscription_but_not_their_own_clock(db):
+    # A complaint runs on COMPLAINT_RETENTION_DAYS, not on the subscription's
+    # lifetime — and it is not indefinite either.
     from app.housekeeping import _prune_suppressions
 
+    cfg = SimpleNamespace(complaint_retention_days=365)
     sid = _sub(db, "angry@example.com")
     apply_events(db, parse_mailjet({"event": "spam",
                                     "email": "angry@example.com"}))
     db.execute("DELETE FROM subscriptions WHERE id=?", (sid,))
-    _prune_suppressions(db)
+    _prune_suppressions(db, cfg)
     assert is_suppressed(db, "angry@example.com")
+
+    db.execute("UPDATE email_suppressions "
+               "SET suppressed_at = datetime('now','-366 days') WHERE email=?",
+               ("angry@example.com",))
+    _prune_suppressions(db, cfg)
+    assert not is_suppressed(db, "angry@example.com")
 
 
 def test_a_complaint_for_an_already_purged_subscription_survives(db):
@@ -452,8 +458,76 @@ def test_a_complaint_for_an_already_purged_subscription_survives(db):
     from app.housekeeping import _prune_suppressions
 
     apply_events(db, parse_brevo({"event": "spam", "email": "late@example.com"}))
-    _prune_suppressions(db)
+    _prune_suppressions(db, SimpleNamespace(complaint_retention_days=365))
     assert is_suppressed(db, "late@example.com")
+
+
+# --------------------------------------------------------------------------
+# Getting back off the list
+# --------------------------------------------------------------------------
+
+def test_the_transactional_send_path_honours_the_suppression_list(db):
+    # send_batch had the guard; send() did not. Nothing reached a suppressed
+    # person through it only because suppression also ends their subscriptions
+    # and those queries filter on it — a coincidence of WHERE clauses.
+    from app.mail import send
+
+    suppress_address(db, "gone@example.com", reason=COMPLAINT)
+    with patch("app.mail._call_mailjet") as mj:
+        send(db, "gone@example.com", "s", "b", idem_key="k1")
+    mj.assert_not_called()
+    # And no phantom claim is left behind to block a later, legitimate send.
+    assert db.execute("SELECT COUNT(*) AS n FROM sent_idempotency"
+                      ).fetchone()["n"] == 0
+
+
+def test_signing_up_again_lifts_a_bounce_block(db):
+    from app.repo import clear_delivery_block
+
+    suppress_address(db, "fixed@example.com", reason=HARD_BOUNCE)
+    db.execute("INSERT INTO email_failures (email, failures) VALUES (?, 3)",
+               ("fixed@example.com",))
+    clear_delivery_block(db, "fixed@example.com")
+    assert not is_suppressed(db, "fixed@example.com")
+    # Both halves of the block have to go, or _dead_addresses still catches it.
+    assert db.execute("SELECT COUNT(*) AS n FROM email_failures"
+                      ).fetchone()["n"] == 0
+
+
+def test_signing_up_again_does_not_lift_a_complaint(db):
+    from app.repo import clear_delivery_block
+
+    suppress_address(db, "angry@example.com", reason=COMPLAINT)
+    clear_delivery_block(db, "angry@example.com")
+    assert is_suppressed(db, "angry@example.com")
+
+
+def test_a_bounced_address_can_sign_up_again_and_is_mailed(client):
+    c, conn = client
+    suppress_address(conn, "fixed@example.com", reason=HARD_BOUNCE)
+    r = c.post("/subscribe", data={"email": "fixed@example.com",
+                                   "city": "leipzig", "appointment_type": "A",
+                                   "all_locations": "1", "lang": "de"})
+    assert r.status_code in (200, 302)
+    assert not is_suppressed(conn, "fixed@example.com")
+    assert _live(conn, "fixed@example.com") == 1
+
+
+def test_a_complainant_signing_up_is_told_instead_of_silently_dropped(client):
+    # The bug this closes: the sign-up succeeded, the confirmation was swallowed
+    # by the suppression list, and the page still said "check your inbox".
+    c, conn = client
+    suppress_address(conn, "angry@example.com", reason=COMPLAINT)
+    r = c.post("/subscribe", data={"email": "angry@example.com",
+                                   "city": "leipzig", "appointment_type": "A",
+                                   "all_locations": "1", "lang": "de"})
+    assert r.status_code == 403
+    body = r.data.decode()
+    assert "Spam" in body
+    assert "/kontakt" in body          # a route back, not a dead end
+    # No subscription is created, so nothing is left pending forever.
+    assert _live(conn, "angry@example.com") == 0
+    assert is_suppressed(conn, "angry@example.com")
 
 
 def test_a_soft_bounce_watchlist_row_is_still_pruned(db):

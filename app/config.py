@@ -22,6 +22,7 @@ class Config:
     webhook_secret: str
     sweego_webhook_secret: str
     soft_bounce_suppress_threshold: int
+    complaint_retention_days: int
     email_provider_order: tuple
     token_secret_primary: str
     token_secret_previous: str
@@ -102,6 +103,14 @@ def load_config() -> Config:
         # a hard bounce. 0 counts without ever escalating.
         soft_bounce_suppress_threshold=int(
             os.environ.get("SOFT_BOUNCE_SUPPRESS_THRESHOLD", "5")),
+        # How long a spam complaint keeps an address suppressed. Not
+        # indefinite: Art. 5(1)(e) wants a stated period, and this service is
+        # double opt-in only, so a lapsed entry can only ever cost one
+        # confirmation mail to somebody who went back to the site and asked.
+        # A year is four subscription lifetimes. Bounce suppressions are NOT
+        # governed by this — they die with their subscription.
+        complaint_retention_days=int(
+            os.environ.get("COMPLAINT_RETENTION_DAYS", "365")),
         email_provider_order=tuple(
             p.strip() for p in
             os.environ.get("EMAIL_PROVIDER_ORDER",

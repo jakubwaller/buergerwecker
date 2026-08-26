@@ -231,3 +231,30 @@ def soft_delete_by_email(conn: sqlite3.Connection, email: str) -> int:
         (email,),
     )
     return cur.rowcount or 0
+
+def suppression_reason(conn: sqlite3.Connection, email: str) -> str | None:
+    """Why `email` is suppressed, or None if it is mailable."""
+    row = conn.execute(
+        "SELECT reason FROM email_suppressions WHERE email=? AND reason IS NOT NULL",
+        (email,),
+    ).fetchone()
+    return row["reason"] if row else None
+
+def clear_delivery_block(conn: sqlite3.Connection, email: str) -> None:
+    """Make a bounced address mailable again, and forget why it wasn't.
+
+    Called when someone signs up with an address we had retired over delivery
+    failures. A bounce only ever claimed the mailbox was broken *then*, and a
+    person typing that address into the form is the evidence it is working now
+    — so the right move is to try again rather than leave them in a silent hole
+    where the confirmation mail is dropped and the page still says "check your
+    inbox". If the mailbox really is still broken, one bounce re-suppresses it.
+
+    Deliberately refuses to lift a complaint: that is a person telling their
+    provider we are spam, a form submission is not their word for it, and
+    lifting it is the one thing that has to go through a human.
+    """
+    conn.execute("DELETE FROM email_suppressions "
+                 "WHERE email=? AND (reason IS NULL OR reason != 'complaint')",
+                 (email,))
+    conn.execute("DELETE FROM email_failures WHERE email=?", (email,))

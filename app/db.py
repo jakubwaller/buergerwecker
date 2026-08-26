@@ -91,9 +91,10 @@ CREATE TABLE IF NOT EXISTS email_failures (
 -- would reset the evidence every cycle.
 --
 -- Retention splits by reason (housekeeping._prune_suppressions): bounce rows
--- die with the subscription that justified them, complaint rows never do. A
--- bounce claims a mailbox does not exist *today* and goes stale; a complaint is
--- a person saying we are spam, which does not expire.
+-- die with the subscription that justified them, complaint rows run on their
+-- own clock (COMPLAINT_RETENTION_DAYS, a year). A bounce claims a mailbox does
+-- not exist *today* and goes stale, and a sign-up lifts it; a complaint is a
+-- person saying we are spam, which needs a human and outlives the subscription.
 CREATE TABLE IF NOT EXISTS email_suppressions (
   email         TEXT PRIMARY KEY,
   reason        TEXT,

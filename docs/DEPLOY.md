@@ -280,27 +280,42 @@ A provider that has gone silent for 48h is flagged, because a rate of 0.00% with
 a dead webhook and a rate of 0.00% with a healthy one look identical in the
 numbers, and the first is the dangerous one.
 
-### Retention, and the one manual step it creates
+### Retention, and getting back off the list
 
-Retention splits by reason. **Bounce** suppressions age out with the
-subscription that justified them (`_prune_suppressions`, same 30-day clock as
-`_purge_hard`), because a bounce only claims the mailbox does not exist *today*
-and goes stale — the cost is one bounced message if that person ever signs up
-again. **Complaint** suppressions are never pruned: a person telling their
-provider we are spam does not expire, re-mailing them is the worst thing this
-service can do to its sending domain, and a late-arriving complaint for an
-already-purged subscription would otherwise be deleted within 24h.
+Retention splits by reason, and so does the way back.
 
-The privacy page states this, and offers erasure on request. There is no admin
-UI for it — at this volume, honour such a request by hand on the VPS:
+**Bounce** suppressions age out with the subscription that justified them
+(`_prune_suppressions`, the same 30-day clock as `_purge_hard`), and a new
+sign-up lifts one immediately (`repo.clear_delivery_block`, which also resets
+the `email_failures` counter). A bounce only ever claimed the mailbox was
+broken *then*; somebody typing that address into the form now is the evidence
+it works. If it is still broken, one bounce re-suppresses it. No manual step.
+
+**Complaint** suppressions run on their own clock,
+`COMPLAINT_RETENTION_DAYS` (365), independent of any subscription — a feedback
+loop can report late, so a complaint may arrive for an address whose
+subscription was already purged, and tying it to the subscription would delete
+the one suppression that matters most within 24h. It is not indefinite:
+Art. 5(1)(e) wants a stated period, and since this service is double opt-in
+only a lapsed entry can at worst cost one confirmation mail to somebody who
+went back to the site and asked for it.
+
+A complaint is **not** lifted by signing up again — that is the person's own
+verdict and a form submission is not their word for it. Instead the sign-up
+form says so, with a link to `/kontakt`, rather than accepting the sign-up and
+dropping the confirmation into the suppression list while the page claims it
+was sent. To lift one by hand after they ask:
 
 ```bash
 sqlite3 ~/termine-notifier/data/app.db \
   "DELETE FROM email_suppressions WHERE email='<address>' AND reason='complaint';"
 ```
 
-That makes the address mailable again, which is the point. Nothing else needs
-touching: the subscription itself was already ended when the complaint arrived.
+Nothing else needs touching: their subscriptions were already ended when the
+complaint arrived, so they sign up again as a new subscriber.
+
+Both send paths honour the list — `send_batch` via `_dead_addresses` and the
+transactional `send()` via its own check. Do not add a third.
 
 ## Polling cadence
 

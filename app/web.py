@@ -17,7 +17,8 @@ from app.db import connect, transaction
 from app.catalog import (load_catalog, available_cities, booking_start_url,
                          city_display_name, CatalogError)
 from app.models import Filter
-from app.repo import insert_pending, active_subscriptions, confirm, soft_delete
+from app.repo import (insert_pending, active_subscriptions, confirm,
+                      soft_delete, suppression_reason, clear_delivery_block)
 from app.ratelimit import GLOBAL_IP_LIMITER, email_rate_limit_ok
 from app.tokens import sign, verify, InvalidToken
 from app.planning import would_exceed_cap
@@ -129,6 +130,23 @@ _RESULT_MESSAGES: dict[str, dict] = {
         "en": ("Not found", "Subscription not found",
                "This subscription no longer exists. You may have already "
                "unsubscribed."),
+    },
+    # Shown when someone signs up with an address we stopped mailing after a
+    # spam complaint. Without it the sign-up succeeds, the confirmation is
+    # dropped by the suppression list, and the page still says "check your
+    # inbox" — a silent hole with no way out. Bounce suppressions never reach
+    # here: those lift on sign-up (repo.clear_delivery_block).
+    "address_blocked": {
+        "kind": "error",
+        "de": ("Versand gestoppt", "An diese Adresse senden wir keine E-Mails mehr",
+               "Eine frühere E-Mail an diese Adresse wurde als Spam gemeldet, "
+               "daher haben wir den Versand dorthin eingestellt. Wenn du den "
+               "Dienst wieder nutzen möchtest, schreib uns kurz — wir schalten "
+               "die Adresse dann wieder frei."),
+        "en": ("Sending stopped", "We no longer send email to this address",
+               "An earlier email to this address was reported as spam, so we "
+               "stopped sending to it. If you'd like to use the service again, "
+               "drop us a line and we'll turn it back on."),
     },
     "invalid_email": {
         "kind": "error",
@@ -736,6 +754,21 @@ def create_app() -> Flask:
         if not email_rate_limit_ok(conn_for_check, email,
                                    cfg.subscribe_ratelimit_per_email_per_day):
             return _result_page("rate_limited", lang, status=429)
+        # 3b. Addresses we stopped mailing. A complaint is the person's own
+        # verdict and a form submission is not their word for it, so it needs a
+        # human — but say so, instead of accepting the sign-up and dropping the
+        # confirmation into the suppression list while the page claims it was
+        # sent. Any other block (a bounce, a run of provider rejections) only
+        # ever claimed the mailbox was broken then, and someone typing the
+        # address in now is the evidence it works, so it lifts here. Placed
+        # after both rate limits: the answer differs per address, and probing
+        # for it should cost the same as probing for anything else.
+        if suppression_reason(conn_for_check, email) == "complaint":
+            return _result_page("address_blocked", lang, status=403,
+                                action_url=f"/kontakt?lang={lang}",
+                                action_label=("Kontakt" if lang == "de"
+                                              else "Contact us"))
+        clear_delivery_block(conn_for_check, email)
         # 4. parse filter from form
         city = request.form.get("city", _DEFAULT_CITY)
         # An unknown city used to be stored anyway — a subscription no poller

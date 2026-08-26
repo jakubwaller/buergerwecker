@@ -182,6 +182,18 @@ def send(conn: sqlite3.Connection, to: str, subject: str, body: str,
     send, the row remains with provider='pending' and the next call
     short-circuits — preventing a double-send on crash recovery.
     """
+    from app.repo import is_suppressed
+
+    # Checked before the idempotency claim, so a refused send leaves no
+    # phantom 'pending' row behind. `send_batch` has the same guard via
+    # `_dead_addresses`; without this one, every transactional mail (renewal
+    # reminders, manage links, heartbeats) would bypass the promise that a
+    # suppressed address is never written to again. Nothing reaches a
+    # suppressed person through this path today, but only because suppression
+    # also ends their subscriptions and those queries filter on it — a
+    # coincidence of WHERE clauses, not a guarantee.
+    if is_suppressed(conn, to):
+        return
     cur = conn.execute(
         "INSERT OR IGNORE INTO sent_idempotency (idem_key, provider) "
         "VALUES (?, 'pending')",
