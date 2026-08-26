@@ -146,6 +146,36 @@
   .spark i.zero { background: var(--border); min-height: 2px; border-radius: 999px; }
   .spark-now { font-size: 0.85rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .spark-now strong { font-weight: 600; }
+
+  /* Phones: no row of this page may be wider than the screen. Key/value
+     tables stack the key above its value, the availability bars put the
+     numbers under the bar, and the cities table turns into a list — one
+     block per tenant, every number captioned — instead of a 900px table
+     in a sideways scroller. */
+  @media (max-width: 640px) {
+    .adm-table, .adm-table tbody, .adm-table tr, .adm-table td { display: block; }
+    .adm-table tr { padding: 0.55rem 0; border-top: 1px solid var(--border); }
+    .adm-table tr:first-child { border-top: none; }
+    .adm-table td { padding: 0; border-top: none; }
+    .adm-table td.k { font-size: 0.8rem; margin-bottom: 0.15rem; }
+    .adm-table td.v { text-align: left; }
+
+    .hbar-track { flex-wrap: wrap; gap: 0.3rem 0; }
+    .hbar-bg { flex-basis: 100%; }
+    .hbar-val { white-space: normal; }
+
+    .adm-wide { overflow-x: visible; white-space: normal; }
+    .adm-wide td { padding-right: 0; }
+    .city-table tr.adm-head { display: none; }
+    .city-table tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.1rem 0.8rem; }
+    .city-table tr::after { content: ""; flex-basis: 100%; order: 2; }
+    .city-table td.name { order: 0; flex: 1 1 auto; }
+    .city-table td.name br { display: none; }
+    .city-table td.name .quiet { display: block; }
+    .city-table td:nth-child(2) { order: 1; flex: none; }
+    .city-table td[data-l] { order: 3; font-size: 0.875rem; }
+    .city-table td[data-l]::before { content: attr(data-l) " "; color: var(--text-muted); font-size: 0.78rem; }
+  }
 </style>
 {% endblock %}
 
@@ -222,9 +252,9 @@
             {% set mpct = (100 * u.month / u.month_quota)|round|int if u.month_quota else 0 %}
             {% set dpct = (100 * u.today / u.day_quota)|round|int if u.day_quota else 0 %}
             month <span{% if mpct >= 80 %} class="quota-hot"{% endif %}>{{ u.month }}{% if u.month_quota %} / {{ u.month_quota }} ({{ mpct }}%){% endif %}</span>
-            &nbsp;·&nbsp;
+             · 
             today <span{% if dpct >= 80 %} class="quota-hot"{% endif %}>{{ u.today }}{% if u.day_quota %} / {{ u.day_quota }}{% endif %}</span>
-            &nbsp;·&nbsp;
+             · 
             rolling 24h {{ u.rolling }}{% if u.day_quota %} / {{ u.day_quota }}{% endif %}
           </td>
         </tr>
@@ -235,7 +265,7 @@
   {% set d = s.deliverability %}
   <section class="adm-section">
     <h2>Deliverability <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· what the receiving mail systems tell us back · rates over 30 days</span></h2>
-    <table class="adm-kv">
+    <table class="adm-table">
       {% if not d.configured %}
         <tr>
           <td class="k">webhooks</td>
@@ -264,7 +294,7 @@
       <tr>
         <td class="k">suppressed</td>
         <td class="v">{{ d.suppressed }}
-          {%- for reason, n in d.by_reason.items() %} &nbsp;·&nbsp; {{ reason }} {{ n }}{% endfor %}
+          {%- for reason, n in d.by_reason.items() %}  ·  {{ reason }} {{ n }}{% endfor %}
           <span class="adm-muted">· addresses no longer mailed · {{ d.watchlist }} more counting soft bounces</span></td>
       </tr>
       {# A live feedback loop is the whole point: 0.00% with a dead webhook
@@ -282,7 +312,7 @@
             {% else %}
               <span class="adm-muted">idle · nothing sent through this leg in 48h</span>
             {% endif %}
-            {%- if d.parse_errors.get(pr.name) %} &nbsp;·&nbsp; <span class="quota-hot">{{ d.parse_errors[pr.name] }} unreadable payloads</span>{% endif %}
+            {%- if d.parse_errors.get(pr.name) %}  ·  <span class="quota-hot">{{ d.parse_errors[pr.name] }} unreadable payloads</span>{% endif %}
           </td>
         </tr>
       {% endfor %}
@@ -308,11 +338,11 @@
                   <span class="status"><span class="dot dot-ok"></span>Matching slots</span>
                 {% endif %}
               </td>
-              <td class="num">{{ c.subs }}</td>
-              <td class="num">{{ c.plans }}</td>
-              <td>{% if c.last_polled_at %}<time class="ts" data-ts="{{ c.last_polled_at }}" data-warn-sec="180">{{ c.last_polled_at }}</time>{% else %}<span class="adm-muted">never</span>{% endif %}</td>
-              <td class="num">{{ c.polls_today }} <span class="quiet">/ {{ c.polls_total }}</span></td>
-              <td class="num">{{ c.requests_today }} <span class="quiet">/ {{ c.requests_total }}</span></td>
+              <td class="num" data-l="subs">{{ c.subs }}</td>
+              <td class="num" data-l="plans">{{ c.plans }}</td>
+              <td data-l="polled">{% if c.last_polled_at %}<time class="ts" data-ts="{{ c.last_polled_at }}" data-warn-sec="180">{{ c.last_polled_at }}</time>{% else %}<span class="adm-muted">never</span>{% endif %}</td>
+              <td class="num" data-l="polls">{{ c.polls_today }} <span class="quiet">/ {{ c.polls_total }}</span></td>
+              <td class="num" data-l="requests">{{ c.requests_today }} <span class="quiet">/ {{ c.requests_total }}</span></td>
             </tr>
           {% endfor %}
         </table>
@@ -339,7 +369,7 @@
           <td class="k">{{ host }}</td>
           <td class="v">
             Requests {{ agg.requests_today }} today · {{ agg.requests_total }} total
-            &nbsp;·&nbsp; Polls {{ agg.polls_today }} today · {{ agg.polls_total }} total
+             ·  Polls {{ agg.polls_today }} today · {{ agg.polls_total }} total
             <br><span class="adm-muted">Tenants: {{ agg.tenants|join(', ') }}</span>
           </td>
         </tr>
