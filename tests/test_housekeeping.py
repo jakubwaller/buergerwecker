@@ -24,6 +24,9 @@ def db(tmp_path, monkeypatch):
     monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR","99")
     monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_EMAIL_PER_DAY","99")
     monkeypatch.setenv("DEVELOPER_EMAIL","dev@x"); monkeypatch.setenv("KOFI_URL","https://k")
+    # A deploy with no delivery-feedback webhook is itself an anomaly now, so
+    # the healthy baseline these tests assert has to have one configured.
+    monkeypatch.setenv("WEBHOOK_SECRET","w"*32)
     conn = connect(db_path); init_schema(conn)
     return conn
 

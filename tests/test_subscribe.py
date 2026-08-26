@@ -210,3 +210,66 @@ def test_subscribe_still_accepts_normal_addresses(client, email, ip):
         r = client.post("/subscribe", data=_form(email=email),
                         headers={"X-Forwarded-For": ip})
     assert r.status_code == 302
+
+
+def test_a_rejected_form_does_not_lift_a_delivery_block(client, tmp_path):
+    """Clearing a suppression is a write, and it must be a side effect of a
+    real sign-up — not of any POST that happens to carry an address.
+
+    The per-address rate limit counts subscription rows, so a form that fails
+    validation costs nothing against it. Anyone could otherwise reset the
+    delivery block, and the email_failures counter with it, for an address
+    they do not own, as fast as they could post.
+    """
+    from app.db import connect
+    from app.repo import is_suppressed, suppress_address
+    conn = connect(str(tmp_path / "t.db"))
+    email = "bounced@example.com"
+    suppress_address(conn, email, reason="hard_bounce", provider="brevo")
+    conn.execute("INSERT INTO email_failures (email, failures) VALUES (?, 3)",
+                 (email,))
+
+    # No appointment_type: rejected at step 4, well after the old clear ran.
+    bad = _form(email=email)
+    del bad["appointment_type"]
+    r = client.post("/subscribe", data=bad,
+                    headers={"X-Forwarded-For": "198.51.100.7"})
+    assert r.status_code == 400
+    assert is_suppressed(conn, email)
+    assert conn.execute("SELECT failures FROM email_failures WHERE email=?",
+                        (email,)).fetchone()["failures"] == 3
+
+
+def test_a_completed_signup_does_lift_a_bounce_block(client, tmp_path):
+    """The other half: a bounce only ever claimed the mailbox was broken then,
+    and a real sign-up is the evidence it works now — so the confirmation must
+    be allowed out rather than dropped into the suppression list while the page
+    says "check your inbox"."""
+    from unittest.mock import patch
+    from app.db import connect
+    from app.repo import is_suppressed, suppress_address
+    conn = connect(str(tmp_path / "t.db"))
+    email = "recovered@example.com"
+    suppress_address(conn, email, reason="hard_bounce", provider="brevo")
+    conn.execute("INSERT INTO email_failures (email, failures) VALUES (?, 3)",
+                 (email,))
+
+    with patch("app.web._send_confirmation_email", return_value=True):
+        r = client.post("/subscribe", data=_form(email=email),
+                        headers={"X-Forwarded-For": "198.51.100.8"})
+    assert r.status_code == 302
+    assert not is_suppressed(conn, email)
+    assert conn.execute("SELECT 1 FROM email_failures WHERE email=?",
+                        (email,)).fetchone() is None
+
+
+def test_a_complaint_block_is_never_lifted_by_signing_up(client, tmp_path):
+    from app.db import connect
+    from app.repo import is_suppressed, suppress_address
+    conn = connect(str(tmp_path / "t.db"))
+    email = "complained@example.com"
+    suppress_address(conn, email, reason="complaint", provider="brevo")
+    r = client.post("/subscribe", data=_form(email=email),
+                    headers={"X-Forwarded-For": "198.51.100.9"})
+    assert r.status_code == 403
+    assert is_suppressed(conn, email)

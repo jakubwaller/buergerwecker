@@ -22,6 +22,7 @@ def run_once(conn: sqlite3.Connection) -> None:
     _prune_seen_slots(conn)
     _prune_idempotency(conn)
     _prune_email_failures(conn)
+    _prune_suppressions(conn, cfg)
     _prune_slots_cache(conn)
     _prune_availability(conn)
     _check_parser_canary(conn, cfg)
@@ -139,6 +140,45 @@ def _prune_email_failures(conn):
     is ever NULL."""
     conn.execute("DELETE FROM email_failures WHERE NOT EXISTS ("
                  "SELECT 1 FROM subscriptions s WHERE s.email = email_failures.email)")
+
+def _prune_suppressions(conn, cfg=None):
+    """Bounce suppressions age out on the same clock as `email_failures`; spam
+    complaints never do.
+
+    A bounce is a claim with a shelf life — it says the mailbox does not exist
+    *today*. Domains get fixed and typos get corrected, so a stale bounce
+    suppression silently blocks someone who is reachable again. Letting it die
+    with the subscription costs at most one bounced message if that person ever
+    signs up again (their own action, gated by a double opt-in), and keeps the
+    privacy promise simple: the row is a bare e-mail address and must not
+    outlive the subscription that justified storing it.
+
+    A complaint is not a claim about a mailbox, it is a person telling their
+    provider we are spam. Re-mailing them is the single most damaging thing
+    this service can do to its sending domain, so a complaint runs on its own
+    clock (COMPLAINT_RETENTION_DAYS, a year by default) rather than on the
+    subscription's — otherwise the suppression that matters most would be the
+    one most easily lost, since feedback loops report late and a complaint can
+    arrive for an address whose subscription was already purged.
+
+    Not indefinite, though: Art. 5(1)(e) wants a stated period, and this
+    service is double opt-in only, so a lapsed entry can at worst cost one
+    confirmation mail to somebody who went back to the site and asked for it.
+    Coming back before the year is up goes through a human — the sign-up form
+    says so rather than silently swallowing the confirmation (see
+    web.subscribe and docs/DEPLOY.md).
+
+    Depends on `_purge_hard` having run first in `run_once`. NOT EXISTS rather
+    than NOT IN, per `_prune_email_failures`."""
+    days = getattr(cfg, "complaint_retention_days", 365) if cfg else 365
+    conn.execute(
+        "DELETE FROM email_suppressions WHERE "
+        "  (reason = 'complaint' AND suppressed_at < datetime('now', ?)) "
+        "  OR ((reason IS NULL OR reason != 'complaint') AND NOT EXISTS ("
+        "        SELECT 1 FROM subscriptions s "
+        "        WHERE s.email = email_suppressions.email))",
+        (f"-{int(days)} days",),
+    )
 
 def _prune_slots_cache(conn):
     # Slots are short-lived in the upstream system; 14 days is generous.

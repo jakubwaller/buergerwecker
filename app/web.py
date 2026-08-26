@@ -17,11 +17,14 @@ from app.db import connect, transaction
 from app.catalog import (load_catalog, available_cities, booking_start_url,
                          city_display_name, CatalogError)
 from app.models import Filter
-from app.repo import insert_pending, active_subscriptions, confirm, soft_delete
+from app.repo import (insert_pending, active_subscriptions, confirm,
+                      soft_delete, suppression_reason, clear_delivery_block)
 from app.ratelimit import GLOBAL_IP_LIMITER, email_rate_limit_ok
 from app.tokens import sign, verify, InvalidToken
 from app.planning import would_exceed_cap
 from app.mail import send as mail_send, _idem_key
+from app.webhooks import (PARSERS, apply_events, check_secret,
+                          verify_sweego_signature)
 
 log = logging.getLogger(__name__)
 
@@ -127,6 +130,23 @@ _RESULT_MESSAGES: dict[str, dict] = {
         "en": ("Not found", "Subscription not found",
                "This subscription no longer exists. You may have already "
                "unsubscribed."),
+    },
+    # Shown when someone signs up with an address we stopped mailing after a
+    # spam complaint. Without it the sign-up succeeds, the confirmation is
+    # dropped by the suppression list, and the page still says "check your
+    # inbox" — a silent hole with no way out. Bounce suppressions never reach
+    # here: those lift on sign-up (repo.clear_delivery_block).
+    "address_blocked": {
+        "kind": "error",
+        "de": ("Versand gestoppt", "An diese Adresse senden wir keine E-Mails mehr",
+               "Eine frühere E-Mail an diese Adresse wurde als Spam gemeldet, "
+               "daher haben wir den Versand dorthin eingestellt. Wenn du den "
+               "Dienst wieder nutzen möchtest, schreib uns kurz — wir schalten "
+               "die Adresse dann wieder frei."),
+        "en": ("Sending stopped", "We no longer send email to this address",
+               "An earlier email to this address was reported as spam, so we "
+               "stopped sending to it. If you'd like to use the service again, "
+               "drop us a line and we'll turn it back on."),
     },
     "invalid_email": {
         "kind": "error",
@@ -424,6 +444,42 @@ def _offered_sensitive(catalog) -> list[str]:
                   if catalog.is_sensitive(u))
 
 
+def _stamp_webhook_seen(conn, provider: str) -> None:
+    """Remember when this provider last reached us, for any event at all.
+
+    The failure mode a bounce webhook has is silence: a wrong URL, a rotated
+    secret or a dashboard toggle turns the feedback loop off, everything keeps
+    appearing to work, and the first symptom is a damaged sending reputation
+    weeks later. /admin grades this timestamp so the silence is visible."""
+    try:
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?, CURRENT_TIMESTAMP) "
+            "ON CONFLICT (key) DO UPDATE SET value=excluded.value, "
+            "updated_at=CURRENT_TIMESTAMP",
+            (f"last_webhook_at_{provider}",),
+        )
+    except Exception:
+        log.exception("failed to stamp webhook receipt")
+
+def _count_webhook_error(cfg, provider: str) -> None:
+    """Record that a provider posted something we could not read.
+
+    The endpoint answers 200 to a bad payload so the provider does not disable
+    it, which means nothing else would ever surface a parser that has gone
+    stale against a provider's format change. This counter is what /admin
+    reads."""
+    try:
+        conn = connect(cfg.db_path)
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?, '1') "
+            "ON CONFLICT (key) DO UPDATE SET "
+            "value = CAST(CAST(meta.value AS INTEGER) + 1 AS TEXT), "
+            "updated_at = CURRENT_TIMESTAMP",
+            (f"webhook_errors_{provider}",),
+        )
+    except Exception:
+        log.exception("failed to record webhook parse error")
+
 def create_app() -> Flask:
     app = Flask(__name__,
                 template_folder="templates",
@@ -547,6 +603,65 @@ def create_app() -> Flask:
         conn.execute("SELECT 1").fetchone()
         return "ok", 200
 
+    @app.route("/webhooks/<provider>/<secret>", methods=["POST"])
+    def webhook_route(provider, secret):
+        """Delivery feedback from a mail provider: bounces, spam complaints,
+        unsubscribes. See `app.webhooks` for why this exists.
+
+        Answers 200 to anything it accepted, including payloads it understood
+        and had nothing to do with. Providers disable an endpoint that keeps
+        failing, and a retry cannot fix a body we could not parse, so a bad
+        payload is counted and logged rather than rejected — the count is on
+        /admin so it cannot rot unnoticed.
+        """
+        cfg = app.config["TERMINE_CONFIG"]
+        parser = PARSERS.get(provider)
+        if parser is None:
+            return "unknown provider", 404
+        if not cfg.webhook_secret:
+            # Not configured. Say so rather than 404: a silent 404 is
+            # indistinguishable from a typo'd URL in a provider dashboard.
+            return "webhooks not configured", 503
+        if not check_secret(secret, cfg.webhook_secret):
+            return "forbidden", 403
+        body = request.get_data()
+        if provider == "sweego" and cfg.sweego_webhook_secret:
+            if not verify_sweego_signature(
+                    webhook_id=request.headers.get("webhook-id", ""),
+                    timestamp=request.headers.get("webhook-timestamp", ""),
+                    signature=request.headers.get("webhook-signature", ""),
+                    body=body, secret=cfg.sweego_webhook_secret):
+                return "bad signature", 403
+        payload = request.get_json(force=True, silent=True)
+        if payload is None:
+            _count_webhook_error(cfg, provider)
+            log.warning("webhook %s: unparseable payload (%d bytes)",
+                        provider, len(body))
+            return "", 200
+        events = parser(payload)
+        # A body that is valid JSON in a shape the parser does not recognise is
+        # the stale-parser case this counter exists for, and it is the quiet
+        # one: the payload check above only catches JSON that does not parse,
+        # while a provider changing its envelope still posts perfectly good
+        # JSON. Nothing else would surface it — the receipt is stamped either
+        # way, so /admin would show a healthy, talkative webhook that has
+        # learned nothing for weeks. An empty body is not this: `[]` is a
+        # provider with nothing to report, not a format we misread.
+        if payload and not events:
+            _count_webhook_error(cfg, provider)
+            log.warning("webhook %s: no events parsed from %d bytes — "
+                        "the payload format may have changed", provider,
+                        len(body))
+        conn = connect(cfg.db_path)
+        _stamp_webhook_seen(conn, provider)
+        result = apply_events(
+            conn, events,
+            soft_bounce_threshold=cfg.soft_bounce_suppress_threshold)
+        if result.suppressed or result.unsubscribed:
+            log.info("webhook %s: suppressed=%d unsubscribed=%d",
+                     provider, result.suppressed, result.unsubscribed)
+        return "", 200
+
     @app.route("/")
     def index():
         lang = request.args.get("lang", "de")
@@ -653,6 +768,20 @@ def create_app() -> Flask:
         if not email_rate_limit_ok(conn_for_check, email,
                                    cfg.subscribe_ratelimit_per_email_per_day):
             return _result_page("rate_limited", lang, status=429)
+        # 3b. Addresses we stopped mailing after a spam complaint. That is the
+        # person's own verdict and a form submission is not their word for it,
+        # so lifting it needs a human — but say so, instead of accepting the
+        # sign-up and dropping the confirmation into the suppression list while
+        # the page claims it was sent. Placed after both rate limits: the
+        # answer differs per address, and probing for it should cost the same
+        # as probing for anything else. Other blocks (a bounce, a run of
+        # provider rejections) are lifted further down, once the sign-up is
+        # real — see the insert.
+        if suppression_reason(conn_for_check, email) == "complaint":
+            return _result_page("address_blocked", lang, status=403,
+                                action_url=f"/kontakt?lang={lang}",
+                                action_label=("Kontakt" if lang == "de"
+                                              else "Contact us"))
         # 4. parse filter from form
         city = request.form.get("city", _DEFAULT_CITY)
         # An unknown city used to be stored anyway — a subscription no poller
@@ -702,6 +831,21 @@ def create_app() -> Flask:
                                               if sensitive
                                               else cfg.subscription_ttl_days),
                                     consent_special=sensitive)
+            # A bounce, or a run of provider rejections, only ever claimed the
+            # mailbox was broken *then*; a completed sign-up is the evidence it
+            # works now, so the block lifts and the confirmation below is
+            # allowed out. If the mailbox really is still broken, one bounce
+            # re-suppresses it.
+            #
+            # Deliberately here and not next to the complaint check above:
+            # this is a write, and up there it ran on any POST that carried an
+            # e-mail — no valid city, no appointment type, and no rate limit
+            # that bites, because the per-address one counts subscription rows
+            # and a rejected form creates none. That let anyone reset the
+            # delivery block, and the `email_failures` counter with it, for an
+            # address they do not own, as often as they liked. Tied to the
+            # insert it can only ever be a side effect of a real sign-up.
+            clear_delivery_block(conn, email)
         # Try to send the confirmation now. If the daily email quota is
         # exhausted (or the send errors), we KEEP the pending sign-up and the
         # poller's retry pass sends the confirmation on a later cycle — so the

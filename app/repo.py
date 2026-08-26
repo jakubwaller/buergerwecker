@@ -132,3 +132,129 @@ def has_seen_slot(conn: sqlite3.Connection, sub_id: int, slot_hash: str) -> bool
         "SELECT 1 FROM seen_slots WHERE subscription_id=? AND slot_hash=?",
         (sub_id, slot_hash),
     ).fetchone() is not None
+
+# --------------------------------------------------------------------------
+# Suppression list (see the email_suppressions comment in app/db.py).
+# --------------------------------------------------------------------------
+
+def suppress_address(conn: sqlite3.Connection, email: str, *, reason: str,
+                     provider: str | None = None,
+                     detail: str | None = None) -> None:
+    """Stop mailing `email` for good. Idempotent, and the FIRST reason wins:
+    providers retry webhooks and a dead mailbox often reports twice, so
+    re-suppressing must not rewrite why we stopped or when."""
+    conn.execute(
+        "INSERT INTO email_suppressions "
+        "  (email, reason, provider, detail, suppressed_at, updated_at) "
+        "VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+        "ON CONFLICT (email) DO UPDATE SET "
+        "  reason        = COALESCE(email_suppressions.reason, excluded.reason), "
+        "  provider      = COALESCE(email_suppressions.provider, excluded.provider), "
+        "  detail        = COALESCE(email_suppressions.detail, excluded.detail), "
+        "  suppressed_at = COALESCE(email_suppressions.suppressed_at, "
+        "                           excluded.suppressed_at), "
+        "  updated_at    = CURRENT_TIMESTAMP",
+        (email, reason, provider, detail),
+    )
+
+def record_soft_bounce(conn: sqlite3.Connection, email: str, *,
+                       threshold: int, provider: str | None = None,
+                       detail: str | None = None) -> bool:
+    """Count one temporary delivery failure. Returns True if this one crossed
+    `threshold` and turned into a suppression.
+
+    A soft bounce is a full mailbox or a greylisting receiver, so one is noise.
+    A run of them is an address that never accepts mail, which damages the
+    sending reputation exactly like a hard bounce does. `threshold <= 0`
+    disables the escalation and only counts."""
+    conn.execute(
+        "INSERT INTO email_suppressions (email, soft_bounces, provider, updated_at) "
+        "VALUES (?, 1, ?, CURRENT_TIMESTAMP) "
+        "ON CONFLICT (email) DO UPDATE SET "
+        "  soft_bounces = email_suppressions.soft_bounces + 1, "
+        "  updated_at   = CURRENT_TIMESTAMP",
+        (email, provider),
+    )
+    if threshold <= 0:
+        return False
+    row = conn.execute(
+        "SELECT soft_bounces, reason FROM email_suppressions WHERE email=?",
+        (email,),
+    ).fetchone()
+    if row and row["reason"] is None and row["soft_bounces"] >= threshold:
+        suppress_address(conn, email, reason="soft_bounce", provider=provider,
+                         detail=detail)
+        return True
+    return False
+
+def clear_soft_bounces(conn: sqlite3.Connection, email: str) -> None:
+    """A confirmed delivery means the transient trouble is over. Deliberately
+    does NOT lift a suppression: a hard bounce or a spam complaint is not
+    undone by a later message reaching the mailbox.
+
+    Guarded by a read because this runs once per *delivered* message — the
+    highest-volume event there is — and almost every one of them has nothing to
+    clear. The lookup is an indexed point read; the write it avoids would be an
+    fsync per delivered mail."""
+    row = conn.execute(
+        "SELECT 1 FROM email_suppressions "
+        "WHERE email=? AND reason IS NULL AND soft_bounces > 0",
+        (email,),
+    ).fetchone()
+    if row is None:
+        return
+    conn.execute(
+        "UPDATE email_suppressions SET soft_bounces=0, updated_at=CURRENT_TIMESTAMP "
+        "WHERE email=? AND reason IS NULL",
+        (email,),
+    )
+
+def suppressed_addresses(conn: sqlite3.Connection) -> set[str]:
+    return {r["email"] for r in conn.execute(
+        "SELECT email FROM email_suppressions WHERE reason IS NOT NULL")}
+
+def is_suppressed(conn: sqlite3.Connection, email: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM email_suppressions WHERE email=? AND reason IS NOT NULL",
+        (email,),
+    ).fetchone()
+    return row is not None
+
+def soft_delete_by_email(conn: sqlite3.Connection, email: str) -> int:
+    """Delete every live subscription held by `email`. Returns how many.
+
+    One person may hold several subscriptions and a bounce or a complaint is a
+    verdict on the address, not on one of them."""
+    cur = conn.execute(
+        "UPDATE subscriptions SET deleted_at=CURRENT_TIMESTAMP "
+        "WHERE email=? AND deleted_at IS NULL",
+        (email,),
+    )
+    return cur.rowcount or 0
+
+def suppression_reason(conn: sqlite3.Connection, email: str) -> str | None:
+    """Why `email` is suppressed, or None if it is mailable."""
+    row = conn.execute(
+        "SELECT reason FROM email_suppressions WHERE email=? AND reason IS NOT NULL",
+        (email,),
+    ).fetchone()
+    return row["reason"] if row else None
+
+def clear_delivery_block(conn: sqlite3.Connection, email: str) -> None:
+    """Make a bounced address mailable again, and forget why it wasn't.
+
+    Called when someone signs up with an address we had retired over delivery
+    failures. A bounce only ever claimed the mailbox was broken *then*, and a
+    person typing that address into the form is the evidence it is working now
+    — so the right move is to try again rather than leave them in a silent hole
+    where the confirmation mail is dropped and the page still says "check your
+    inbox". If the mailbox really is still broken, one bounce re-suppresses it.
+
+    Deliberately refuses to lift a complaint: that is a person telling their
+    provider we are spam, a form submission is not their word for it, and
+    lifting it is the one thing that has to go through a human.
+    """
+    conn.execute("DELETE FROM email_suppressions "
+                 "WHERE email=? AND (reason IS NULL OR reason != 'complaint')",
+                 (email,))
+    conn.execute("DELETE FROM email_failures WHERE email=?", (email,))

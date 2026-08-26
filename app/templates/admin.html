@@ -223,6 +223,63 @@
     </table>
   </section>
 
+  {% set d = s.deliverability %}
+  <section class="adm-section">
+    <h2>Deliverability <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· what the receiving mail systems tell us back · rates over 30 days</span></h2>
+    <table class="adm-kv">
+      {% if not d.configured %}
+        <tr>
+          <td class="k">webhooks</td>
+          <td class="v"><span class="quota-hot">not configured</span>
+            <span class="adm-muted">· WEBHOOK_SECRET is unset, so bounces and spam complaints are never learned</span></td>
+        </tr>
+      {% endif %}
+      <tr>
+        <td class="k">complaint rate</td>
+        <td class="v">
+          {% if d.complaint_rate is not none %}
+            <span{% if d.complaint_rate >= 0.3 %} class="quota-hot"{% endif %}>{{ '%.2f'|format(d.complaint_rate) }}%</span>
+            <span class="adm-muted">· {{ d.complaint_30d }} of {{ d.sent_30d }} sent · Gmail and Yahoo throttle a bulk sender above 0.30%</span>
+          {% else %}<span class="adm-muted">no sends recorded</span>{% endif %}
+        </td>
+      </tr>
+      <tr>
+        <td class="k">hard bounce rate</td>
+        <td class="v">
+          {% if d.bounce_rate is not none %}
+            <span{% if d.bounce_rate >= 2 %} class="quota-hot"{% endif %}>{{ '%.2f'|format(d.bounce_rate) }}%</span>
+            <span class="adm-muted">· {{ d.hard_bounce_30d }} of {{ d.sent_30d }} sent · above ~2% receivers start throttling the domain</span>
+          {% else %}<span class="adm-muted">no sends recorded</span>{% endif %}
+        </td>
+      </tr>
+      <tr>
+        <td class="k">suppressed</td>
+        <td class="v">{{ d.suppressed }}
+          {%- for reason, n in d.by_reason.items() %} &nbsp;·&nbsp; {{ reason }} {{ n }}{% endfor %}
+          <span class="adm-muted">· addresses no longer mailed · {{ d.watchlist }} more counting soft bounces</span></td>
+      </tr>
+      {# A live feedback loop is the whole point: 0.00% with a dead webhook
+         looks identical to 0.00% with a healthy one. #}
+      {% for pr in d.providers %}
+        <tr>
+          <td class="k">{{ pr.name }}</td>
+          <td class="v">
+            {% if pr.last_event_at %}
+              last event <span{% if pr.silent %} class="quota-hot"{% endif %}>{{ pr.last_event_at }}</span>
+              {%- if pr.silent %} <span class="adm-muted">· silent over 48h — check the webhook in the provider dashboard</span>{% endif %}
+            {% elif pr.sent_recently %}
+              <span class="quota-hot">never reported</span>
+              <span class="adm-muted">· {{ pr.sent_recently }} sent in 48h and no feedback — the webhook is not wired up</span>
+            {% else %}
+              <span class="adm-muted">idle · nothing sent through this leg in 48h</span>
+            {% endif %}
+            {%- if d.parse_errors.get(pr.name) %} &nbsp;·&nbsp; <span class="quota-hot">{{ d.parse_errors[pr.name] }} unreadable payloads</span>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+    </table>
+  </section>
+
   <section class="adm-section">
     <h2>Cities <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· {{ s.cities|length }} tenants, sorted by active subs · Polls &amp; Requests are today / total</span></h2>
     {% if s.cities %}
