@@ -142,21 +142,34 @@ def _prune_email_failures(conn):
                  "SELECT 1 FROM subscriptions s WHERE s.email = email_failures.email)")
 
 def _prune_suppressions(conn):
-    """Suppressions age out on the same clock as `email_failures`, and for the
-    same reason: the row is a bare e-mail address, so it must not outlive the
-    subscription that justified storing it (the privacy policy promises final
-    removal 30 days after deletion, and `_purge_hard` above is what enforces
-    that date).
+    """Bounce suppressions age out on the same clock as `email_failures`; spam
+    complaints never do.
 
-    The cost is that an address which hard-bounced, was dropped and then fully
-    purged is mailable again if that person signs up a second time. That is the
-    right trade: the re-signup is their own action, it only earns them a single
-    double opt-in confirmation, and a bounce on that one re-suppresses the
-    address immediately.
+    A bounce is a claim with a shelf life — it says the mailbox does not exist
+    *today*. Domains get fixed and typos get corrected, so a stale bounce
+    suppression silently blocks someone who is reachable again. Letting it die
+    with the subscription costs at most one bounced message if that person ever
+    signs up again (their own action, gated by a double opt-in), and keeps the
+    privacy promise simple: the row is a bare e-mail address and must not
+    outlive the subscription that justified storing it.
+
+    A complaint is not a claim about a mailbox, it is a person telling their
+    provider we are spam. That does not expire. Re-mailing them is the single
+    most damaging thing this service can do to its sending domain, and every
+    large receiver expects a sender to remember a complaint permanently. Art. 6
+    (1)(f) covers keeping it, the row holds nothing but the address, the reason
+    and the date, and the privacy page says so. An erasure request is honoured
+    by hand — see docs/DEPLOY.md.
+
+    Complaints are also the suppression most easily lost: feedback loops report
+    late, so one can arrive for an address whose subscription was already
+    purged, and the plain NOT EXISTS rule would have deleted it within 24h.
 
     Depends on `_purge_hard` having run first in `run_once`. NOT EXISTS rather
     than NOT IN, per `_prune_email_failures`."""
-    conn.execute("DELETE FROM email_suppressions WHERE NOT EXISTS ("
+    conn.execute("DELETE FROM email_suppressions "
+                 "WHERE (reason IS NULL OR reason != 'complaint') "
+                 "AND NOT EXISTS ("
                  "SELECT 1 FROM subscriptions s "
                  "WHERE s.email = email_suppressions.email)")
 

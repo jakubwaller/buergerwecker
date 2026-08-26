@@ -280,11 +280,27 @@ A provider that has gone silent for 48h is flagged, because a rate of 0.00% with
 a dead webhook and a rate of 0.00% with a healthy one look identical in the
 numbers, and the first is the dangerous one.
 
-The suppression list ages out with the subscription that justified it
-(`_prune_suppressions`, same 30-day clock as `_purge_hard`), so the bare address
-does not outlive what the privacy policy promises. The trade-off is that a
-purged address is mailable again if that person signs up a second time — which
-costs one double opt-in confirmation, and re-suppresses on the first bounce.
+### Retention, and the one manual step it creates
+
+Retention splits by reason. **Bounce** suppressions age out with the
+subscription that justified them (`_prune_suppressions`, same 30-day clock as
+`_purge_hard`), because a bounce only claims the mailbox does not exist *today*
+and goes stale — the cost is one bounced message if that person ever signs up
+again. **Complaint** suppressions are never pruned: a person telling their
+provider we are spam does not expire, re-mailing them is the worst thing this
+service can do to its sending domain, and a late-arriving complaint for an
+already-purged subscription would otherwise be deleted within 24h.
+
+The privacy page states this, and offers erasure on request. There is no admin
+UI for it — at this volume, honour such a request by hand on the VPS:
+
+```bash
+sqlite3 ~/termine-notifier/data/app.db \
+  "DELETE FROM email_suppressions WHERE email='<address>' AND reason='complaint';"
+```
+
+That makes the address mailable again, which is the point. Nothing else needs
+touching: the subscription itself was already ended when the complaint arrived.
 
 ## Polling cadence
 

@@ -413,7 +413,10 @@ def test_suppressed_addresses_ignores_soft_bounce_watchlist_rows(db):
 # Retention
 # --------------------------------------------------------------------------
 
-def test_suppressions_die_with_the_subscription_that_justified_them(db):
+def test_bounce_suppressions_die_with_the_subscription_that_justified_them(db):
+    # A bounce only claims the mailbox does not exist *today*. Domains get
+    # fixed and typos get corrected, so the claim goes stale, and the row is a
+    # bare address that must not outlive the privacy policy's 30-day promise.
     from app.housekeeping import _prune_suppressions
 
     sid = _sub(db, "gone@example.com")
@@ -423,11 +426,46 @@ def test_suppressions_die_with_the_subscription_that_justified_them(db):
     # survive — otherwise the address is mailable again the same night.
     _prune_suppressions(db)
     assert is_suppressed(db, "gone@example.com")
-    # Once _purge_hard has removed the subscription, the bare address must go
-    # too: the privacy policy promises final removal 30 days after deletion.
     db.execute("DELETE FROM subscriptions WHERE id=?", (sid,))
     _prune_suppressions(db)
     assert not is_suppressed(db, "gone@example.com")
+
+
+def test_complaints_are_never_pruned(db):
+    # Someone telling their provider we are spam does not expire, and
+    # re-mailing them is the worst thing this service can do to its sending
+    # domain.
+    from app.housekeeping import _prune_suppressions
+
+    sid = _sub(db, "angry@example.com")
+    apply_events(db, parse_mailjet({"event": "spam",
+                                    "email": "angry@example.com"}))
+    db.execute("DELETE FROM subscriptions WHERE id=?", (sid,))
+    _prune_suppressions(db)
+    assert is_suppressed(db, "angry@example.com")
+
+
+def test_a_complaint_for_an_already_purged_subscription_survives(db):
+    # Feedback loops report late, so a complaint can arrive for an address that
+    # has no subscription row at all. Under the plain NOT EXISTS rule the one
+    # suppression that must never be lost was the one lost within 24h.
+    from app.housekeeping import _prune_suppressions
+
+    apply_events(db, parse_brevo({"event": "spam", "email": "late@example.com"}))
+    _prune_suppressions(db)
+    assert is_suppressed(db, "late@example.com")
+
+
+def test_a_soft_bounce_watchlist_row_is_still_pruned(db):
+    # Only complaints are permanent; a half-finished soft-bounce count is a
+    # bare address with no subscription behind it.
+    from app.housekeeping import _prune_suppressions
+    from app.repo import record_soft_bounce
+
+    record_soft_bounce(db, "flaky@example.com", threshold=5)
+    _prune_suppressions(db)
+    assert db.execute("SELECT COUNT(*) AS n FROM email_suppressions"
+                      ).fetchone()["n"] == 0
 
 
 # --------------------------------------------------------------------------

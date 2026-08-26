@@ -89,6 +89,11 @@ CREATE TABLE IF NOT EXISTS email_failures (
 -- send clears that counter, and it fires on API *acceptance*, which is exactly
 -- what happens right before an asynchronous bounce arrives. Sharing one counter
 -- would reset the evidence every cycle.
+--
+-- Retention splits by reason (housekeeping._prune_suppressions): bounce rows
+-- die with the subscription that justified them, complaint rows never do. A
+-- bounce claims a mailbox does not exist *today* and goes stale; a complaint is
+-- a person saying we are spam, which does not expire.
 CREATE TABLE IF NOT EXISTS email_suppressions (
   email         TEXT PRIMARY KEY,
   reason        TEXT,
