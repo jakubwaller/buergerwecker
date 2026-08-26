@@ -205,6 +205,87 @@ cycle) and only include mail this app sent. Each row also shows the **rolling
 gates a send, and it deliberately disagrees with the UTC-day one — just after
 UTC midnight "today" is near 0 while the gate still counts last evening.
 
+## Delivery feedback webhooks (bounces & spam complaints)
+
+The send path only ever learns about failures a provider can report
+synchronously (an HTTP 400/422 on the send call). Everything else — a mailbox
+that does not exist, a recipient pressing "spam" — is reported minutes later,
+over a webhook, and is invisible without one. Left unconfigured, this service
+mails dead addresses forever and the bounce rate is charged against the sending
+domain until large receivers throttle it. Buying more provider quota does not
+fix a throttled domain.
+
+**Endpoint:** `POST https://buergerwecker.de/webhooks/<provider>/<secret>`,
+where `<provider>` is `mailjet`, `brevo` or `sweego` and `<secret>` is
+`WEBHOOK_SECRET`. Two of the three providers sign nothing, and Mailjet's own
+documented answer is to put credentials in the endpoint URL, so a secret path
+segment is the one mechanism all three can be configured with.
+
+### Env vars
+
+```
+WEBHOOK_SECRET=<32+ random chars>          # empty disables the endpoint (503)
+SWEEGO_WEBHOOK_SECRET=<from Sweego>        # optional, adds HMAC verification
+SOFT_BOUNCE_SUPPRESS_THRESHOLD=5           # soft bounces before retiring an address
+```
+
+Generate the secret with `openssl rand -hex 24`. Rotating it means changing the
+env var and the URL in all three dashboards; until both sides match the
+endpoint answers 403 and events are lost, so do it in one sitting.
+
+### Per-provider dashboard setup
+
+- **Mailjet** — Account settings → Event notifications (Event API). Set the URL
+  for `bounce`, `blocked`, `spam`, `unsub` and `sent`. Leave "group events"
+  on; the parser handles both a single object and the grouped array.
+- **Brevo** — Transactional → Settings → Webhooks. Enable `hard_bounce`,
+  `soft_bounce`, `invalid_email`, `blocked`, `spam`, `unsubscribed`, `error`
+  and `delivered`. One event per request.
+- **Sweego** — Webhooks → new webhook, attached to the `buergerwecker.de`
+  domain. Enable hard bounce, soft bounce, spam-complaints, list-unsubscribe
+  and delivered. Copy the webhook secret into `SWEEGO_WEBHOOK_SECRET`; it is
+  base64 and is verified as HMAC-SHA256 over `{id}.{timestamp}.{raw body}`.
+
+`delivered`/`sent` matter as much as the failures: they clear a soft-bounce run
+so a temporarily full mailbox does not creep up to the threshold over months.
+
+### What an event does
+
+| event | effect |
+| --- | --- |
+| hard bounce, invalid address, provider blocklisted the address | address suppressed for good, all its subscriptions ended |
+| spam complaint | same |
+| unsubscribe (provider-side) | subscriptions ended, address NOT suppressed — signing up again is theirs to do |
+| soft bounce / transient error | counted; suppressed only after `SOFT_BOUNCE_SUPPRESS_THRESHOLD` in a row |
+| delivered / sent | clears the soft-bounce counter (never lifts a suppression) |
+
+A Mailjet `blocked` event only retires the address when its `error_related_to`
+blames the address (`recipient`, `domain`, `mailbox`, `mailbox_inactive`). A
+`blocked` for our own content or a provider fault is counted as soft — otherwise
+one bad template would retire every subscriber it was sent to.
+
+### Verifying after deploy
+
+```bash
+# 403 on a wrong secret, 404 on an unknown provider, 200 on a real payload.
+curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+  https://buergerwecker.de/webhooks/brevo/WRONG -d '{}' -H 'Content-Type: application/json'
+```
+
+Then send yourself a test mail and check `/admin` → **Deliverability**. That
+section is the health check that matters: it shows the 30-day complaint rate
+(Gmail and Yahoo throttle a bulk sender above 0.30%), the hard-bounce rate, how
+many addresses are suppressed, and **when each provider last reported anything**.
+A provider that has gone silent for 48h is flagged, because a rate of 0.00% with
+a dead webhook and a rate of 0.00% with a healthy one look identical in the
+numbers, and the first is the dangerous one.
+
+The suppression list ages out with the subscription that justified it
+(`_prune_suppressions`, same 30-day clock as `_purge_hard`), so the bare address
+does not outlive what the privacy policy promises. The trade-off is that a
+purged address is mailable again if that person signs up a second time — which
+costs one double opt-in confirmation, and re-suppresses on the first bounce.
+
 ## Polling cadence
 
 The poller wakes once a minute, but each tenant can set

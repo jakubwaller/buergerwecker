@@ -22,6 +22,8 @@ from app.ratelimit import GLOBAL_IP_LIMITER, email_rate_limit_ok
 from app.tokens import sign, verify, InvalidToken
 from app.planning import would_exceed_cap
 from app.mail import send as mail_send, _idem_key
+from app.webhooks import (PARSERS, apply_events, check_secret,
+                          verify_sweego_signature)
 
 log = logging.getLogger(__name__)
 
@@ -424,6 +426,42 @@ def _offered_sensitive(catalog) -> list[str]:
                   if catalog.is_sensitive(u))
 
 
+def _stamp_webhook_seen(conn, provider: str) -> None:
+    """Remember when this provider last reached us, for any event at all.
+
+    The failure mode a bounce webhook has is silence: a wrong URL, a rotated
+    secret or a dashboard toggle turns the feedback loop off, everything keeps
+    appearing to work, and the first symptom is a damaged sending reputation
+    weeks later. /admin grades this timestamp so the silence is visible."""
+    try:
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?, CURRENT_TIMESTAMP) "
+            "ON CONFLICT (key) DO UPDATE SET value=excluded.value, "
+            "updated_at=CURRENT_TIMESTAMP",
+            (f"last_webhook_at_{provider}",),
+        )
+    except Exception:
+        log.exception("failed to stamp webhook receipt")
+
+def _count_webhook_error(cfg, provider: str) -> None:
+    """Record that a provider posted something we could not read.
+
+    The endpoint answers 200 to a bad payload so the provider does not disable
+    it, which means nothing else would ever surface a parser that has gone
+    stale against a provider's format change. This counter is what /admin
+    reads."""
+    try:
+        conn = connect(cfg.db_path)
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?, '1') "
+            "ON CONFLICT (key) DO UPDATE SET "
+            "value = CAST(CAST(meta.value AS INTEGER) + 1 AS TEXT), "
+            "updated_at = CURRENT_TIMESTAMP",
+            (f"webhook_errors_{provider}",),
+        )
+    except Exception:
+        log.exception("failed to record webhook parse error")
+
 def create_app() -> Flask:
     app = Flask(__name__,
                 template_folder="templates",
@@ -546,6 +584,51 @@ def create_app() -> Flask:
         conn = connect(cfg.db_path)
         conn.execute("SELECT 1").fetchone()
         return "ok", 200
+
+    @app.route("/webhooks/<provider>/<secret>", methods=["POST"])
+    def webhook_route(provider, secret):
+        """Delivery feedback from a mail provider: bounces, spam complaints,
+        unsubscribes. See `app.webhooks` for why this exists.
+
+        Answers 200 to anything it accepted, including payloads it understood
+        and had nothing to do with. Providers disable an endpoint that keeps
+        failing, and a retry cannot fix a body we could not parse, so a bad
+        payload is counted and logged rather than rejected — the count is on
+        /admin so it cannot rot unnoticed.
+        """
+        cfg = app.config["TERMINE_CONFIG"]
+        parser = PARSERS.get(provider)
+        if parser is None:
+            return "unknown provider", 404
+        if not cfg.webhook_secret:
+            # Not configured. Say so rather than 404: a silent 404 is
+            # indistinguishable from a typo'd URL in a provider dashboard.
+            return "webhooks not configured", 503
+        if not check_secret(secret, cfg.webhook_secret):
+            return "forbidden", 403
+        body = request.get_data()
+        if provider == "sweego" and cfg.sweego_webhook_secret:
+            if not verify_sweego_signature(
+                    webhook_id=request.headers.get("webhook-id", ""),
+                    timestamp=request.headers.get("webhook-timestamp", ""),
+                    signature=request.headers.get("webhook-signature", ""),
+                    body=body, secret=cfg.sweego_webhook_secret):
+                return "bad signature", 403
+        payload = request.get_json(force=True, silent=True)
+        if payload is None:
+            _count_webhook_error(cfg, provider)
+            log.warning("webhook %s: unparseable payload (%d bytes)",
+                        provider, len(body))
+            return "", 200
+        conn = connect(cfg.db_path)
+        _stamp_webhook_seen(conn, provider)
+        result = apply_events(
+            conn, parser(payload),
+            soft_bounce_threshold=cfg.soft_bounce_suppress_threshold)
+        if result.suppressed or result.unsubscribed:
+            log.info("webhook %s: suppressed=%d unsubscribed=%d",
+                     provider, result.suppressed, result.unsubscribed)
+        return "", 200
 
     @app.route("/")
     def index():

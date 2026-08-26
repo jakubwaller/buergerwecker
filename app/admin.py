@@ -15,6 +15,17 @@ SIGNUP_DROP_BASELINE = 3   # only flag a zero-signup day if the baseline is this
 STALE_POLL_HOURS = 3       # a city with subs unpolled this long has stalled
 RECENT_ALERT_HOURS = 24    # reflect dedicated alerts fired within this window
 BACKUP_STALE_HOURS = 48    # mirrors housekeeping._check_backup_health
+# Deliverability. 0.30% is the spam-complaint rate Gmail and Yahoo publish as
+# the line for a bulk sender; above it they throttle or junk the domain, and no
+# amount of provider quota buys a way out. The bounce figure is the industry
+# rule of thumb at which receivers start doing the same.
+COMPLAINT_RATE_WARN_PCT = 0.3
+BOUNCE_RATE_WARN_PCT = 2.0
+# Below this many sends a rate is arithmetic noise: one complaint out of 50
+# mails is 2%, and reporting that as a reputation emergency trains the reader
+# to ignore the line.
+DELIVERABILITY_MIN_SENDS = 500
+WEBHOOK_SILENT_HOURS = 48  # a feedback loop this quiet is presumed broken
 
 
 def _humanize_age(iso: str | None, now: datetime) -> str:
@@ -120,7 +131,32 @@ def summary_anomalies(s: dict, *, now: datetime) -> list[str]:
     if deferred:
         out.append(f"{deferred} notification(s) deferred today for lack of quota")
 
-    # 2. Signup volume deviates sharply from the trailing 7-day baseline — a
+    # 2. Deliverability. This is the one failure in this list that cannot be
+    #    fixed after the fact: once large receivers throttle the sending domain
+    #    over a complaint or bounce rate, extra provider quota buys nothing and
+    #    recovery takes weeks. A silent webhook is reported for the same reason
+    #    — with the feedback loop off, both rates read 0.00% forever, which is
+    #    indistinguishable from healthy.
+    d = s.get("deliverability") or {}
+    if d and not d.get("configured"):
+        out.append("delivery-feedback webhooks are not configured — bounces "
+                   "and spam complaints are never learned")
+    elif (d.get("sent_30d") or 0) >= DELIVERABILITY_MIN_SENDS:
+        cr = d.get("complaint_rate")
+        if cr is not None and cr >= COMPLAINT_RATE_WARN_PCT:
+            out.append(f"spam-complaint rate {cr:.2f}% over 30d "
+                       f"({d.get('complaint_30d')}/{d.get('sent_30d')}) — "
+                       f"Gmail and Yahoo throttle above "
+                       f"{COMPLAINT_RATE_WARN_PCT}%")
+        br = d.get("bounce_rate")
+        if br is not None and br >= BOUNCE_RATE_WARN_PCT:
+            out.append(f"hard-bounce rate {br:.2f}% over 30d "
+                       f"({d.get('hard_bounce_30d')}/{d.get('sent_30d')})")
+    for name in d.get("providers_silent") or []:
+        out.append(f"no delivery feedback from {name} in "
+                   f"{WEBHOOK_SILENT_HOURS}h — check its webhook")
+
+    # 3. Signup volume deviates sharply from the trailing 7-day baseline — a
     #    press/Reddit surge, or an inflow that suddenly dried up.
     d24 = s.get("signups_last_24h") or 0
     baseline = (s.get("signups_last_7d") or 0) / 7
@@ -129,7 +165,7 @@ def summary_anomalies(s: dict, *, now: datetime) -> list[str]:
     elif baseline >= SIGNUP_DROP_BASELINE and d24 == 0:
         out.append(f"no signups in 24h (baseline ~{baseline:.0f}/day)")
 
-    # 3. A city with active subscribers has stopped polling — a silent stall the
+    # 4. A city with active subscribers has stopped polling — a silent stall the
     #    zero-match canary can't catch (it keys off matches, not poll liveness).
     #    Zero-matches itself is deliberately NOT flagged: for a scarce tenant
     #    like Leipzig that's a normal state, and a broken parser is the canary's job.
@@ -150,7 +186,7 @@ def summary_anomalies(s: dict, *, now: datetime) -> list[str]:
             hrs = int((now - last).total_seconds() // 3600)
             out.append(f"{label}: not polled for {hrs}h ({n} active subs)")
 
-    # 4. Reflect a dedicated alert that fired recently, for one consolidated view.
+    # 5. Reflect a dedicated alert that fired recently, for one consolidated view.
     fa = _parse_ts(s.get("last_failure_alert_at"))
     if fa is not None and now - fa <= timedelta(hours=RECENT_ALERT_HOURS):
         out.append("a failure alert fired in the last "
@@ -277,6 +313,86 @@ def _email_usage(conn: sqlite3.Connection, cfg) -> dict:
         u["rolling"] = _window_used(conn, name, 86400)
     return chain_order(usage)
 
+
+def _deliverability(conn: sqlite3.Connection, cfg=None) -> dict:
+    """Bounce and complaint rates, and whether the feedback loop is alive.
+
+    The complaint rate is the number that decides whether large receivers keep
+    accepting our mail at all: Gmail and Yahoo publish 0.3% as the line for a
+    bulk sender, and a hard-bounce rate above a few percent gets a sending
+    domain throttled the same way. Both are measured over 30 days against what
+    was actually sent in that window.
+
+    Rates are only as honest as the webhooks feeding them, so
+    `providers_silent` reports every configured provider that has not reported
+    an event in WEBHOOK_SILENT_HOURS. A rate of 0.00% and a dead webhook look identical in the
+    numbers, and the second one is the dangerous state.
+    """
+    def scalar(q, *args):
+        row = conn.execute(q, args).fetchone()
+        return row[0] if row else 0
+
+    out: dict = {"configured": bool(getattr(cfg, "webhook_secret", "")),
+                 "by_reason": {}, "providers": [], "providers_silent": [],
+                 "parse_errors": {}}
+    try:
+        for r in conn.execute(
+            "SELECT reason, COUNT(*) AS n FROM email_suppressions "
+            "WHERE reason IS NOT NULL GROUP BY reason"
+        ).fetchall():
+            out["by_reason"][r["reason"]] = r["n"]
+        out["suppressed"] = sum(out["by_reason"].values())
+        out["watchlist"] = scalar(
+            "SELECT COUNT(*) FROM email_suppressions "
+            "WHERE reason IS NULL AND soft_bounces > 0")
+        sent_30d = scalar("SELECT COALESCE(SUM(n), 0) FROM email_send_counts "
+                          "WHERE day > date('now','-30 days')")
+        out["sent_30d"] = sent_30d
+        for reason, key in (("complaint", "complaint_rate"),
+                            ("hard_bounce", "bounce_rate")):
+            n = scalar("SELECT COUNT(*) FROM email_suppressions "
+                       "WHERE reason=? AND suppressed_at > datetime('now','-30 days')",
+                       reason)
+            out[key] = (100.0 * n / sent_30d) if sent_30d else None
+            out[reason + "_30d"] = n
+    except sqlite3.OperationalError:
+        return out  # pre-migration DB
+
+    # Per-provider silence only means something once the loop is switched on;
+    # with WEBHOOK_SECRET unset every provider is trivially silent, and
+    # reporting that per provider buries the one finding that matters.
+    order = (getattr(cfg, "email_provider_order", ()) if cfg else ()) \
+        if out["configured"] else ()
+    for name in order:
+        row = conn.execute("SELECT value FROM meta WHERE key=?",
+                           (f"last_webhook_at_{name}",)).fetchone()
+        last = row["value"] if row else None
+        # Silence is only evidence of a broken webhook if mail actually went
+        # out through this provider and nothing came back. A leg sitting idle
+        # at the end of the fallback chain reports nothing because it sent
+        # nothing, and flagging that every day teaches the reader to skip the
+        # whole section.
+        sent = conn.execute(
+            "SELECT COUNT(*) AS n FROM sent_idempotency WHERE provider=? "
+            "AND sent_at > datetime('now', ?)",
+            (name, f"-{WEBHOOK_SILENT_HOURS} hours"),
+        ).fetchone()["n"]
+        silent = bool(sent)
+        if silent and last:
+            try:
+                silent = (datetime.utcnow() - datetime.fromisoformat(last)
+                          ) > timedelta(hours=WEBHOOK_SILENT_HOURS)
+            except ValueError:
+                silent = True
+        out["providers"].append({"name": name, "last_event_at": last,
+                                 "sent_recently": sent, "silent": silent})
+        if silent:
+            out["providers_silent"].append(name)
+        err = conn.execute("SELECT value FROM meta WHERE key=?",
+                           (f"webhook_errors_{name}",)).fetchone()
+        if err:
+            out["parse_errors"][name] = err["value"]
+    return out
 
 def stats(conn: sqlite3.Connection, cfg=None) -> dict:
     def scalar(q, *args):
@@ -485,6 +601,7 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         "city_names": city_names,
         "last_polled_at_by_city": last_polled_at_by_city,
         "slots_cached": scalar("SELECT COUNT(*) FROM slots_cache"),
+        "deliverability": _deliverability(conn, cfg),
         "emails_sent_recorded": emails_recorded,
         "emails_sent_since": emails_since,
         "notifications_24h":

@@ -3,7 +3,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS subscriptions (
@@ -73,6 +73,33 @@ CREATE TABLE IF NOT EXISTS email_failures (
   failures       INTEGER NOT NULL DEFAULT 0,
   last_failed_at TIMESTAMP
 );
+
+-- Addresses the receiving mail systems have told us to stop mailing, learned
+-- from provider webhooks rather than from an API rejection. This is the
+-- asynchronous half of deliverability: a provider accepts a message with HTTP
+-- 200 and only reports minutes later that the mailbox does not exist, or that
+-- the recipient pressed "spam". Nothing in the send path can see either, so
+-- without this table a dead or hostile address is mailed forever, which is how
+-- a sending domain gets blocked.
+--
+-- `reason IS NULL` means the row is only counting soft bounces and the address
+-- is still mailable; a non-NULL reason is a suppression and `mail._dead_addresses`
+-- excludes the address before it costs an API call. Kept separate from
+-- `email_failures` (synchronous 400/422 rejections) on purpose: a successful
+-- send clears that counter, and it fires on API *acceptance*, which is exactly
+-- what happens right before an asynchronous bounce arrives. Sharing one counter
+-- would reset the evidence every cycle.
+CREATE TABLE IF NOT EXISTS email_suppressions (
+  email         TEXT PRIMARY KEY,
+  reason        TEXT,
+  provider      TEXT,
+  detail        TEXT,
+  soft_bounces  INTEGER NOT NULL DEFAULT 0,
+  suppressed_at TIMESTAMP,
+  updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_suppressed
+  ON email_suppressions(reason) WHERE reason IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS meta (
   key        TEXT PRIMARY KEY,

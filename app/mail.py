@@ -435,14 +435,22 @@ def _clear_send_failures(conn: sqlite3.Connection, emails: set[str]) -> None:
                          [(e,) for e in emails])
 
 def _dead_addresses(conn: sqlite3.Connection, cfg) -> set[str]:
-    """Addresses the providers have refused often enough that we stop paying
-    for the attempt. Without this a typo'd sign-up is retried every cycle for
-    as long as its row lives."""
+    """Addresses we stop paying an API call for, from both halves of delivery
+    feedback: the synchronous rejections a provider returns to `send_batch`
+    (`email_failures`), and the asynchronous verdicts its webhook reports
+    afterwards (`email_suppressions` — see `app.webhooks`). Without the first a
+    typo'd sign-up is retried every cycle for as long as its row lives; without
+    the second a mailbox that does not exist is mailed forever, because
+    accepting the message and failing to deliver it are different events and
+    only the webhook reports the second."""
+    from app.repo import suppressed_addresses
+
+    dead = suppressed_addresses(conn)
     cap = getattr(cfg, "max_send_failures_per_address", 3)
-    if cap <= 0:
-        return set()
-    return {r["email"] for r in conn.execute(
-        "SELECT email FROM email_failures WHERE failures >= ?", (cap,))}
+    if cap > 0:
+        dead |= {r["email"] for r in conn.execute(
+            "SELECT email FROM email_failures WHERE failures >= ?", (cap,))}
+    return dead
 
 def _headroom(conn: sqlite3.Connection, limits: list[tuple], provider: str) -> int:
     room = None

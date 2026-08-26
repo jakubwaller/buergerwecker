@@ -19,6 +19,9 @@ class Config:
     mailjet_hourly_quota: int
     quota_alert_threshold_pct: int
     max_send_failures_per_address: int
+    webhook_secret: str
+    sweego_webhook_secret: str
+    soft_bounce_suppress_threshold: int
     email_provider_order: tuple
     token_secret_primary: str
     token_secret_previous: str
@@ -83,6 +86,22 @@ def load_config() -> Config:
         # Mailjet-first so its account sees the traffic (needed to get the
         # new-sender throttle lifted); Brevo and Sweego absorb the overflow,
         # in order.
+        # Shared secret in the delivery-feedback webhook URL
+        # (/webhooks/<provider>/<secret>). Empty disables the endpoint
+        # entirely, which is also the state of a deploy that has not been
+        # configured yet — the admin page says so rather than the service
+        # quietly never learning about a bounce.
+        webhook_secret=os.environ.get("WEBHOOK_SECRET", ""),
+        # Sweego additionally signs its payloads (HMAC-SHA256, base64 secret
+        # from their dashboard). Set this and the signature is required on top
+        # of the URL secret; leave it empty and only the URL secret gates it.
+        sweego_webhook_secret=os.environ.get("SWEEGO_WEBHOOK_SECRET", ""),
+        # Consecutive soft bounces before an address is retired for good. A
+        # single one is a full mailbox or a greylisting receiver; a run is an
+        # address that never accepts mail, which costs reputation exactly like
+        # a hard bounce. 0 counts without ever escalating.
+        soft_bounce_suppress_threshold=int(
+            os.environ.get("SOFT_BOUNCE_SUPPRESS_THRESHOLD", "5")),
         email_provider_order=tuple(
             p.strip() for p in
             os.environ.get("EMAIL_PROVIDER_ORDER",

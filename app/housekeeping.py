@@ -22,6 +22,7 @@ def run_once(conn: sqlite3.Connection) -> None:
     _prune_seen_slots(conn)
     _prune_idempotency(conn)
     _prune_email_failures(conn)
+    _prune_suppressions(conn)
     _prune_slots_cache(conn)
     _prune_availability(conn)
     _check_parser_canary(conn, cfg)
@@ -139,6 +140,25 @@ def _prune_email_failures(conn):
     is ever NULL."""
     conn.execute("DELETE FROM email_failures WHERE NOT EXISTS ("
                  "SELECT 1 FROM subscriptions s WHERE s.email = email_failures.email)")
+
+def _prune_suppressions(conn):
+    """Suppressions age out on the same clock as `email_failures`, and for the
+    same reason: the row is a bare e-mail address, so it must not outlive the
+    subscription that justified storing it (the privacy policy promises final
+    removal 30 days after deletion, and `_purge_hard` above is what enforces
+    that date).
+
+    The cost is that an address which hard-bounced, was dropped and then fully
+    purged is mailable again if that person signs up a second time. That is the
+    right trade: the re-signup is their own action, it only earns them a single
+    double opt-in confirmation, and a bounce on that one re-suppresses the
+    address immediately.
+
+    Depends on `_purge_hard` having run first in `run_once`. NOT EXISTS rather
+    than NOT IN, per `_prune_email_failures`."""
+    conn.execute("DELETE FROM email_suppressions WHERE NOT EXISTS ("
+                 "SELECT 1 FROM subscriptions s "
+                 "WHERE s.email = email_suppressions.email)")
 
 def _prune_slots_cache(conn):
     # Slots are short-lived in the upstream system; 14 days is generous.
