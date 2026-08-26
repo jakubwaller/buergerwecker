@@ -591,3 +591,38 @@ def test_anomaly_deferral_reported_even_below_quota_thresholds():
     }), now=NOW)
     assert any("deferred today" in x for x in a)
     assert not any("quota at" in x for x in a)
+
+
+def test_stats_expose_the_wall_behind_the_deferral_count(tmp_path):
+    from types import SimpleNamespace
+    conn = connect(str(tmp_path / "d.db")); init_schema(conn)
+    conn.execute("INSERT INTO email_deferral_counts (day, n) VALUES (date('now'), 3)")
+    conn.executemany(
+        "INSERT INTO email_deferrals (n, wall, frees_at) VALUES (?, ?, ?)",
+        [(2, "hourly", "2026-08-26 13:05:00"), (1, "daily", "2026-08-27 09:31:00")])
+    s = stats(conn, SimpleNamespace(mailjet_monthly_quota=6000, mailjet_daily_quota=200))
+    assert s["deferral_walls_today"] == {"hourly": 2, "daily": 1}
+    assert s["last_deferral"]["wall"] == "daily"
+    assert s["last_deferral"]["frees_at"] == "2026-08-27 09:31:00"
+
+
+def test_anomaly_and_summary_split_deferrals_by_wall():
+    a = summary_anomalies(_summary_stats(deferrals_today=3, deferral_walls_today={
+        "hourly": 2, "daily": 1}), now=NOW)
+    line = next(x for x in a if "deferred today" in x)
+    assert "hourly 2, daily 1" in line and "rolling 24h window" in line
+    text = render_summary_email(_summary_stats(deferrals_today=3, deferrals_7d=3,
+                                               deferral_walls_today={"hourly": 3}),
+                                now=NOW, anomalies=[])
+    d = _line(text, "Deferred")
+    assert "hourly 3" in d and "rolling 24h window" not in d   # nothing lost
+
+
+def test_admin_page_shows_the_last_deferral_and_its_wall(client):
+    conn = connect(os.environ["DB_PATH"])
+    conn.execute("INSERT INTO email_deferral_counts (day, n) VALUES (date('now'), 1)")
+    conn.execute("INSERT INTO email_deferrals (at, n, wall, frees_at) VALUES "
+                 "('2026-08-26 12:05:11', 1, 'daily', '2026-08-27 09:31:00')")
+    html = client.get("/admin?token=admin-tok").data.decode()
+    assert "last 12:05 UTC, 1 against the" in html
+    assert "daily wall" in html and "frees 2026-08-27 09:31 UTC" in html

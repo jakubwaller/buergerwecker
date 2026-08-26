@@ -670,3 +670,111 @@ def test_quota_alert_ignores_new_providers_without_keys(db, monkeypatch):
                                    brevo_daily_quota=100, sweego_daily_quota=100),
                           deferred=0)
     snd.assert_not_called()
+
+
+# --- Which wall a deferral hit ------------------------------------------------
+# "3 deferred" against Mailjet's hourly warm-up cap clears on the next cycle;
+# against the combined daily pool it waits for the rolling 24h window, by which
+# time the slot is gone. The counter cannot tell them apart — the event log can.
+
+def _oldest_plus(db, provider, seconds):
+    return db.execute(
+        "SELECT datetime(MIN(sent_at), ?) AS t FROM sent_idempotency "
+        "WHERE provider=?", (f"+{seconds} seconds", provider)).fetchone()["t"]
+
+
+def test_deferral_against_the_hourly_cap_says_so_and_when_it_frees(db):
+    from app.mail import last_deferral
+    cfg = _cfg(order=("mailjet",), mailjet_hourly_quota=2)  # daily unbounded
+    with patch("app.mail._call_mailjet_batch", return_value=200):
+        res = send_batch(db, _items(3), cfg)
+    assert res.deferred == 1
+    last = last_deferral(db)
+    assert last["wall"] == "hourly" and last["n"] == 1
+    # One slot comes back when the oldest send inside the window ages out.
+    assert last["frees_at"] == _oldest_plus(db, "mailjet", 3600)
+
+
+def test_deferral_against_the_daily_cap_is_the_expensive_one(db):
+    from app.mail import last_deferral
+    cfg = _cfg(order=("mailjet",), mailjet_hourly_quota=100, mailjet_daily_quota=2)
+    with patch("app.mail._call_mailjet_batch", return_value=200):
+        res = send_batch(db, _items(3), cfg)
+    assert res.deferred == 1
+    last = last_deferral(db)
+    assert last["wall"] == "daily"
+    assert last["frees_at"] == _oldest_plus(db, "mailjet", 86400)
+
+
+def test_both_windows_spent_reports_the_one_that_frees_first(db):
+    from app.mail import last_deferral
+    cfg = _cfg(order=("mailjet",), mailjet_hourly_quota=2, mailjet_daily_quota=2)
+    with patch("app.mail._call_mailjet_batch", return_value=200):
+        send_batch(db, _items(3), cfg)
+    assert last_deferral(db)["wall"] == "hourly"
+
+
+def test_wall_is_the_earliest_across_providers(db, brevo_sweego_on):
+    """With Mailjet hourly-bound and Brevo daily-bound, the next cycle after
+    Mailjet's window frees can send again — so the deferral is hourly, whatever
+    Brevo's state. Flip it and it is daily."""
+    from app.mail import last_deferral
+    with patch("app.mail._call_mailjet_batch", return_value=200), \
+         patch("app.mail._call_brevo_batch", return_value=201):
+        res = send_batch(db, _items(4, "a"), _cfg(order=("mailjet", "brevo"),
+                                                  mailjet_hourly_quota=1,
+                                                  brevo_daily_quota=1))
+        assert res.deferred == 2 and last_deferral(db)["wall"] == "hourly"
+        db.execute("DELETE FROM sent_idempotency")
+        res = send_batch(db, _items(4, "b"), _cfg(order=("mailjet", "brevo"),
+                                                  mailjet_hourly_quota=100,
+                                                  mailjet_daily_quota=1,
+                                                  brevo_daily_quota=1))
+        assert res.deferred == 2 and last_deferral(db)["wall"] == "daily"
+
+
+def test_every_provider_failing_is_an_outage_not_a_wall(db, brevo_sweego_on):
+    from app.mail import last_deferral
+    with patch("app.mail._call_mailjet_batch", return_value=500), \
+         patch("app.mail._call_brevo_batch", return_value=503), \
+         patch("app.mail._call_sweego_batch", return_value=503):
+        res = send_batch(db, _items(3), _cfg())
+    assert res.deferred == 3
+    last = last_deferral(db)
+    assert last["wall"] == "outage" and last["frees_at"] is None
+
+
+def test_deferral_walls_are_split_per_utc_day(db):
+    from app.mail import deferral_walls_today
+    cfg = _cfg(order=("mailjet",), mailjet_hourly_quota=1)
+    with patch("app.mail._call_mailjet_batch", return_value=200):
+        send_batch(db, _items(3, "a"), cfg)   # 1 sent, 2 deferred (hourly)
+        send_batch(db, _items(1, "b"), cfg)   # 1 deferred (hourly)
+    db.execute("INSERT INTO email_deferrals (at, n, wall) "
+               "VALUES (datetime('now','-2 days'), 40, 'daily')")
+    assert deferral_walls_today(db) == {"hourly": 3}
+
+
+def test_deferral_readers_survive_a_pre_migration_db(db):
+    from app.mail import deferral_walls_today, last_deferral
+    db.execute("DROP TABLE email_deferrals")
+    assert last_deferral(db) is None
+    assert deferral_walls_today(db) == {}
+
+
+def test_quota_alert_names_the_wall(db):
+    db.execute("INSERT INTO email_deferrals (n, wall, frees_at) VALUES "
+               "(3, 'daily', datetime('now','+20 hours'))")
+    with patch("app.mail.send") as snd:
+        maybe_quota_alert(db, _cfg(), deferred=3)
+    body = snd.call_args.args[3]
+    assert "hit the daily pool" in body and "rolling 24h window frees a slot" in body
+
+
+def test_deferral_events_are_pruned_after_90_days(db):
+    from app.housekeeping import _prune_deferrals
+    db.execute("INSERT INTO email_deferrals (at, n, wall) VALUES "
+               "(datetime('now','-91 days'), 1, 'daily')")
+    db.execute("INSERT INTO email_deferrals (n, wall) VALUES (1, 'hourly')")
+    _prune_deferrals(db)
+    assert db.execute("SELECT COUNT(*) AS n FROM email_deferrals").fetchone()["n"] == 1

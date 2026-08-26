@@ -76,6 +76,20 @@ def _parse_ts(iso: str | None) -> datetime | None:
         return None
 
 
+def _walls_detail(walls: dict | None) -> str:
+    """" (hourly 2, daily 1 — ...)" for a day's deferrals, or "" when the
+    split is unknown. The daily wall is the one that costs appointments, so it
+    gets the sentence; an hourly deferral is cleared by the next cycle and an
+    outage by the next retry."""
+    if not walls:
+        return ""
+    bits = [f"{w} {walls[w]}" for w in ("outage", "hourly", "daily") if walls.get(w)]
+    tail = ""
+    if walls.get("daily"):
+        tail = (" — the daily ones wait for the rolling 24h window, and the "
+                "slot may be gone by then")
+    return f" ({', '.join(bits)}{tail})"
+
 def summary_anomalies(s: dict, *, now: datetime) -> list[str]:
     """Short, human-readable lines for anything worth a look — empty when all is
     healthy. Pure: reads a stats() dict + injected `now`.
@@ -129,7 +143,8 @@ def summary_anomalies(s: dict, *, now: datetime) -> list[str]:
     #    percentages say.
     deferred = s.get("deferrals_today") or 0
     if deferred:
-        out.append(f"{deferred} notification(s) deferred today for lack of quota")
+        out.append(f"{deferred} notification(s) deferred today for lack of quota"
+                   f"{_walls_detail(s.get('deferral_walls_today'))}")
 
     # 2. Deliverability. This is the one failure in this list that cannot be
     #    fixed after the fact: once large receivers throttle the sending domain
@@ -241,7 +256,8 @@ def render_summary_email(s: dict, *, now: datetime, anomalies: list[str],
         lines.append(f"  Gating 24h    {roll_used}/{roll_cap} combined rolling")
     if s.get("deferrals_today") or s.get("deferrals_7d"):
         lines.append(f"  Deferred      today {s.get('deferrals_today', 0)}"
-                     f" · 7d {s.get('deferrals_7d', 0)}")
+                     f" · 7d {s.get('deferrals_7d', 0)}"
+                     f"{_walls_detail(s.get('deferral_walls_today'))}")
 
     admin = f"{base_url.rstrip('/')}/admin" if base_url else "/admin"
     lines += ["", f"Full dashboard → {admin}"]
@@ -403,6 +419,8 @@ def _deliverability(conn: sqlite3.Connection, cfg=None) -> dict:
     return out
 
 def stats(conn: sqlite3.Connection, cfg=None) -> dict:
+    from app.mail import deferral_walls_today, last_deferral
+
     def scalar(q, *args):
         row = conn.execute(q, args).fetchone()
         return row[0] if row else 0
@@ -632,6 +650,8 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         "deferrals_7d":
             scalar("SELECT COALESCE(SUM(n), 0) FROM email_deferral_counts "
                    "WHERE day >= date('now','-7 days')"),
+        "last_deferral": last_deferral(conn),
+        "deferral_walls_today": deferral_walls_today(conn),
         "last_failure_alert_at": meta_val("last_failure_alert_at"),
         "last_housekeeping_at": meta_val("last_housekeeping_at"),
         "last_backup_at":       meta_val("last_backup_at"),

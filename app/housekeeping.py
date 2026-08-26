@@ -21,6 +21,7 @@ def run_once(conn: sqlite3.Connection) -> None:
     _send_heartbeats(conn, cfg, milestone_days=60, milestone_col="heartbeat_60d_at")
     _prune_seen_slots(conn)
     _prune_idempotency(conn)
+    _prune_deferrals(conn)
     _prune_email_failures(conn)
     _prune_suppressions(conn, cfg)
     _prune_slots_cache(conn)
@@ -126,6 +127,11 @@ def _prune_seen_slots(conn):
 
 def _prune_idempotency(conn):
     conn.execute("DELETE FROM sent_idempotency WHERE sent_at < datetime('now','-14 days')")
+
+def _prune_deferrals(conn):
+    # The event log is one row per deferring cycle — bounded by the poll
+    # cadence, but unbounded in time. The per-day counter keeps the totals.
+    conn.execute("DELETE FROM email_deferrals WHERE at < datetime('now','-90 days')")
 
 def _prune_email_failures(conn):
     """The bounce counter is keyed by the address itself, so it has to age out

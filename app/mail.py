@@ -505,6 +505,7 @@ def send_batch(conn: sqlite3.Connection, items: list[Outgoing], cfg) -> BatchRes
 
     remaining = list(pending)
     refused: list[Outgoing] = []
+    unusable: set[str] = set()   # providers that had room and still failed
     for name, send_fn, batch_size, limits in _providers(cfg):
         # Anything the previous provider refused gets one more chance here: a
         # content rejection can be provider-specific (a domain one provider
@@ -540,6 +541,7 @@ def send_batch(conn: sqlite3.Connection, items: list[Outgoing], cfg) -> BatchRes
                 # Leave whatever is left claimed (still 'pending') so the next
                 # provider can take it. If every provider fails, the trailing
                 # deferral block releases them.
+                unusable.add(name)
                 break
         if (len(refused) >= _SYSTEMIC_REJECTION_MIN
                 and not result.sent_by_provider.get(name)):
@@ -548,6 +550,7 @@ def send_batch(conn: sqlite3.Connection, items: list[Outgoing], cfg) -> BatchRes
             # Hand the mail on to the next provider (or the deferral path at
             # the bottom) with no failure strikes recorded.
             remaining, refused = remaining + refused, []
+            unusable.add(name)
 
     if refused:
         # Refused by every provider that could try it. Release the claim so a
@@ -565,23 +568,106 @@ def send_batch(conn: sqlite3.Connection, items: list[Outgoing], cfg) -> BatchRes
         # the next cycle can retry — do NOT mark seen; the caller must skip
         # recording seen_slots for these so they resurface. One transaction so
         # the release is a single fsync, not one per deferred item.
+        wall, frees_at = _deferral_wall(conn, cfg, unusable)
         with transaction(conn):
             conn.executemany("DELETE FROM sent_idempotency WHERE idem_key=?",
                              [(c.idem_key,) for c in remaining])
-            _record_deferrals(conn, len(remaining))
+            _record_deferrals(conn, len(remaining), wall, frees_at)
         result.deferred = len(remaining)
     return result
 
-def _record_deferrals(conn: sqlite3.Connection, n: int) -> None:
-    """Bump the durable per-UTC-day deferral counter. Deferral is the only event
-    that means a subscriber was not told about a slot, and nothing else records
-    it: the idempotency claim is deleted on the way out and the digest itself is
-    never written anywhere."""
+# Which wall a deferral hit. Ordered by how soon it gives way.
+WALL_OUTAGE = "outage"   # a provider had room and failed: next cycle retries
+WALL_HOURLY = "hourly"   # Mailjet's warm-up throttle: clears within the hour
+WALL_DAILY = "daily"     # the combined pool: waits for the rolling 24h window
+
+def _deferral_wall(conn: sqlite3.Connection, cfg,
+                   unusable: set[str]) -> tuple[str, str | None]:
+    """Which wall this deferral hit, and when it gives way.
+
+    "3 deferred" on the counter reads the same for two opposite situations.
+    Against Mailjet's hourly warm-up cap the next cycle sends them and nobody
+    notices. Against the combined daily pool nothing moves until the rolling
+    24h window frees a slot — hours away, by which time the appointment is
+    gone and that subscriber genuinely never heard. So say which, and when: for
+    every provider take the tightest window that is spent, work out when its
+    oldest send ages out (one slot back), and report the earliest across
+    providers, because that is the first moment a retry can succeed. A
+    provider that had room and failed at the HTTP level is an outage — the
+    next cycle retries it, so it is the earliest of all.
+    """
+    best: tuple[str, str | None] | None = None
+    for name, _send_fn, _batch_size, limits in _providers(cfg):
+        if name in unusable:
+            return WALL_OUTAGE, None
+        spent = [(window, limit) for limit, window in limits
+                 if limit - _window_used(conn, name, window) <= 0]
+        if not spent:
+            continue
+        window, _limit = min(spent)          # shortest spent window frees first
+        row = conn.execute(
+            "SELECT datetime(MIN(sent_at), ?) AS t FROM sent_idempotency "
+            "WHERE provider = ? AND sent_at > datetime('now', ?)",
+            (f"+{window} seconds", name, f"-{window} seconds"),
+        ).fetchone()
+        frees_at = row["t"] if row else None  # None: cap is 0, never frees
+        wall = WALL_HOURLY if window <= 3600 else WALL_DAILY
+        if best is None or (frees_at or "9") < (best[1] or "9"):
+            best = (wall, frees_at)
+    return best or (WALL_OUTAGE, None)
+
+def _record_deferrals(conn: sqlite3.Connection, n: int, wall: str = WALL_DAILY,
+                      frees_at: str | None = None) -> None:
+    """Bump the durable per-UTC-day deferral counter and log the event with
+    the wall it hit. Deferral is the only event that means a subscriber was not
+    told about a slot, and nothing else records it: the idempotency claim is
+    deleted on the way out and the digest itself is never written anywhere."""
     conn.execute(
         "INSERT INTO email_deferral_counts (day, n) VALUES (date('now'), ?) "
         "ON CONFLICT (day) DO UPDATE SET n = n + excluded.n",
         (n,),
     )
+    conn.execute(
+        "INSERT INTO email_deferrals (n, wall, frees_at) VALUES (?, ?, ?)",
+        (n, wall, frees_at),
+    )
+
+def last_deferral(conn: sqlite3.Connection) -> dict | None:
+    """The most recent deferral event: at, n, wall, frees_at (all UTC)."""
+    try:
+        row = conn.execute(
+            "SELECT at, n, wall, frees_at FROM email_deferrals "
+            "ORDER BY id DESC LIMIT 1").fetchone()
+    except sqlite3.OperationalError:
+        return None  # pre-migration DB
+    return dict(row) if row else None
+
+def deferral_walls_today(conn: sqlite3.Connection) -> dict[str, int]:
+    """Today's (UTC) deferrals split by the wall they hit, e.g.
+    {'hourly': 2, 'daily': 1}."""
+    try:
+        rows = conn.execute(
+            "SELECT wall, SUM(n) AS n FROM email_deferrals "
+            "WHERE at >= date('now') GROUP BY wall").fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    return {r["wall"]: r["n"] for r in rows}
+
+def describe_deferral(d: dict) -> str:
+    """One sentence for humans about what a deferral event means."""
+    at = (d.get("at") or "")[:16]
+    frees = (d.get("frees_at") or "")[:16]
+    wall = d.get("wall")
+    if wall == WALL_OUTAGE:
+        return (f"At {at} UTC a provider with quota left failed outright — an "
+                "outage, not the quota; the next cycle retries.")
+    if wall == WALL_HOURLY:
+        return (f"At {at} UTC they hit an hourly cap (Mailjet's warm-up "
+                f"throttle); a slot frees at {frees or '?'} UTC, so the next "
+                "cycles clear them.")
+    return (f"At {at} UTC they hit the daily pool; the rolling 24h window frees "
+            f"a slot at {frees or '?'} UTC — every cycle until then re-defers "
+            "them, and a slot taken in the meantime is gone.")
 
 def deferrals_today(conn: sqlite3.Connection) -> int:
     try:
@@ -659,6 +745,9 @@ def maybe_quota_alert(conn: sqlite3.Connection, cfg, *, deferred: int) -> None:
                "subscribers were not told about a slot. They are re-sent next "
                "cycle, longest-waiting first, but a slot taken in the meantime "
                "is simply gone.")
+        last = last_deferral(conn)
+        if last:
+            why += " " + describe_deferral(last)
     else:
         subject = "[buergerwecker] email quota running low"
         why = ("Nothing was deferred — every subscriber was notified. This is "
