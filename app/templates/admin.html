@@ -447,6 +447,82 @@
   </section>
 
   <section class="adm-section">
+    <details class="adm-collapse" open>
+      <summary><h2>Subscribers <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· distinct people with an active subscription at the end of each UTC day, last 30 days</span></h2></summary>
+      {% set days = s.subscribers_daily %}
+      {% if days %}
+        {% set smax = (days|map(attribute='people')|max) or 1 %}
+        {% set first_day = days|first %}{% set last_day = days|last %}
+        {% set delta = last_day.people - first_day.people %}
+        <div class="mini-stats">
+          <div><div class="ms-num">{{ last_day.people }}</div><div class="ms-lbl">Now</div></div>
+          <div><div class="ms-num">{{ first_day.people }}</div><div class="ms-lbl">30 days ago</div></div>
+          <div><div class="ms-num">{{ '%+d'|format(delta) }}</div><div class="ms-lbl">Change</div></div>
+          <div><div class="ms-num">{{ smax }}</div><div class="ms-lbl">Peak</div></div>
+        </div>
+        {# One column per day; hover for the people / subscription-row split. A
+           person holding several subscriptions counts once — this is the
+           headline "active subscribers" figure, back in time. #}
+        <div class="bars">
+          {% for d in days %}
+            <div class="bar-col" title="{{ d.day }} · {{ d.people }} people · {{ d.subscriptions }} subscriptions">
+              {% if d.people %}
+                <div class="bar" style="height: {{ (100 * d.people / smax)|round(1) }}%">
+                  <div class="bar-fill" style="height: 100%"></div>
+                </div>
+              {% else %}
+                <div class="bar empty"></div>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+        <div class="bar-axis"><span>{{ first_day.day }}</span><span>{{ last_day.day }}</span></div>
+      {% else %}
+        <p class="adm-muted">No subscriber history yet.</p>
+      {% endif %}
+    </details>
+  </section>
+
+  <section class="adm-section">
+    <details class="adm-collapse" open>
+      <summary><h2>Cancellations <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· distinct people whose subscription ended, per UTC day, last 30 days</span></h2></summary>
+      {% set days = s.cancellations_daily %}
+      {% if days %}
+        {% set cmax = (days|map(attribute='people')|max) or 1 %}
+        {% set first_day = days|first %}{% set last_day = days|last %}
+        <div class="mini-stats">
+          <div><div class="ms-num">{{ days|sum(attribute='people') }}</div><div class="ms-lbl">Cancelled · 30d</div></div>
+          <div><div class="ms-num">{{ days|sum(attribute='unsubscribed') }}</div><div class="ms-lbl">Unsubscribed</div></div>
+          <div><div class="ms-num">{{ days|sum(attribute='expired') }}</div><div class="ms-lbl">Expired, not renewed</div></div>
+        </div>
+        {# Stacked column: people who chose to leave (solid) at the base, people
+           whose subscription ran out unrenewed (light) on top. The split is
+           inferred from deleted_at vs expires_at — there is no reason column. #}
+        <div class="bars">
+          {% for d in days %}
+            <div class="bar-col" title="{{ d.day }} · {{ d.people }} people ({{ d.unsubscribed }} unsubscribed, {{ d.expired }} expired) · {{ d.subscriptions }} subscriptions">
+              {% if d.people %}
+                <div class="bar" style="height: {{ (100 * d.people / cmax)|round(1) }}%">
+                  <div class="bar-fill" style="height: {{ (100 * d.unsubscribed / d.people)|round(1) }}%"></div>
+                </div>
+              {% else %}
+                <div class="bar empty"></div>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+        <div class="bar-axis"><span>{{ first_day.day }}</span><span>{{ last_day.day }}</span></div>
+        <div class="legend">
+          <span><span class="swatch" style="background:var(--accent)"></span>Unsubscribed</span>
+          <span><span class="swatch" style="background:color-mix(in srgb, var(--accent) 26%, transparent)"></span>Expired, not renewed</span>
+        </div>
+      {% else %}
+        <p class="adm-muted">No cancellations in the last 30 days.</p>
+      {% endif %}
+    </details>
+  </section>
+
+  <section class="adm-section">
     <h2>Availability <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· free slots per office &amp; type, ~15-min samples, last 7 days · a service is only polled while subscribed: "polled %" = coverage, "empty %" = scarcity within it</span></h2>
     {% if s.availability %}
       {# One collapsible block per city (collapsed by default), in the same

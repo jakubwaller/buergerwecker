@@ -218,3 +218,73 @@ def usage_daily(conn: sqlite3.Connection, *, days: int = 30) -> list[dict]:
     return [{"day": r["day"], "signups": r["signups"],
              "confirmed": r["confirmed"], "deleted": r["deleted"],
              "by_city": by_city.get(r["day"], {})} for r in rows]
+
+
+def _day_series(conn: sqlite3.Connection, days: int, select_sql: str) -> list[dict]:
+    """Run `select_sql` once per UTC day of the last `days` days, oldest first.
+
+    The recursive CTE zero-fills: a quiet day is a row with zeros, not a hole,
+    so a column chart keeps its time axis honest. `select_sql` sees the
+    columns `day` (YYYY-MM-DD) and `cutoff` — the end of that day, clamped to
+    now for today, so the last point agrees with the live headline figures.
+    """
+    try:
+        rows = conn.execute(
+            "WITH RECURSIVE days(day) AS ("
+            f"  SELECT date('now','-{int(days) - 1} days') "
+            "  UNION ALL SELECT date(day,'+1 day') FROM days WHERE day < date('now')"
+            "), spans AS ("
+            "  SELECT day, min(datetime(day,'+1 day'), datetime('now')) AS cutoff "
+            "  FROM days"
+            ") "
+            f"SELECT day, {select_sql} FROM spans ORDER BY day"
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    return [dict(r) for r in rows]
+
+
+def subscribers_daily(conn: sqlite3.Connection, *, days: int = 30) -> list[dict]:
+    """Distinct active subscribers (people, not rows) at the end of each UTC day.
+
+    Reconstructed from the subscriptions table rather than snapshotted: a
+    subscription was active on a day if it had been confirmed by then, was
+    not yet deleted, and had not expired. `expires_at` only ever moves
+    forward (renewal), so a paused-then-renewed subscription reads as active
+    across its pause — a small overcount. Housekeeping hard-purges rows 30
+    days after deletion, so points older than that undercount; the default
+    window stops exactly where the record is still complete.
+    """
+    return _day_series(conn, days, (
+        "(SELECT COUNT(DISTINCT lower(email)) FROM subscriptions "
+        " WHERE confirmed_at IS NOT NULL AND confirmed_at <= cutoff "
+        "   AND (deleted_at IS NULL OR deleted_at > cutoff) "
+        "   AND datetime(expires_at) > cutoff) AS people, "
+        "(SELECT COUNT(*) FROM subscriptions "
+        " WHERE confirmed_at IS NOT NULL AND confirmed_at <= cutoff "
+        "   AND (deleted_at IS NULL OR deleted_at > cutoff) "
+        "   AND datetime(expires_at) > cutoff) AS subscriptions"
+    ))
+
+
+def cancellations_daily(conn: sqlite3.Connection, *, days: int = 30) -> list[dict]:
+    """Distinct people whose subscriptions ended on each UTC day, by cause.
+
+    `deleted_at` is stamped both by an unsubscribe and by housekeeping
+    soft-deleting an expired subscription after its grace period. The table
+    keeps no reason column, so the split is inferred: a deletion that comes
+    after `expires_at` is an expiry (or a cancellation during the grace
+    pause, which amounts to the same thing), anything earlier is a person
+    choosing to leave. Never-confirmed sign-ups are excluded — nobody was
+    subscribed, so nothing was cancelled.
+    """
+    live = "confirmed_at IS NOT NULL AND deleted_at >= day AND deleted_at < cutoff"
+    return _day_series(conn, days, (
+        f"(SELECT COUNT(DISTINCT lower(email)) FROM subscriptions WHERE {live}) "
+        "  AS people, "
+        f"(SELECT COUNT(*) FROM subscriptions WHERE {live}) AS subscriptions, "
+        f"(SELECT COUNT(DISTINCT lower(email)) FROM subscriptions WHERE {live} "
+        "   AND datetime(expires_at) > deleted_at) AS unsubscribed, "
+        f"(SELECT COUNT(DISTINCT lower(email)) FROM subscriptions WHERE {live} "
+        "   AND datetime(expires_at) <= deleted_at) AS expired"
+    ))
