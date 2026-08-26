@@ -170,6 +170,15 @@ failing:
   `email_deferral_counts` per UTC day — visible on `/admin`, in the ops summary,
   and in the alert mail. That counter is the **only** record that a subscriber
   was not told about a slot; nothing else persists it.
+- **A deferral also says which wall it hit.** `email_deferrals` logs each
+  deferring cycle with `wall` = `hourly` (Mailjet's warm-up throttle — the next
+  cycles clear it), `daily` (the combined pool — nothing moves until the rolling
+  24h window frees a slot, and the appointment is usually gone by then) or
+  `outage` (a provider with room failed; the next cycle retries), plus
+  `frees_at`, the earliest moment a retry can succeed. `/admin` shows the last
+  event next to the counter and the ops summary splits the day's total by wall:
+  "3 deferred" against the hourly wall is noise, against the daily wall it is
+  the case for a per-subscriber daily cap.
 - **The deferred tail rotates.** Batches are filled in list order, so without
   care the same subscribers land at the back of every saturated cycle.
   `flush_digests` sorts by `last_notified_at` (never-notified first), and a

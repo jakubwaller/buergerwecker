@@ -203,7 +203,8 @@
       <tr>
         <td class="k">deferred</td>
         <td class="v"><span{% if s.deferrals_today %} class="quota-hot"{% endif %}>today {{ s.deferrals_today }}</span> · 7d {{ s.deferrals_7d }}
-          <span class="adm-muted">· notifications the quota could not send — re-tried next cycle, longest wait first</span></td>
+          {%- if s.last_deferral %} · last {{ s.last_deferral.at[11:16] }} UTC, {{ s.last_deferral.n }} against the <span{% if s.last_deferral.wall == 'daily' %} class="quota-hot"{% endif %}>{{ s.last_deferral.wall }} wall</span>{% if s.last_deferral.frees_at %}, frees {{ s.last_deferral.frees_at[:16] }} UTC{% endif %}{% endif %}
+          <span class="adm-muted">· notifications the quota could not send — re-tried next cycle, longest wait first · an hourly wall clears within the hour, a daily wall waits for the rolling 24h window</span></td>
       </tr>
       {# per-provider rows follow in EMAIL_PROVIDER_ORDER — the fallback chain #}
       {% for p, u in s.email_usage.items() %}

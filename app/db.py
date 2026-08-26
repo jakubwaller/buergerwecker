@@ -3,7 +3,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS subscriptions (
@@ -60,6 +60,23 @@ CREATE TABLE IF NOT EXISTS email_deferral_counts (
   day TEXT PRIMARY KEY,
   n   INTEGER NOT NULL DEFAULT 0
 );
+
+-- One row per cycle that deferred, saying which wall it hit. The counter above
+-- cannot tell a deferral against Mailjet's hourly warm-up cap — cleared by the
+-- next cycle, nobody notices — from one against the combined daily pool, which
+-- holds until the rolling 24h window frees a slot, by which time the
+-- appointment is usually gone. `wall` is 'hourly', 'daily' or 'outage' (every
+-- provider with room failed at the HTTP level); `frees_at` is when the
+-- tightest-bound provider gets one slot back, i.e. the earliest a retry can
+-- succeed. Pruned after 90 days; the per-day counter keeps the totals.
+CREATE TABLE IF NOT EXISTS email_deferrals (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  n        INTEGER NOT NULL,
+  wall     TEXT NOT NULL,
+  frees_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_email_deferrals_at ON email_deferrals(at);
 
 -- Per-address delivery failures. A provider that parses our request and still
 -- rejects it (HTTP 400/422) is refusing the recipient, not failing itself; once
