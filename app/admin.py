@@ -662,6 +662,11 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
                    "WHERE last_notified_at > datetime('now','-7 days')"),
         "subscribers_ever_notified":
             scalar("SELECT COUNT(*) FROM subscriptions WHERE last_notified_at IS NOT NULL"),
+        # Expired without answering the check-in: no digests, /renew still
+        # works until housekeeping deletes them after EXPIRED_GRACE_DAYS.
+        "paused_in_grace":
+            scalar("SELECT COUNT(*) FROM subscriptions WHERE deleted_at IS NULL "
+                   "AND confirmed_at IS NOT NULL AND expires_at <= CURRENT_TIMESTAMP"),
         "active_awaiting_first_match":
             scalar("SELECT COUNT(*) FROM subscriptions WHERE deleted_at IS NULL "
                    "AND confirmed_at IS NOT NULL AND expires_at > CURRENT_TIMESTAMP "

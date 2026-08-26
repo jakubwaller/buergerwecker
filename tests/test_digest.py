@@ -285,3 +285,37 @@ def test_digest_subject_names_city():
                 matched_slots=[Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")],
                 cycle_id="c1", cfg=cfg, sink=sink)
     assert sink[0].item.subject == "Neue Termine in Leipzig verfügbar"
+
+
+# ---------- the "only certain times?" nudge ----------
+
+def test_digest_nudges_toward_the_filter_when_given_a_manage_link():
+    slots = [Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")]
+    text = render_digest_text(
+        _sub("de"), slots, unsubscribe_url="https://x/unsubscribe/tok",
+        public_base_url="https://x", kofi_url="https://ko-fi.com/me",
+        catalog=_cat(), manage_url="https://x/manage/tok")
+    assert "Nur bestimmte Tage oder Zeiten? Filter anpassen: https://x/manage/tok" in text
+    # Above the unsubscribe line, where the eye lands looking for a way out.
+    assert text.index("Filter anpassen") < text.index("Abmelden:")
+    text_en = render_digest_text(
+        _sub("en"), slots, unsubscribe_url="https://x/unsubscribe/tok",
+        public_base_url="https://x", kofi_url="https://ko-fi.com/me",
+        catalog=_cat(), manage_url="https://x/manage/tok")
+    assert "Only certain days or times? Adjust your filter: https://x/manage/tok" in text_en
+    # Callers without a link (one-off renders) get no dangling sentence.
+    assert "Filter anpassen" not in _render(_sub("de"), slots, catalog=_cat())
+
+
+def test_send_digest_signs_a_manage_link_into_every_digest():
+    from app.digest import send_digest
+    from types import SimpleNamespace
+    conn = connect(":memory:")
+    init_schema(conn)
+    cfg = SimpleNamespace(token_secret_primary="x" * 32, token_secret_previous="",
+                          public_base_url="https://x", kofi_url="https://ko-fi.com/me")
+    sink = []
+    send_digest(conn=conn, subscription=_sub("de"),
+                matched_slots=[Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")],
+                cycle_id="c1", cfg=cfg, sink=sink)
+    assert "Filter anpassen: https://x/manage/" in sink[0].item.body

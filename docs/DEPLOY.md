@@ -343,6 +343,36 @@ complaint arrived, so they sign up again as a new subscriber.
 Both send paths honour the list — `send_batch` via `_dead_addresses` and the
 transactional `send()` via its own check. Do not add a third.
 
+## Subscription term & the "still looking?" check-in
+
+A subscription's term is short on purpose. Most people never click *Abmelden* after they have
+booked, and a booked person drawing two digests a day is both wasted quota and the shape of mail
+that draws spam complaints. So instead of waiting for an unsubscribe, the service asks:
+
+- `SUBSCRIPTION_TTL_DAYS` (14) — the term from sign-up or renewal.
+- `RENEWAL_REMINDER_DAYS_BEFORE` (3) — this many days before the term ends, housekeeping sends one
+  *Suchst du noch einen Termin?* mail with two one-click answers: *weiter* (`/renew`, starts a new
+  term) and *hab einen* (`/unsubscribe`), plus a *Filter anpassen* link for people holding out for
+  particular days or times. Once per term; `/renew` re-arms it.
+- No answer → the subscription expires: digests stop, nothing is deleted yet.
+- `EXPIRED_GRACE_DAYS` (optional, 14) — how long an expired subscription stays paused with its
+  *weiter* link still working before housekeeping deletes it. `/admin` shows the count as
+  **Paused**.
+- `SENSITIVE_SUBSCRIPTION_TTL_DAYS` (optional, 30) is the *shorter* term for Art. 9 subscriptions
+  and never exceeds the ordinary one — with the ordinary term at 14, both are 14.
+
+**Lowering the term reaches existing subscriptions.** The configured term is a ceiling on
+everyone's remaining time, not just a default for new sign-ups: the next housekeeping run pulls
+every longer expiry in to `now + SUBSCRIPTION_TTL_DAYS` (it never pushes one out). So after a
+deploy that drops the term from 90 to 14, expect one check-in mail per active subscription in a
+single day, `SUBSCRIPTION_TTL_DAYS − RENEWAL_REMINDER_DAYS_BEFORE` days later (11 with the
+defaults), on top of the digests — a burst sized like the active base, counted against the
+providers' daily pool like any other send. Digests to anyone who does not answer stop three days
+after that.
+
+The Datenschutz page reads all three periods from config, so it cannot promise a term the
+deploy no longer keeps.
+
 ## Polling cadence
 
 The poller wakes once a minute, but each tenant can set

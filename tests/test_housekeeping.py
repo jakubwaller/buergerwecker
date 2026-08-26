@@ -83,7 +83,16 @@ def test_ops_summary_anomaly_sends_despite_recent_heartbeat(db):
     assert "need a look" in subject
     assert "backup is stale" in body
 
-def test_expired_subscriptions_soft_deleted(db):
+def _days_left(db, sid):
+    return db.execute("SELECT julianday(expires_at) - julianday('now') AS d "
+                      "FROM subscriptions WHERE id=?", (sid,)).fetchone()["d"]
+
+
+def test_expired_subscription_is_paused_not_deleted(db):
+    """Expiry is the "no answer" branch of the still-looking check-in: digests
+    stop, but the row stays for EXPIRED_GRACE_DAYS so the "weiter" link in
+    that mail is not dead the morning after."""
+    from app.repo import active_subscriptions
     sid = insert_pending(db, email="a@x.com", city="leipzig", language="de",
                          filter_=_f(), ttl_days=90)
     confirm(db, sid)
@@ -91,7 +100,59 @@ def test_expired_subscriptions_soft_deleted(db):
     with patch("app.mail.send"):
         run_once(db)
     row = db.execute("SELECT deleted_at FROM subscriptions WHERE id=?", (sid,)).fetchone()
+    assert row["deleted_at"] is None
+    assert [s.id for s in active_subscriptions(db)] == []
+
+
+def test_expired_subscription_deleted_after_grace(db, monkeypatch):
+    monkeypatch.setenv("EXPIRED_GRACE_DAYS", "3")
+    sid = insert_pending(db, email="a@x.com", city="leipzig", language="de",
+                         filter_=_f(), ttl_days=90)
+    confirm(db, sid)
+    db.execute("UPDATE subscriptions SET expires_at=datetime('now','-4 days') WHERE id=?", (sid,))
+    with patch("app.mail.send"):
+        run_once(db)
+    row = db.execute("SELECT deleted_at FROM subscriptions WHERE id=?", (sid,)).fetchone()
     assert row["deleted_at"] is not None
+
+
+def test_lowering_the_term_pulls_existing_expiries_in(db, monkeypatch):
+    """SUBSCRIPTION_TTL_DAYS is a ceiling on everyone's remaining time: a
+    deploy that shortens it must reach the subscriptions already on the old
+    term, or the dead weight it exists to shed stays for the old 90 days."""
+    sid = insert_pending(db, email="a@x.com", city="leipzig", language="de",
+                         filter_=_f(), ttl_days=90)
+    confirm(db, sid)
+    monkeypatch.setenv("SUBSCRIPTION_TTL_DAYS", "14")
+    with patch("app.mail.send"):
+        run_once(db)
+    assert 13 < _days_left(db, sid) <= 14
+
+
+def test_clamp_never_extends(db, monkeypatch):
+    sid = insert_pending(db, email="a@x.com", city="leipzig", language="de",
+                         filter_=_f(), ttl_days=90)
+    confirm(db, sid)
+    db.execute("UPDATE subscriptions SET expires_at=datetime('now','+20 days') WHERE id=?", (sid,))
+    monkeypatch.setenv("SUBSCRIPTION_TTL_DAYS", "60")
+    with patch("app.mail.send"):
+        run_once(db)
+    assert 19 < _days_left(db, sid) <= 20
+
+
+def test_sensitive_term_never_outlives_the_ordinary_one(db, monkeypatch):
+    """SENSITIVE_SUBSCRIPTION_TTL_DAYS (30) is meant as the *shorter* term;
+    with the ordinary term at 14 it must not become the longer one."""
+    sid = insert_pending(db, email="a@x.com", city="leipzig", language="de",
+                         filter_=_f(), ttl_days=30)
+    confirm(db, sid)
+    db.execute("UPDATE subscriptions SET consent_special_at=CURRENT_TIMESTAMP WHERE id=?",
+               (sid,))
+    monkeypatch.setenv("SUBSCRIPTION_TTL_DAYS", "14")
+    monkeypatch.setenv("SENSITIVE_SUBSCRIPTION_TTL_DAYS", "30")
+    with patch("app.mail.send"):
+        run_once(db)
+    assert 13 < _days_left(db, sid) <= 14
 
 def test_old_deleted_rows_hard_purged(db):
     sid = insert_pending(db, email="a@x.com", city="leipzig", language="de",
@@ -134,13 +195,73 @@ def test_bounce_counter_survives_while_someone_still_subscribes(db):
     assert row is not None and row["failures"] == 3
 
 
-def test_renewal_reminder_sent_in_window(db):
+def _mails_to(send, addr):
+    return [c for c in send.call_args_list if c.args[1] == addr]
+
+
+def test_checkin_asks_with_two_one_click_answers(db):
     sid = insert_pending(db, email="a@x.com", city="leipzig", language="de",
                          filter_=_f(), ttl_days=90)
     confirm(db, sid)
-    # Move expires_at to 5 days from now (within 10-day reminder window)
+    # Move expires_at to 5 days from now (within the 10-day reminder window)
     db.execute("UPDATE subscriptions SET expires_at=datetime('now','+5 days') WHERE id=?", (sid,))
     with patch("app.mail.send") as send:
         run_once(db)
-    # send() should be called at least once (for renewal reminder)
-    assert send.called
+    (call,) = _mails_to(send, "a@x.com")
+    subj, body = call.args[2], call.args[3]
+    assert subj == "Suchst du noch einen Termin in Leipzig?"
+    assert "https://x/renew/" in body
+    assert "https://x/unsubscribe/" in body
+    assert "https://x/manage/" in body          # the "only certain times?" nudge
+    # One-click unsubscribe header too, like every other subscriber mail.
+    assert call.kwargs["unsub_url"].startswith("https://x/unsubscribe/")
+    # Dates in the mail: when digests stop, and until when "weiter" still works.
+    expires = db.execute("SELECT expires_at FROM subscriptions WHERE id=?",
+                         (sid,)).fetchone()["expires_at"]
+    stop = datetime.fromisoformat(expires[:19]).date()
+    assert stop.strftime("%d.%m.%Y") in body
+    assert (stop + timedelta(days=14)).strftime("%d.%m.%Y") in body
+    # The idempotency key names the term, so the next term's mail is not
+    # swallowed by this one's record while it is still in sent_idempotency.
+    db.execute("UPDATE subscriptions SET reminder_sent_at=NULL, "
+               "expires_at=datetime('now','+6 days') WHERE id=?", (sid,))
+    with patch("app.mail.send") as send2:
+        run_once(db)
+    (call2,) = _mails_to(send2, "a@x.com")
+    assert call2.kwargs["idem_key"] != call.kwargs["idem_key"]
+
+
+def test_checkin_asks_once_per_term(db):
+    sid = insert_pending(db, email="a@x.com", city="leipzig", language="de",
+                         filter_=_f(), ttl_days=90)
+    confirm(db, sid)
+    db.execute("UPDATE subscriptions SET expires_at=datetime('now','+5 days') WHERE id=?", (sid,))
+    with patch("app.mail.send") as send:
+        run_once(db)
+        run_once(db)
+    assert len(_mails_to(send, "a@x.com")) == 1
+
+
+def test_checkin_in_english(db):
+    sid = insert_pending(db, email="a@x.com", city="leipzig", language="en",
+                         filter_=_f(), ttl_days=90)
+    confirm(db, sid)
+    db.execute("UPDATE subscriptions SET expires_at=datetime('now','+5 days') WHERE id=?", (sid,))
+    with patch("app.mail.send") as send:
+        run_once(db)
+    (call,) = _mails_to(send, "a@x.com")
+    assert call.args[2] == "Still looking for an appointment in Leipzig?"
+    assert "Yes, keep looking: https://x/renew/" in call.args[3]
+
+
+def test_paused_subscription_gets_no_heartbeat(db):
+    """The 30-day "you're still subscribed" heartbeat must not go to someone
+    whose subscription has expired and is only waiting out the grace."""
+    sid = insert_pending(db, email="a@x.com", city="leipzig", language="de",
+                         filter_=_f(), ttl_days=90)
+    confirm(db, sid)
+    db.execute("UPDATE subscriptions SET confirmed_at=datetime('now','-40 days'), "
+               "expires_at=datetime('now','-1 day') WHERE id=?", (sid,))
+    with patch("app.mail.send") as send:
+        run_once(db)
+    assert _mails_to(send, "a@x.com") == []

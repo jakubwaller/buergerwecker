@@ -33,7 +33,8 @@ def _format_date(date_str: str, lang: str) -> str:
 def render_digest_text(sub: Subscription, slots: list[Slot], *,
                        unsubscribe_url: str, public_base_url: str,
                        kofi_url: str, catalog=None,
-                       booking_url: str | None = None) -> str:
+                       booking_url: str | None = None,
+                       manage_url: str | None = None) -> str:
     lang = sub.language
     # Resolve the catalog for uuid->name lookups. This must never block a
     # notification: an unknown city or missing catalog files degrades to
@@ -160,6 +161,11 @@ def render_digest_text(sub: Subscription, slots: list[Slot], *,
 
     lines.append(t(lang, "digest.burst_warning"))
     lines.append(t(lang, "digest.no_repeat_note"))
+    # Somebody holding out for a Thursday afternoon should say so in the
+    # filter rather than sit on two digests a day ignoring them — that
+    # keeps the still-looking check-in's silence meaning what it says.
+    if manage_url:
+        lines.append(t(lang, "digest.manage_hint", manage_url=manage_url))
     lines.append("")
     lines.append(t(lang, "digest.unsubscribe", unsubscribe_url=unsubscribe_url))
     lines.append("")
@@ -204,6 +210,10 @@ def send_digest(*, conn: sqlite3.Connection, subscription: Subscription,
                        primary=cfg.token_secret_primary,
                        previous=cfg.token_secret_previous)
     unsub_url = f"{cfg.public_base_url}/unsubscribe/{unsub_token}"
+    manage_token = sign(subscription.id, "manage",
+                        primary=cfg.token_secret_primary,
+                        previous=cfg.token_secret_previous)
+    manage_url = f"{cfg.public_base_url}/manage/{manage_token}"
     # Special-category subscriptions get a booking link that carries only a
     # signed subscription id, so the Amt isn't spelled out in the URL either.
     catalog = None
@@ -225,7 +235,8 @@ def send_digest(*, conn: sqlite3.Connection, subscription: Subscription,
                               public_base_url=cfg.public_base_url,
                               kofi_url=cfg.kofi_url,
                               catalog=catalog,
-                              booking_url=booking_url)
+                              booking_url=booking_url,
+                              manage_url=manage_url)
     from app.catalog import city_display_name
     city_name = city_display_name(subscription.city, subscription.language)
     subj = (t(subscription.language, "digest.subject_city", city=city_name)

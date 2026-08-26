@@ -12,7 +12,7 @@ from html import escape
 from pathlib import Path
 from flask import (Flask, Response, request, render_template, redirect,
                    send_from_directory)
-from app.config import load_config
+from app.config import load_config, ttl_days_for
 from app.db import connect, transaction
 from app.catalog import (load_catalog, available_cities, booking_start_url,
                          city_display_name, CatalogError)
@@ -95,12 +95,14 @@ _RESULT_MESSAGES: dict[str, dict] = {
     },
     "renewed": {
         "kind": "success",
-        "de": ("Verlängert", "Abo verlängert",
-               "Dein Abonnement wurde verlängert. Du erhältst weiterhin "
-               "Benachrichtigungen über freie Termine."),
-        "en": ("Renewed", "Subscription renewed",
-               "Your subscription has been renewed. You'll keep receiving "
-               "notifications about available appointments."),
+        "de": ("Weiter geht's", "Wir suchen weiter",
+               "Alles klar — du bekommst weiterhin Benachrichtigungen über "
+               "freie Termine. Kurz vor Ablauf fragen wir wieder nach, ob du "
+               "noch suchst."),
+        "en": ("Still looking", "We'll keep looking",
+               "Got it — you'll keep receiving notifications about available "
+               "appointments. Shortly before they would stop, we'll ask again "
+               "whether you're still looking."),
     },
     "link_expired": {
         "kind": "error",
@@ -827,9 +829,7 @@ def create_app() -> Flask:
                 return _result_page("waitlist_full", lang, status=503)
             sub_id = insert_pending(conn, email=email, city=city,
                                     language=lang, filter_=f,
-                                    ttl_days=(cfg.sensitive_subscription_ttl_days
-                                              if sensitive
-                                              else cfg.subscription_ttl_days),
+                                    ttl_days=ttl_days_for(cfg, sensitive),
                                     consent_special=sensitive)
             # A bounce, or a run of provider rejections, only ever claimed the
             # mailbox was broken *then*; a completed sign-up is the evidence it
@@ -965,11 +965,11 @@ def create_app() -> Flask:
                 # Switching into a special-category service also pulls the
                 # expiry in to the shorter retention — never pushes it out, so
                 # this can't be used to extend an ordinary subscription.
+                short = ttl_days_for(cfg, True)
                 conn.execute(
                     "UPDATE subscriptions SET expires_at=datetime('now', ?) "
                     "WHERE id=? AND expires_at > datetime('now', ?)",
-                    (f"+{cfg.sensitive_subscription_ttl_days} days", sub_id,
-                     f"+{cfg.sensitive_subscription_ttl_days} days"),
+                    (f"+{short} days", sub_id, f"+{short} days"),
                 )
             back_label = ("Zurück zu den Einstellungen" if lang == "de"
                           else "Back to your settings")
@@ -1004,19 +1004,29 @@ def create_app() -> Flask:
                                 request.args.get("lang", "de"), status=400)
         conn = connect(cfg.db_path)
         row = conn.execute(
-            "SELECT language, consent_special_at FROM subscriptions WHERE id=?",
+            "SELECT language, consent_special_at, deleted_at "
+            "FROM subscriptions WHERE id=?",
             (sid,)).fetchone()
+        lang = request.args.get("lang") or (row["language"] if row else "de")
+        # An expired subscription is only paused: it stays renewable for
+        # EXPIRED_GRACE_DAYS. Once housekeeping has deleted it the link is
+        # still cryptographically valid but there is nothing to revive, and
+        # a "renewed" page over a 0-row UPDATE would be a lie.
+        if row is None or row["deleted_at"] is not None:
+            return _result_page("not_found", lang, status=404)
         # A special-category subscription renews for its own shorter term —
-        # otherwise the renewal link would quietly promote it to 90 days.
-        ttl = (cfg.sensitive_subscription_ttl_days
-               if row and row["consent_special_at"] is not None
-               else cfg.subscription_ttl_days)
+        # otherwise the renewal link would quietly promote it to the
+        # ordinary one.
+        ttl = ttl_days_for(cfg, row["consent_special_at"] is not None)
+        # reminder_sent_at is the once-per-term latch of the still-looking
+        # check-in. Without clearing it here a renewed subscription would
+        # never be asked again and would expire silently at the end of the
+        # next term.
         conn.execute(
-            "UPDATE subscriptions SET expires_at=datetime('now', ?) "
-            "WHERE id=? AND deleted_at IS NULL",
+            "UPDATE subscriptions SET expires_at=datetime('now', ?), "
+            "reminder_sent_at=NULL WHERE id=? AND deleted_at IS NULL",
             (f"+{ttl} days", sid),
         )
-        lang = request.args.get("lang") or (row["language"] if row else "de")
         return _result_page("renewed", lang)
 
     @app.route("/go/sub/<token>")
@@ -1100,7 +1110,13 @@ def create_app() -> Flask:
 
     @app.route("/datenschutz")
     def datenschutz_route():
-        return render_template("datenschutz.html", lang=request.args.get("lang", "de"))
+        cfg = app.config["TERMINE_CONFIG"]
+        # The retention periods on the page are the configured ones, so a
+        # changed .env cannot leave the privacy notice promising the old term.
+        return render_template("datenschutz.html", lang=request.args.get("lang", "de"),
+                               ttl_days=ttl_days_for(cfg, False),
+                               sensitive_ttl_days=ttl_days_for(cfg, True),
+                               grace_days=cfg.expired_grace_days)
 
     @app.route("/impressum")
     def impressum_route():

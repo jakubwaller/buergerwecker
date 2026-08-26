@@ -14,6 +14,7 @@
   "digest.no_deeplink_note": "(The city's booking software unfortunately does not support direct links to individual appointments.)",
   "digest.burst_warning": "Open appointments are often taken quickly — book right away if one fits.",
   "digest.no_repeat_note": "Note: each email only lists appointments that are new since your last notification. Previously reported ones may still be available.",
+  "digest.manage_hint": "Only certain days or times? Adjust your filter: {manage_url}",
   "digest.unsubscribe": "Unsubscribe: {unsubscribe_url}",
   "digest.kofi": "Did this notification help? You can buy me a coffee: {kofi_url} (only if you want — the service stays free.)",
   "digest.selection_window_label": "Window",

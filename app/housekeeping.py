@@ -7,6 +7,7 @@ from app.config import load_config
 from app import mail as _mail
 from app.mail import _idem_key
 from app.tokens import sign
+from app.config import ttl_days_for
 
 def mail_send(*args, **kwargs):
     # Indirect through the module so tests can patch `app.mail.send`.
@@ -15,7 +16,8 @@ def mail_send(*args, **kwargs):
 def run_once(conn: sqlite3.Connection) -> None:
     cfg = load_config()
     _purge_hard(conn)
-    _soft_delete_expired(conn)
+    _clamp_expiry(conn, cfg)
+    _soft_delete_expired(conn, cfg)
     _send_renewal_reminders(conn, cfg)
     _send_heartbeats(conn, cfg, milestone_days=30, milestone_col="heartbeat_30d_at")
     _send_heartbeats(conn, cfg, milestone_days=60, milestone_col="heartbeat_60d_at")
@@ -43,42 +45,121 @@ def _purge_hard(conn):
                  "WHERE deleted_at IS NOT NULL "
                  "AND deleted_at < datetime('now','-30 days')")
 
-def _soft_delete_expired(conn):
+def _clamp_expiry(conn, cfg):
+    """The configured term is a ceiling on everyone's remaining time, not just
+    a default for new sign-ups. Lowering SUBSCRIPTION_TTL_DAYS in .env would
+    otherwise leave every existing subscription on its old, longer term — the
+    dead weight the shorter term exists to shed — until it ran out on its
+    own. Only ever pulls an expiry in; a raised term does not extend anyone
+    without them clicking through the check-in."""
+    for sensitive, cond in ((False, "consent_special_at IS NULL"),
+                            (True, "consent_special_at IS NOT NULL")):
+        days = f"+{ttl_days_for(cfg, sensitive)} days"
+        conn.execute(
+            f"UPDATE subscriptions SET expires_at=datetime('now', ?) "
+            f"WHERE deleted_at IS NULL AND {cond} "
+            f"AND expires_at > datetime('now', ?)",
+            (days, days),
+        )
+
+def _soft_delete_expired(conn, cfg):
+    """Expiry pauses; deletion comes EXPIRED_GRACE_DAYS later. An expired
+    subscription gets no digests (repo.active_subscriptions filters on
+    expires_at) but its `/renew` link still works, so the check-in's "weiter"
+    link is not dead the morning after the deadline in the mail."""
     conn.execute("UPDATE subscriptions SET deleted_at=CURRENT_TIMESTAMP "
-                 "WHERE deleted_at IS NULL AND expires_at < CURRENT_TIMESTAMP")
+                 "WHERE deleted_at IS NULL AND expires_at < datetime('now', ?)",
+                 (f"-{cfg.expired_grace_days} days",))
 
 def _send_renewal_reminders(conn, cfg):
+    """The still-looking check-in. A subscription's term is short on purpose:
+    most people never click "Abmelden" after they have booked, and a booked
+    person drawing two digests a day is both wasted quota and the shape of
+    mail that draws spam complaints. So shortly before the term ends we ask —
+    one mail, two one-click answers — and doing nothing means "I'm done":
+    digests stop at expiry. The "weiter" link keeps working for
+    EXPIRED_GRACE_DAYS after that (see _soft_delete_expired).
+
+    reminder_sent_at is the once-per-term latch; /renew clears it, so every
+    term asks exactly once. The idempotency key carries the expiry date for
+    the same reason — the bare id would collide with the previous term's key
+    while it is still in sent_idempotency."""
+    from app.catalog import city_display_name
+    from app.db import transaction
     rows = conn.execute(
-        "SELECT id, email, language FROM subscriptions "
+        "SELECT id, email, language, city, expires_at FROM subscriptions "
         "WHERE deleted_at IS NULL AND confirmed_at IS NOT NULL "
         "AND reminder_sent_at IS NULL "
         "AND expires_at BETWEEN CURRENT_TIMESTAMP AND datetime('now', ?)",
         (f"+{cfg.renewal_reminder_days_before} days",),
     ).fetchall()
     for row in rows:
-        tok = sign(row["id"], "renew",
-                   primary=cfg.token_secret_primary,
-                   previous=cfg.token_secret_previous)
-        url = f"{cfg.public_base_url}/renew/{tok}"
-        body = (f"Dein Abonnement läuft bald ab. Verlängern: {url}"
-                if row["language"] == "de" else
-                f"Your subscription will expire soon. Renew: {url}")
-        subj = ("Abonnement läuft bald ab" if row["language"] == "de"
-                else "Subscription expiring soon")
-        from app.db import transaction
+        lang = "en" if row["language"] == "en" else "de"
+        links = {}
+        for purpose in ("renew", "unsubscribe", "manage"):
+            tok = sign(row["id"], purpose,
+                       primary=cfg.token_secret_primary,
+                       previous=cfg.token_secret_previous)
+            links[purpose] = f"{cfg.public_base_url}/{purpose}/{tok}"
+        subj, body = _checkin_mail(
+            lang, city=city_display_name(row["city"], lang),
+            expires_at=row["expires_at"], grace_days=cfg.expired_grace_days,
+            renew_url=links["renew"], unsub_url=links["unsubscribe"],
+            manage_url=links["manage"])
         try:
             with transaction(conn):
                 # Mark sent BEFORE the API call: the idempotency table in
-                # mail.py prevents a second Mailjet call, and this transaction
+                # mail.py prevents a second provider call, and this transaction
                 # ensures the reminder_sent_at flag is visible even if the
                 # process is killed right after the API call returns.
                 conn.execute("UPDATE subscriptions SET reminder_sent_at=CURRENT_TIMESTAMP "
                              "WHERE id=?", (row["id"],))
                 mail_send(conn, row["email"], subj, body,
-                          idem_key=_idem_key(row["id"], [], f"renewal-{row['id']}"))
+                          idem_key=_idem_key(row["id"], [],
+                                             f"renewal-{row['id']}-{row['expires_at'][:10]}"),
+                          unsub_url=links["unsubscribe"])
         except Exception:
             # transaction rolled back; the row is eligible for retry next pass.
             pass
+
+def _checkin_mail(lang: str, *, city: str | None, expires_at: str,
+                  grace_days: int, renew_url: str, unsub_url: str,
+                  manage_url: str) -> tuple[str, str]:
+    """Subject and plain-text body of the still-looking check-in."""
+    stop = datetime.fromisoformat(expires_at[:19]).date()
+    resume_until = stop + timedelta(days=grace_days)
+    if lang == "en":
+        where = f" in {city}" if city else ""
+        fmt = lambda d: f"{d.day} {d.strftime('%B %Y')}"  # noqa: E731
+        subj = f"Still looking for an appointment{where}?"
+        body = (
+            f"Still looking for an appointment{where}?\n"
+            f"\n"
+            f"Yes, keep looking: {renew_url}\n"
+            f"No, I've got one: {unsub_url}\n"
+            f"\n"
+            f"If you do nothing, the notifications stop on {fmt(stop)}. "
+            f"Until {fmt(resume_until)} the first link switches them back on.\n"
+            f"\n"
+            f"Only certain days or times? Adjust your filter: {manage_url}\n"
+        )
+    else:
+        where = f" in {city}" if city else ""
+        fmt = lambda d: d.strftime("%d.%m.%Y")  # noqa: E731
+        subj = f"Suchst du noch einen Termin{where}?"
+        body = (
+            f"Suchst du noch einen Termin{where}?\n"
+            f"\n"
+            f"Ja, weiter suchen: {renew_url}\n"
+            f"Nein, ich habe einen: {unsub_url}\n"
+            f"\n"
+            f"Ohne Antwort stoppen die Benachrichtigungen am {fmt(stop)}. "
+            f"Bis {fmt(resume_until)} kannst du sie mit dem ersten Link wieder "
+            f"einschalten.\n"
+            f"\n"
+            f"Nur bestimmte Tage oder Zeiten? Filter anpassen: {manage_url}\n"
+        )
+    return subj, body
 
 def _send_heartbeats(conn, cfg, *, milestone_days: int, milestone_col: str):
     # Send to subscribers who are past the milestone age AND haven't been
@@ -88,6 +169,7 @@ def _send_heartbeats(conn, cfg, *, milestone_days: int, milestone_col: str):
     rows = conn.execute(
         f"SELECT id, email, language FROM subscriptions "
         f"WHERE deleted_at IS NULL AND confirmed_at IS NOT NULL "
+        f"AND expires_at > CURRENT_TIMESTAMP "
         f"AND {milestone_col} IS NULL "
         f"AND (last_notified_at IS NULL "
         f"     OR last_notified_at < datetime('now','-{milestone_days} days')) "
