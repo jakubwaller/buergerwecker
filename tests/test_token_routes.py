@@ -240,3 +240,66 @@ def test_filter_edit_clears_the_abundance_measurement(tmp_path, monkeypatch):
         (sid,)).fetchone()
     assert row["last_match_count"] is None
     assert loc_uuid in row["filters_json"]      # the edit really landed
+
+
+# ---------- /renew: the "weiter" answer of the still-looking check-in ----------
+
+def _confirmed(client):
+    from unittest.mock import patch
+    c, sid = client
+    with patch("app.web._send_manage_link_email"):
+        c.get(f"/confirm/{_sign(sid, 'confirm')}")
+    from app.db import connect
+    return c, sid, connect(os.environ["DB_PATH"])
+
+
+def _days_left(conn, sid):
+    return conn.execute("SELECT julianday(expires_at) - julianday('now') AS d "
+                        "FROM subscriptions WHERE id=?", (sid,)).fetchone()["d"]
+
+
+def test_renew_extends_and_rearms_the_checkin(client):
+    """Without clearing reminder_sent_at a renewed subscription would never
+    be asked again and would expire silently at the end of the next term."""
+    c, sid, conn = _confirmed(client)
+    conn.execute("UPDATE subscriptions SET expires_at=datetime('now','+2 days'), "
+                 "reminder_sent_at=CURRENT_TIMESTAMP WHERE id=?", (sid,))
+    r = c.get(f"/renew/{_sign(sid, 'renew')}")
+    assert r.status_code == 200
+    assert "Wir suchen weiter".encode() in r.data
+    row = conn.execute("SELECT reminder_sent_at FROM subscriptions WHERE id=?",
+                       (sid,)).fetchone()
+    assert row["reminder_sent_at"] is None
+    assert 89 < _days_left(conn, sid) <= 90
+
+
+def test_renew_revives_a_paused_subscription(client):
+    """Expired but not yet deleted: the link from the check-in still works."""
+    c, sid, conn = _confirmed(client)
+    conn.execute("UPDATE subscriptions SET expires_at=datetime('now','-1 day') WHERE id=?",
+                 (sid,))
+    r = c.get(f"/renew/{_sign(sid, 'renew')}")
+    assert r.status_code == 200
+    assert _days_left(conn, sid) > 0
+
+
+def test_renew_after_deletion_is_not_found(client):
+    """A valid token over a deleted row must not show a "renewed" page over a
+    0-row UPDATE."""
+    c, sid, conn = _confirmed(client)
+    conn.execute("UPDATE subscriptions SET deleted_at=CURRENT_TIMESTAMP WHERE id=?", (sid,))
+    r = c.get(f"/renew/{_sign(sid, 'renew')}")
+    assert r.status_code == 404
+
+
+def test_datenschutz_states_the_configured_terms(client):
+    """The retention periods on the privacy page come from config, so a
+    changed .env cannot leave the page promising the old term."""
+    c, _sid = client        # fixture: TTL 90, sensitive default 30, grace default 14
+    de = c.get("/datenschutz").data.decode()
+    assert "laufen 90 Tage nach der Anmeldung" in de
+    assert "nach 30 Tagen" in de
+    assert "pausiert 14 Tage" in de
+    en = c.get("/datenschutz?lang=en").data.decode()
+    assert "expire automatically 90 days after sign-up" in en
+    assert "paused for 14 days" in en

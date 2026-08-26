@@ -14,6 +14,7 @@
   "digest.no_deeplink_note": "(Ein Direktlink zu einzelnen Terminen ist bei der Terminvergabe-Software der Stadt leider technisch nicht möglich.)",
   "digest.burst_warning": "Freie Termine sind oft schnell vergriffen — am besten gleich buchen.",
   "digest.no_repeat_note": "Hinweis: Jede E-Mail enthält nur neue Termine seit deiner letzten Benachrichtigung. Früher gemeldete Termine können ebenfalls noch frei sein.",
+  "digest.manage_hint": "Nur bestimmte Tage oder Zeiten? Filter anpassen: {manage_url}",
   "digest.unsubscribe": "Abmelden: {unsubscribe_url}",
   "digest.kofi": "Hat dir diese Benachrichtigung geholfen? Du kannst mir einen Kaffee spendieren: {kofi_url} (aber nur, wenn du magst — der Dienst bleibt kostenlos.)",
   "digest.selection_window_label": "Zeitraum",

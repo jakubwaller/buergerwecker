@@ -110,3 +110,42 @@ def test_load_config_int_error_names_the_var(monkeypatch):
     monkeypatch.setenv("DEDUP_WINDOW_HOURS", "not-a-number")
     with pytest.raises(ValueError, match="DEDUP_WINDOW_HOURS"):
         load_config()
+
+
+def _minimal_env(monkeypatch, **overrides):
+    env = {
+        "MAILJET_API_KEY": "mj_key", "MAILJET_API_SECRET": "mj_secret",
+        "MAILJET_FROM_EMAIL": "termine@example.eu", "MAILJET_FROM_NAME": "Termine",
+        "MAILJET_DAILY_QUOTA": "6000", "TOKEN_SECRET_PRIMARY": "a" * 32,
+        "TOKEN_SECRET_PREVIOUS": "", "ADMIN_TOKEN": "b" * 32,
+        "PUBLIC_BASE_URL": "https://termine.example.eu", "DEDUP_WINDOW_HOURS": "24",
+        "RATE_LIMIT_MINUTES": "15", "SUBSCRIPTION_TTL_DAYS": "90",
+        "RENEWAL_REMINDER_DAYS_BEFORE": "10", "MAX_PLANS_PER_CITY": "10",
+        "PARSER_CANARY_THRESHOLD_HOURS": "2", "SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR": "5",
+        "SUBSCRIBE_RATELIMIT_PER_EMAIL_PER_DAY": "1", "DEVELOPER_EMAIL": "dev@example.eu",
+        "KOFI_URL": "https://ko-fi.com/jakubwaller", "DB_PATH": "/tmp/test.db",
+    }
+    env.update(overrides)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("EXPIRED_GRACE_DAYS", raising=False)
+    monkeypatch.delenv("SENSITIVE_SUBSCRIPTION_TTL_DAYS", raising=False)
+
+
+def test_expired_grace_days_is_optional(monkeypatch):
+    _minimal_env(monkeypatch)
+    assert load_config().expired_grace_days == 14
+    monkeypatch.setenv("EXPIRED_GRACE_DAYS", "3")
+    assert load_config().expired_grace_days == 3
+
+
+def test_sensitive_term_is_the_shorter_of_the_two(monkeypatch):
+    from app.config import ttl_days_for
+    _minimal_env(monkeypatch, SUBSCRIPTION_TTL_DAYS="90")
+    cfg = load_config()
+    assert ttl_days_for(cfg, False) == 90
+    assert ttl_days_for(cfg, True) == 30
+    _minimal_env(monkeypatch, SUBSCRIPTION_TTL_DAYS="14")
+    cfg = load_config()
+    assert ttl_days_for(cfg, False) == 14
+    assert ttl_days_for(cfg, True) == 14

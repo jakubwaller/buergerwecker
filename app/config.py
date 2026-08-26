@@ -35,6 +35,7 @@ class Config:
     subscription_ttl_days: int
     sensitive_subscription_ttl_days: int
     renewal_reminder_days_before: int
+    expired_grace_days: int
     max_plans_per_city: int
     parser_canary_threshold_hours: int
     subscribe_ratelimit_per_ip_per_hour: int
@@ -57,6 +58,16 @@ def _req_int(key: str) -> int:
         return int(raw)
     except ValueError:
         raise ValueError(f"Env var {key} must be an integer, got: {raw!r}")
+
+def ttl_days_for(cfg, sensitive: bool) -> int:
+    """Days a subscription lives from sign-up or renewal. A special-category
+    subscription never outlives an ordinary one: SENSITIVE_SUBSCRIPTION_TTL_DAYS
+    is meant as the shorter term, so if a deploy lowers SUBSCRIPTION_TTL_DAYS
+    beneath it the ordinary term wins."""
+    if sensitive:
+        return min(cfg.sensitive_subscription_ttl_days, cfg.subscription_ttl_days)
+    return cfg.subscription_ttl_days
+
 
 def load_config() -> Config:
     return Config(
@@ -146,6 +157,12 @@ def load_config() -> Config:
         sensitive_subscription_ttl_days=int(
             os.environ.get("SENSITIVE_SUBSCRIPTION_TTL_DAYS", "30")),
         renewal_reminder_days_before=_req_int("RENEWAL_REMINDER_DAYS_BEFORE"),
+        # How long an expired subscription stays paused before it is
+        # deleted. Expiry is the "no answer" branch of the still-looking
+        # check-in: digests stop at once, but the "weiter" link in that
+        # mail keeps working for this many days, so somebody who reads it
+        # late does not have to sign up again. Optional; 14 if unset.
+        expired_grace_days=int(os.environ.get("EXPIRED_GRACE_DAYS", "14")),
         max_plans_per_city=_req_int("MAX_PLANS_PER_CITY"),
         parser_canary_threshold_hours=_req_int("PARSER_CANARY_THRESHOLD_HOURS"),
         subscribe_ratelimit_per_ip_per_hour=_req_int("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR"),
