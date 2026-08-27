@@ -31,6 +31,16 @@
         No. It checks and sends you an email. Booking is on you, on the
         city's own site.
       </p>
+      {% if digest_cap %}
+      <h3>How many emails will I get?</h3>
+      <p>
+        At most {{ digest_cap }} in any 24 hours, so your inbox stays calm and
+        the mails stay out of the spam folder. Slots that turn up after that
+        go into the next mail once the window frees, and the city's booking
+        page is always open to you directly. For fewer mails, narrow the
+        weekdays and times in your subscription's settings.
+      </p>
+      {% endif %}
       <h3>Is this fair?</h3>
       <p>
         Fairer than the status quo. Without it, appointments go to whoever
@@ -50,6 +60,17 @@
         Nein. Es schaut nach und schickt dir eine Mail. Buchen musst du
         selbst, auf der Seite der Stadt.
       </p>
+      {% if digest_cap %}
+      <h3>Wie viele Mails bekomme ich?</h3>
+      <p>
+        Höchstens {{ digest_cap }} in 24 Stunden, damit dein Postfach ruhig
+        bleibt und die Mails nicht im Spam landen. Termine, die danach
+        auftauchen, kommen in die nächste Mail, sobald wieder eine frei ist;
+        die Terminseite der Stadt kannst du jederzeit selbst aufrufen. Für
+        weniger Mails grenzt du Wochentage und Uhrzeiten in den Einstellungen
+        deiner Anmeldung ein.
+      </p>
+      {% endif %}
       <h3>Ist das fair?</h3>
       <p>
         Fairer als der Status quo. Ohne das Tool bekommt die Termine, wer

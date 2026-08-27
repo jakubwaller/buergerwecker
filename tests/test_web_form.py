@@ -278,3 +278,16 @@ def test_form_omits_filter_script_without_map(client, tmp_path, monkeypatch):
     finally:
         catalog_mod.load_catalog.cache_clear()
     assert 'id="service-locations"' not in body
+
+def test_faq_tells_subscribers_about_the_daily_mail_cap(client, monkeypatch):
+    de = client.get("/leipzig?lang=de").data.decode()
+    en = client.get("/leipzig?lang=en").data.decode()
+    assert "Wie viele Mails bekomme ich?" in de
+    assert "Höchstens 2 in 24 Stunden" in de
+    assert "How many emails will I get?" in en
+    assert "At most 2 in any 24 hours" in en
+    # With the cap switched off there is nothing to promise.
+    monkeypatch.setenv("MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY", "0")
+    from app.web import create_app
+    off = create_app().test_client().get("/leipzig?lang=de").data.decode()
+    assert "Wie viele Mails bekomme ich?" not in off

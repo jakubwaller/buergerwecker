@@ -306,6 +306,23 @@ A provider that has gone silent for 48h is flagged, because a rate of 0.00% with
 a dead webhook and a rate of 0.00% with a healthy one look identical in the
 numbers, and the first is the dangerous one.
 
+Two things that line cannot know on its own:
+
+- **"never reported" counts sends over the last 48h regardless of when the
+  dashboard was wired.** A fallback leg whose last send predates the webhook
+  reads as unwired until that send ages out of the window; the *last* timestamp
+  next to the count is what to compare against. Sweego, last in the chain, can
+  go days without sending once the per-subscriber cap holds the volume — its
+  webhook is then unverified, not broken. Verify it from the Sweego dashboard's
+  own delivery counters, or wait for its next real send.
+- **A post that carries the right URL secret but fails the signature** is
+  answered 403, logged (`bad signature`), and shown on `/admin` as *rejected for
+  a bad signature* (`webhook_rejected_sweego` / `last_webhook_rejected_at_sweego`
+  in `meta`; an ops-summary anomaly while the last one is under 48h old). That
+  is the diagnosis for a misread `SWEEGO_WEBHOOK_SECRET`, which would otherwise
+  be indistinguishable from a webhook nobody wired up. A wrong URL secret is
+  not counted — anyone can post one.
+
 ### Retention, and getting back off the list
 
 Retention splits by reason, and so does the way back.

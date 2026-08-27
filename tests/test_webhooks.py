@@ -934,3 +934,95 @@ def test_admin_renders_on_a_db_that_predates_the_suppression_table(client):
     r = c.get("/admin?token=" + "a" * 32)
     assert r.status_code == 200
     assert b"Deliverability" in r.data
+
+
+def test_a_rejected_sweego_signature_is_counted_not_silent(client, monkeypatch):
+    # A misread SWEEGO_WEBHOOK_SECRET is a 403 on every delivery. Without a
+    # count that is indistinguishable from a webhook nobody wired up.
+    c, conn = client
+    monkeypatch.setenv("SWEEGO_WEBHOOK_SECRET",
+                       base64.b64encode(b"k" * 32).decode())
+    from app.web import create_app
+    app = create_app()
+    app.config["TESTING"] = True
+    cl = app.test_client()
+    body = json.dumps({"event_type": "delivered",
+                       "recipient": "a@example.com"}).encode()
+    headers = {"webhook-id": "id1", "webhook-timestamp": "1769696506",
+               "webhook-signature": _sweego_sign(
+                   body, base64.b64encode(b"x" * 32).decode())}
+
+    def meta(key):
+        return conn.execute("SELECT value FROM meta WHERE key=?",
+                            (key,)).fetchone()
+
+    r = cl.post(f"/webhooks/sweego/{SECRET}", data=body, headers=headers,
+                content_type="application/json")
+    assert r.status_code == 403
+    assert meta("webhook_rejected_sweego")["value"] == "1"
+    assert meta("last_webhook_rejected_at_sweego") is not None
+    assert meta("last_webhook_at_sweego") is None  # a rejection is no receipt
+    # A wrong URL secret is scanner noise, not a signing-secret diagnosis:
+    # counting it would let anyone paint a red line on /admin.
+    r = cl.post("/webhooks/sweego/WRONG", data=body, headers=headers,
+                content_type="application/json")
+    assert r.status_code == 403
+    assert meta("webhook_rejected_sweego")["value"] == "1"
+
+
+def test_a_rejecting_provider_is_graded_as_rejected_not_never_reported(db):
+    from datetime import datetime
+    from app.admin import _deliverability, summary_anomalies
+
+    db.execute("INSERT INTO sent_idempotency (idem_key, provider) "
+               "VALUES ('k1', 'sweego')")
+    db.execute("INSERT INTO meta (key, value) VALUES "
+               "('webhook_rejected_sweego', '3')")
+    db.execute("INSERT INTO meta (key, value) VALUES "
+               "('last_webhook_rejected_at_sweego', datetime('now'))")
+    d = _deliverability(db, SimpleNamespace(webhook_secret=SECRET,
+                                            email_provider_order=("sweego",)))
+    pr = d["providers"][0]
+    assert pr["sent_recently"] == 1 and pr["last_sent_at"] is not None
+    assert pr["last_event_at"] is None
+    assert d["rejected"]["sweego"]["n"] == "3"
+    assert d["providers_rejecting"] == ["sweego"]
+    assert d["providers_silent"] == []  # the diagnosis replaces the symptom
+    lines = summary_anomalies({"deliverability": d}, now=datetime.utcnow())
+    assert any("sweego delivery feedback rejected for a bad signature" in ln
+               for ln in lines)
+    assert not any("no delivery feedback" in ln for ln in lines)
+
+
+def test_an_old_rejection_falls_back_to_the_silence_grading(db):
+    # A rejection from weeks ago is history; the live question is again
+    # whether anything came back for what was sent since.
+    from app.admin import _deliverability
+
+    db.execute("INSERT INTO sent_idempotency (idem_key, provider) "
+               "VALUES ('k1', 'sweego')")
+    db.execute("INSERT INTO meta (key, value) VALUES "
+               "('webhook_rejected_sweego', '3')")
+    db.execute("INSERT INTO meta (key, value) VALUES "
+               "('last_webhook_rejected_at_sweego', "
+               "datetime('now', '-10 days'))")
+    d = _deliverability(db, SimpleNamespace(webhook_secret=SECRET,
+                                            email_provider_order=("sweego",)))
+    assert d["rejected"]["sweego"]["n"] == "3"
+    assert d["providers_rejecting"] == []
+    assert d["providers_silent"] == ["sweego"]
+
+
+def test_admin_page_renders_the_last_send_and_the_rejection(client):
+    c, conn = client
+    conn.execute("INSERT INTO sent_idempotency (idem_key, provider) "
+                 "VALUES ('k1', 'sweego')")
+    conn.execute("INSERT INTO meta (key, value) VALUES "
+                 "('webhook_rejected_sweego', '2')")
+    conn.execute("INSERT INTO meta (key, value) VALUES "
+                 "('last_webhook_rejected_at_sweego', datetime('now'))")
+    conn.commit()
+    body = c.get("/admin?token=" + "a" * 32).data.decode()
+    assert "never reported" in body
+    assert "1 sent in 48h, last 20" in body
+    assert "2 rejected for a bad signature" in body

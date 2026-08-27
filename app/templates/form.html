@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_fields.html" import max_days_select, special_consent %}
-{% from "_parts.html" import city_grid, faq, banners %}
+{% from "_parts.html" import city_grid, faq, banners with context %}
 {% block content %}
   {{ banners(confirmed, error, lang) }}
 
