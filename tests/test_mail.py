@@ -377,3 +377,73 @@ def test_failed_send_does_not_bump_counter(db, monkeypatch):
         with pytest.raises(MailFailed):
             send(db, "a@x.com", "s", "b", idem_key="cnt4")
     assert _day_count(db, "mailjet") == 0
+
+
+# ---------- failover on a provider that never answers ----------
+
+def test_failover_to_brevo_when_mailjet_raises(db, brevo_configured):
+    """A timeout or connection error is the provider being down just as much
+    as a 503, and it used to escape the loop: the claim was released and the
+    caller got the exception while Brevo sat idle."""
+    import requests
+    with patch("app.mail._call_mailjet", side_effect=requests.Timeout("slow")), \
+         patch("app.mail._call_brevo", return_value=_ok()) as bv:
+        send(db, "a@example.com", "s", "b", idem_key=_idem_key(1, [], "c"))
+    bv.assert_called_once()
+    row = db.execute("SELECT provider FROM sent_idempotency").fetchone()
+    assert row["provider"] == "brevo"
+
+
+def test_raises_when_every_provider_raises(db, brevo_configured):
+    import requests
+    with patch("app.mail._call_mailjet", side_effect=requests.Timeout("slow")), \
+         patch("app.mail._call_brevo", side_effect=requests.ConnectionError("down")):
+        with pytest.raises(MailFailed):
+            send(db, "a@example.com", "s", "b", idem_key=_idem_key(1, [], "c"))
+    assert db.execute("SELECT COUNT(*) AS n FROM sent_idempotency").fetchone()["n"] == 0
+
+
+# ---------- a claim orphaned by a crash ----------
+
+def test_stale_pending_claim_is_taken_over(db):
+    """A process killed between claiming and sending leaves provider='pending'.
+    For a stable key (confirm-<id>) that used to mean 'already sent' until the
+    14-day prune — every retry short-circuited and the mail never went."""
+    key = _idem_key(7, [], "confirm-7")
+    db.execute("INSERT INTO sent_idempotency (idem_key, provider, sent_at) "
+               "VALUES (?, 'pending', datetime('now', '-1 hour'))", (key,))
+    with patch("app.mail._call_mailjet", return_value=_ok()) as mj:
+        send(db, "a@example.com", "s", "b", idem_key=key)
+    mj.assert_called_once()
+    row = db.execute("SELECT provider FROM sent_idempotency WHERE idem_key=?",
+                     (key,)).fetchone()
+    assert row["provider"] == "mailjet"
+
+
+def test_fresh_pending_claim_is_respected(db):
+    """Within the stale window a pending row is a send in flight elsewhere."""
+    key = _idem_key(7, [], "confirm-7")
+    db.execute("INSERT INTO sent_idempotency (idem_key, provider) "
+               "VALUES (?, 'pending')", (key,))
+    with patch("app.mail._call_mailjet", return_value=_ok()) as mj:
+        send(db, "a@example.com", "s", "b", idem_key=key)
+    mj.assert_not_called()
+
+
+def test_send_batch_takes_over_a_stale_pending_claim(db, monkeypatch):
+    from types import SimpleNamespace
+    from app.mail import send_batch, Outgoing
+    monkeypatch.setenv("MAILJET_API_KEY", "m")
+    monkeypatch.setenv("MAILJET_API_SECRET", "m")
+    monkeypatch.setenv("MAILJET_FROM_EMAIL", "x@x")
+    monkeypatch.setenv("MAILJET_FROM_NAME", "x")
+    cfg = SimpleNamespace(mailjet_daily_quota=200, mailjet_hourly_quota=200,
+                          mailjet_monthly_quota=6000,
+                          email_provider_order=("mailjet",),
+                          max_send_failures_per_address=3)
+    key = _idem_key(7, [], "confirm-7")
+    db.execute("INSERT INTO sent_idempotency (idem_key, provider, sent_at) "
+               "VALUES (?, 'pending', datetime('now', '-1 hour'))", (key,))
+    with patch("app.mail._call_mailjet_batch", return_value=200):
+        result = send_batch(db, [Outgoing("a@example.com", "s", "b", key)], cfg)
+    assert key in result.delivered

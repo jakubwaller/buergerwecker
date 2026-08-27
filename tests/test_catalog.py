@@ -1,3 +1,4 @@
+import json
 import pytest
 from app.catalog import load_catalog, CatalogError, Catalog
 
@@ -228,3 +229,72 @@ def test_shipped_bochum_kfz_tenants_protect_the_shared_host():
         assert len(cat.locations) == 1
     fs = load_catalog("bochum-fuehrerschein")
     assert fs.scraper_config["max_plans"] > len(fs.appointment_types)
+
+
+# ---------- a broken tenant is skipped, not fatal ----------
+
+def _write_tenant(root, slug):
+    city = root / slug
+    city.mkdir()
+    (city / "scraper_config.json").write_text(json.dumps(
+        {"vendor": "tevis", "base_url": "https://x", "md": 1, "mdt": 2}),
+        encoding="utf-8")
+    (city / "appointment_type.json").write_text(json.dumps({"Perso": "1"}),
+                                                encoding="utf-8")
+    (city / "locations.json").write_text(json.dumps({"Amt": "9"}),
+                                         encoding="utf-8")
+    return city
+
+
+def test_malformed_required_file_is_a_catalog_error(tmp_path, monkeypatch):
+    """A JSONDecodeError used to walk past every `except CatalogError`, so one
+    hand-edited file took down every tenant's page and the sitemap."""
+    from app import catalog as catalog_mod
+    city = _write_tenant(tmp_path, "broken")
+    (city / "appointment_type.json").write_text('{"Perso": "1",}',
+                                                encoding="utf-8")
+    monkeypatch.setattr(catalog_mod, "CATALOG_ROOT", tmp_path)
+    catalog_mod.load_catalog.cache_clear()
+    try:
+        with pytest.raises(CatalogError, match="appointment_type.json"):
+            catalog_mod.load_catalog("broken")
+    finally:
+        catalog_mod.load_catalog.cache_clear()
+
+
+def test_rewritten_catalog_file_is_noticed_without_a_cache_clear(tmp_path, monkeypatch):
+    """catalog_sync rewrites files in the poller; the web workers are other
+    processes, so the cache has to notice on its own."""
+    import os
+    from app import catalog as catalog_mod
+    city = _write_tenant(tmp_path, "livecity")
+    monkeypatch.setattr(catalog_mod, "CATALOG_ROOT", tmp_path)
+    catalog_mod.load_catalog.cache_clear()
+    try:
+        assert catalog_mod.load_catalog("livecity").appointment_types == {"Perso": "1"}
+        path = city / "appointment_type.json"
+        path.write_text(json.dumps({"Perso": "1", "Reisepass": "2"}),
+                        encoding="utf-8")
+        # Same second as the first write is possible; force a distinct mtime.
+        st = path.stat()
+        os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+        assert catalog_mod.load_catalog("livecity").appointment_types == {
+            "Perso": "1", "Reisepass": "2"}
+    finally:
+        catalog_mod.load_catalog.cache_clear()
+
+
+def test_every_tenant_loads_from_one_cache(monkeypatch):
+    """lru_cache(maxsize=8) over 38 tenants missed on nearly every call."""
+    from app import catalog as catalog_mod
+    from app.catalog import available_cities
+    catalog_mod.load_catalog.cache_clear()
+    cities = available_cities()
+    for c in cities:
+        load_catalog(c)
+    calls = []
+    monkeypatch.setattr(catalog_mod, "_read_catalog",
+                        lambda *a, **k: calls.append(a) or (_ for _ in ()).throw(AssertionError("re-read")))
+    for c in cities:
+        load_catalog(c)
+    assert calls == []

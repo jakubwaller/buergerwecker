@@ -169,6 +169,35 @@ def _single_send_chain() -> list[tuple[str, Any]]:
         chain.append((name, call))
     return chain or [("mailjet", _call_mailjet)]
 
+# How long a 'pending' idempotency claim is believed. A send is a handful of
+# provider calls, each capped by a 30 s HTTP timeout, so a claim still pending
+# after this many minutes belongs to a process that died between claiming and
+# sending (a `docker compose restart` mid-call is enough). It used to count as
+# "already sent" until the 14-day prune — for a stable key such as the
+# confirmation's `confirm-<id>` that meant every retry short-circuited and the
+# sign-up was silently abandoned after 7 days.
+_STALE_CLAIM_MINUTES = 15
+
+def _claim(conn: sqlite3.Connection, idem_key: str) -> bool:
+    """Claim `idem_key` for sending. True when this call owns it: either the
+    key was never seen, or its only trace is a stale pending claim, which is
+    taken over (one conditional UPDATE, so two concurrent callers cannot both
+    win). False when the mail was sent, or a live claim is in flight."""
+    cur = conn.execute(
+        "INSERT OR IGNORE INTO sent_idempotency (idem_key, provider) "
+        "VALUES (?, 'pending')",
+        (idem_key,),
+    )
+    if cur.rowcount == 1:
+        return True
+    cur = conn.execute(
+        "UPDATE sent_idempotency SET sent_at=CURRENT_TIMESTAMP "
+        "WHERE idem_key=? AND provider='pending' "
+        "AND sent_at < datetime('now', ?)",
+        (idem_key, f"-{_STALE_CLAIM_MINUTES} minutes"),
+    )
+    return cur.rowcount == 1
+
 def send(conn: sqlite3.Connection, to: str, subject: str, body: str,
          *, idem_key: str, unsub_url: str | None = None,
          reply_to: str | None = None) -> None:
@@ -179,8 +208,9 @@ def send(conn: sqlite3.Connection, to: str, subject: str, body: str,
     Order: claim the idempotency row FIRST (atomic INSERT OR IGNORE), then
     attempt sends. If every configured provider fails the claim is rolled back
     so a retry can proceed. If the process dies between claim and successful
-    send, the row remains with provider='pending' and the next call
-    short-circuits — preventing a double-send on crash recovery.
+    send, the row remains with provider='pending' and a call within
+    _STALE_CLAIM_MINUTES short-circuits — preventing a double-send on crash
+    recovery — while a later one takes the claim over and sends.
     """
     from app.repo import is_suppressed
 
@@ -194,23 +224,29 @@ def send(conn: sqlite3.Connection, to: str, subject: str, body: str,
     # coincidence of WHERE clauses, not a guarantee.
     if is_suppressed(conn, to):
         return
-    cur = conn.execute(
-        "INSERT OR IGNORE INTO sent_idempotency (idem_key, provider) "
-        "VALUES (?, 'pending')",
-        (idem_key,),
-    )
-    if cur.rowcount == 0:
-        return  # already claimed by an earlier call
+    if not _claim(conn, idem_key):
+        return  # already sent, or claimed by a call still in flight
+    provider = None
+    last_error = "no provider configured"
     try:
-        # Fail over on ANY provider error (4xx incl. 401/403 account blocks,
-        # and 5xx/429), not just transient ones — a blocked account returns
-        # 401, and that's exactly when the fallback must engage.
-        for provider, call in _single_send_chain():  # never empty: mailjet is the last resort
-            resp = call(to, subject, body, unsub_url, reply_to)
+        # Fail over on ANY provider error: a 4xx (incl. 401/403 account
+        # blocks), a 5xx/429, or the call not completing at all — a timeout or
+        # connection error is the provider being down just as much as a 503,
+        # and it used to escape this loop and skip the fallback chain.
+        for name, call in _single_send_chain():  # never empty: mailjet is the last resort
+            try:
+                resp = call(to, subject, body, unsub_url, reply_to)
+            except Exception as exc:
+                last_error = f"{name}: {exc!r}"
+                print(f"mail: {name} raised {exc!r}; trying next provider",
+                      flush=True)
+                continue
             if resp.status_code < 400:
+                provider = name
                 break
-        if resp.status_code >= 400:
-            raise MailFailed(f"provider failed; last status {resp.status_code}")
+            last_error = f"{name}: status {resp.status_code}"
+        if provider is None:
+            raise MailFailed(f"every provider failed; last: {last_error}")
     except Exception:
         conn.execute("DELETE FROM sent_idempotency WHERE idem_key=?", (idem_key,))
         raise
@@ -494,14 +530,9 @@ def send_batch(conn: sqlite3.Connection, items: list[Outgoing], cfg) -> BatchRes
                 # Never claimed, never sent, never retried: the address is out.
                 result.undeliverable.add(it.idem_key)
                 continue
-            cur = conn.execute(
-                "INSERT OR IGNORE INTO sent_idempotency (idem_key, provider) "
-                "VALUES (?, 'pending')",
-                (it.idem_key,),
-            )
-            if cur.rowcount == 1:
+            if _claim(conn, it.idem_key):
                 pending.append(it)
-            # rowcount 0 → already sent/claimed by an earlier cycle: skip.
+            # else: already sent, or claimed by a cycle still in flight.
 
     remaining = list(pending)
     refused: list[Outgoing] = []

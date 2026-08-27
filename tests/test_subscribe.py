@@ -48,7 +48,10 @@ def test_subscribe_redirect_returns_to_the_city_and_language(client):
     """The post-subscribe banner has to land back on the tenant that was just
     signed up for — the root is the city picker, not anyone's form."""
     from unittest.mock import patch
-    form = _form("bob@example.com") | {"city": "bonn", "lang": "en"}
+    # A real Bonn service: the id has to be one the tenant's catalog offers.
+    form = _form("bob@example.com") | {
+        "city": "bonn", "lang": "en",
+        "appointment_type": "f9fc18f3-c5db-4d9d-9168-942d44063ca6"}
     with patch("app.web._send_confirmation_email", return_value=True):
         r = client.post("/subscribe", data=form,
                         headers={"X-Forwarded-For": "203.0.113.9"})
@@ -273,3 +276,75 @@ def test_a_complaint_block_is_never_lifted_by_signing_up(client, tmp_path):
                     headers={"X-Forwarded-For": "198.51.100.9"})
     assert r.status_code == 403
     assert is_suppressed(conn, email)
+
+
+# ---------- the form's ids have to be the catalog's ----------
+
+def test_subscribe_rejects_a_service_the_catalog_does_not_offer(client):
+    """An unknown appointment_type used to be stored anyway: it became a
+    PollPlan sent upstream every cycle and counted toward the city's plan cap."""
+    from unittest.mock import patch
+    form = _form("junk@example.com") | {"appointment_type": "x&services=y"}
+    with patch("app.web._send_confirmation_email", return_value=True) as send:
+        r = client.post("/subscribe", data=form,
+                        headers={"X-Forwarded-For": "203.0.113.50"})
+    assert r.status_code == 400
+    assert "Anliegen unbekannt" in r.get_data(as_text=True)
+    send.assert_not_called()
+
+
+def test_subscribe_rejects_a_location_the_catalog_does_not_offer(client):
+    from unittest.mock import patch
+    form = _form("loc@example.com") | {"all_locations": "0",
+                                       "locations": ["not-an-office"]}
+    with patch("app.web._send_confirmation_email", return_value=True) as send:
+        r = client.post("/subscribe", data=form,
+                        headers={"X-Forwarded-For": "203.0.113.51"})
+    assert r.status_code == 400
+    assert "Standort unbekannt" in r.get_data(as_text=True)
+    send.assert_not_called()
+
+
+def test_subscribe_accepts_a_location_the_catalog_offers(client):
+    from unittest.mock import patch
+    from app.catalog import load_catalog
+    office = next(iter(load_catalog("leipzig").locations.values()))
+    form = _form("loc2@example.com") | {"all_locations": "0",
+                                        "locations": [office]}
+    with patch("app.web._send_confirmation_email", return_value=True):
+        r = client.post("/subscribe", data=form,
+                        headers={"X-Forwarded-For": "203.0.113.52"})
+    assert r.status_code == 302
+
+
+# One address per case: the per-IP limiter is a session-wide singleton at
+# 2/hour in this fixture (see test_web_tests_global_ip_limiter in the wiki).
+@pytest.mark.parametrize("start,end,ip", [
+    ("25:00", "23:59", "203.0.113.60"), ("abc", "23:59", "203.0.113.61"),
+    ("09:00", "08:00", "203.0.113.62"), ("9", "17:00", "203.0.113.63")])
+def test_subscribe_rejects_a_malformed_time_window(client, start, end, ip):
+    """These used to raise inside _parse_hhmm and surface as a 500."""
+    from unittest.mock import patch
+    form = _form("time@example.com") | {"time_start": start, "time_end": end}
+    with patch("app.web._send_confirmation_email", return_value=True) as send:
+        r = client.post("/subscribe", data=form,
+                        headers={"X-Forwarded-For": ip})
+    assert r.status_code == 400
+    assert "Zeitfenster" in r.get_data(as_text=True)
+    send.assert_not_called()
+
+
+def test_subscribe_drops_weekdays_outside_the_week(client):
+    import os
+    from unittest.mock import patch
+    from app.db import connect
+    from app.models import Filter
+    form = _form("days@example.com") | {"weekdays": ["0", "3", "8"]}
+    with patch("app.web._send_confirmation_email", return_value=True):
+        r = client.post("/subscribe", data=form,
+                        headers={"X-Forwarded-For": "203.0.113.54"})
+    assert r.status_code == 302
+    conn = connect(os.environ["DB_PATH"])
+    row = conn.execute("SELECT filters_json FROM subscriptions WHERE email=?",
+                       ("days@example.com",)).fetchone()
+    assert Filter.from_json(row["filters_json"]).weekdays == [3]

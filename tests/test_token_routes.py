@@ -303,3 +303,69 @@ def test_datenschutz_states_the_configured_terms(client):
     en = c.get("/datenschutz?lang=en").data.decode()
     assert "expire automatically 90 days after sign-up" in en
     assert "paused for 14 days" in en
+
+
+# ---------- /manage POST validates like /subscribe ----------
+
+LEIPZIG_SERVICE = "29cd0a26-fe7a-4d65-88cd-1e05fd749c71"
+
+
+def test_manage_post_rejects_a_service_the_catalog_does_not_offer(client):
+    c, sid = client
+    r = c.post(f"/manage/{_sign(sid, 'manage')}",
+               data={"appointment_type": "junk", "all_locations": "1"})
+    assert r.status_code == 400
+    conn = connect(os.environ["DB_PATH"])
+    row = conn.execute("SELECT filters_json FROM subscriptions WHERE id=?",
+                       (sid,)).fetchone()
+    assert Filter.from_json(row["filters_json"]).appointment_types == ["A"]
+
+
+def test_manage_post_rejects_a_malformed_time_window(client):
+    c, sid = client
+    r = c.post(f"/manage/{_sign(sid, 'manage')}",
+               data={"appointment_type": LEIPZIG_SERVICE, "all_locations": "1",
+                     "time_start": "25:00", "time_end": "23:59"})
+    assert r.status_code == 400
+
+
+def test_manage_post_updates_a_valid_filter(client):
+    c, sid = client
+    r = c.post(f"/manage/{_sign(sid, 'manage')}",
+               data={"appointment_type": LEIPZIG_SERVICE, "all_locations": "1",
+                     "time_start": "08:00", "time_end": "12:00"})
+    assert r.status_code == 200
+    conn = connect(os.environ["DB_PATH"])
+    row = conn.execute("SELECT filters_json FROM subscriptions WHERE id=?",
+                       (sid,)).fetchone()
+    f = Filter.from_json(row["filters_json"])
+    assert f.appointment_types == [LEIPZIG_SERVICE]
+    assert f.time_window_start == time(8, 0)
+
+
+def test_manage_post_honours_the_plan_cap(client):
+    """The manage form was a way past the wait-list: sign up for a plan
+    already polled, then edit into any other."""
+    from unittest.mock import patch
+    c, sid = client
+    conn = connect(os.environ["DB_PATH"])
+    conn.execute("UPDATE subscriptions SET confirmed_at=datetime('now') WHERE id=?", (sid,))
+    with patch("app.web.would_exceed_cap", return_value=True) as cap:
+        r = c.post(f"/manage/{_sign(sid, 'manage')}",
+                   data={"appointment_type": LEIPZIG_SERVICE, "all_locations": "1"})
+    assert r.status_code == 503
+    # Its own current plan is not counted against it.
+    existing = cap.call_args.args[0]
+    assert existing == []
+    row = conn.execute("SELECT filters_json FROM subscriptions WHERE id=?",
+                       (sid,)).fetchone()
+    assert Filter.from_json(row["filters_json"]).appointment_types == ["A"]
+
+
+def test_manage_post_for_a_deleted_subscription_is_not_found(client):
+    c, sid = client
+    conn = connect(os.environ["DB_PATH"])
+    conn.execute("UPDATE subscriptions SET deleted_at=datetime('now') WHERE id=?", (sid,))
+    r = c.post(f"/manage/{_sign(sid, 'manage')}",
+               data={"appointment_type": LEIPZIG_SERVICE, "all_locations": "1"})
+    assert r.status_code == 404

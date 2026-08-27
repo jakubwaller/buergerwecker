@@ -2,7 +2,6 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from functools import lru_cache
 from pathlib import Path
 
 from app.models import SeenKey, per_slot_key
@@ -186,24 +185,74 @@ class Catalog:
         """Localized display name for a location uuid; the raw uuid if unknown."""
         return _label_for(self.locations_for(lang), uuid)
 
-@lru_cache(maxsize=8)
+# Every file a tenant directory can hold. The cache signature below stats each
+# of them, so a rewrite of any one (catalog_sync's atomic replace, a hand edit)
+# is noticed on the next load.
+_CATALOG_FILES = ("appointment_type.json", "locations.json",
+                  "scraper_config.json", "appointment_type.en.json",
+                  "locations.en.json", "display.json",
+                  "service_locations.json")
+
+# city → (file signature, Catalog). A plain dict rather than lru_cache: the
+# cache must (a) hold every tenant — an lru_cache(maxsize=8) over 38 tenants
+# missed on nearly every call, re-reading and re-parsing up to seven JSON
+# files per miss, and the tenant switcher loads all of them per page view —
+# and (b) notice when catalog_sync rewrites a file. The poller runs the sync,
+# but the web workers are separate processes that never restart for it, so
+# "clear the cache after syncing" cannot reach them; a per-load stat of the
+# files (cheap, no parse) can. `load_catalog.cache_clear()` is kept for tests
+# that swap CATALOG_ROOT.
+_CACHE: dict[str, tuple[tuple, "Catalog"]] = {}
+
+
+def _signature(city_dir: Path) -> tuple:
+    sig = []
+    for name in _CATALOG_FILES:
+        try:
+            st = (city_dir / name).stat()
+            sig.append((name, st.st_mtime_ns, st.st_size))
+        except FileNotFoundError:
+            sig.append((name, None, None))
+    return tuple(sig)
+
+
 def load_catalog(city: str) -> Catalog:
     # A tenant slug arrives straight from a URL, so validate its shape before
     # it is joined onto a path: "../.." would walk out of the catalog root, and
-    # the lru_cache would then key on whatever was passed. Every tenant
-    # directory is lowercase letters, digits and hyphens (test_catalog asserts
-    # it), so anything else is not a city we have.
+    # the cache would then key on whatever was passed. Every tenant directory
+    # is lowercase letters, digits and hyphens (test_catalog asserts it), so
+    # anything else is not a city we have.
     if not _SLUG_RE.fullmatch(city or ""):
         raise CatalogError(f"Unknown city: {city}")
     city_dir = CATALOG_ROOT / city
     if not city_dir.is_dir():
         raise CatalogError(f"Unknown city: {city}")
+    sig = _signature(city_dir)
+    cached = _CACHE.get(city)
+    if cached is not None and cached[0] == sig:
+        return cached[1]
+    catalog = _read_catalog(city, city_dir)
+    _CACHE[city] = (sig, catalog)
+    return catalog
+
+
+load_catalog.cache_clear = _CACHE.clear  # type: ignore[attr-defined]
+
+
+def _read_catalog(city: str, city_dir: Path) -> Catalog:
     try:
-        ats = json.loads((city_dir / "appointment_type.json").read_text(encoding="utf-8"))
-        locs = json.loads((city_dir / "locations.json").read_text(encoding="utf-8"))
-        scfg = json.loads((city_dir / "scraper_config.json").read_text(encoding="utf-8"))
+        ats = _read_required_json(city_dir / "appointment_type.json")
+        locs = _read_required_json(city_dir / "locations.json")
+        scfg = _read_required_json(city_dir / "scraper_config.json")
     except FileNotFoundError as exc:
         raise CatalogError(f"Missing catalog file for {city}: {exc.filename}") from exc
+    except ValueError as exc:
+        # A required file that exists but does not parse is as much "not a
+        # tenant we can serve" as a missing one. Left as a JSONDecodeError it
+        # walked past every `except CatalogError` — the tenant switcher, the
+        # sitemap, /subscribe — and one hand-edited file took down every
+        # tenant's page instead of hiding the broken one.
+        raise CatalogError(f"Malformed catalog file for {city}: {exc}") from exc
     # English labels are optional: a city without an *.en.json simply falls
     # back to the German names everywhere (see Catalog.appointment_types_for).
     ats_en = _read_optional_json(city_dir / "appointment_type.en.json")
@@ -271,6 +320,16 @@ def available_cities() -> list[str]:
     """
     return sorted(d.name for d in CATALOG_ROOT.iterdir()
                   if d.is_dir() and (d / "scraper_config.json").is_file())
+
+
+def _read_required_json(path: Path) -> dict:
+    """A required catalog file. Raises FileNotFoundError or ValueError (a
+    JSONDecodeError is one); load_catalog turns both into CatalogError, naming
+    the file, so a broken tenant is skipped rather than fatal."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise ValueError(f"{path.name}: {exc}") from exc
 
 
 def _read_optional_json(path: Path) -> dict:

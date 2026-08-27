@@ -640,3 +640,25 @@ def test_admin_renders_subscriber_and_cancellation_charts(client):
     assert "Subscribers" in html and "Cancellations" in html
     assert "Expired, not renewed" in html
     assert "1 people (1 unsubscribed, 0 expired)" in html
+
+
+def test_stats_plan_counts_use_the_loaded_config_cap(tmp_path, monkeypatch):
+    """stats() used to re-read MAX_PLANS_PER_CITY from the environment and
+    ignore the Config it was handed, so its plan counts could disagree with
+    what the poller actually builds."""
+    from datetime import time
+    from types import SimpleNamespace
+    from app.repo import insert_pending, confirm
+    from app.models import Filter
+    monkeypatch.delenv("MAX_PLANS_PER_CITY", raising=False)
+    conn = connect(str(tmp_path / "c.db")); init_schema(conn)
+    for loc in (["1"], ["2"]):
+        f = Filter(appointment_types=["A"], locations=loc, weekdays=[1],
+                   time_window_start=time(0, 0), time_window_end=time(23, 59))
+        sid = insert_pending(conn, email=f"{loc[0]}@example.com", city="dresden",
+                             language="de", filter_=f, ttl_days=90)
+        confirm(conn, sid)
+    cfg = SimpleNamespace(max_plans_per_city=1)
+    # Two distinct plans over a cap of one collapse to a single "all" plan.
+    assert stats(conn, cfg)["current_plan_count_by_city"]["dresden"] == 1
+    assert stats(conn)["current_plan_count_by_city"]["dresden"] == 2

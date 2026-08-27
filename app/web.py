@@ -237,6 +237,34 @@ _RESULT_MESSAGES: dict[str, dict] = {
                "No appointment type was selected. Please go back and choose "
                "the type you need."),
     },
+    "unknown_type": {
+        "kind": "error",
+        "de": ("Anliegen unbekannt", "Dieses Anliegen gibt es hier nicht",
+               "Das gewählte Anliegen wird für diese Stadt nicht angeboten. "
+               "Bitte gehe zurück und wähle eines aus der Liste."),
+        "en": ("Unknown appointment type", "We don't offer that appointment type",
+               "The appointment type you chose isn't offered for this city. "
+               "Please go back and pick one from the list."),
+    },
+    "unknown_location": {
+        "kind": "error",
+        "de": ("Standort unbekannt", "Diesen Standort gibt es hier nicht",
+               "Mindestens einer der gewählten Standorte wird für diese Stadt "
+               "nicht angeboten. Bitte gehe zurück und wähle aus der Liste."),
+        "en": ("Unknown location", "We don't offer that location",
+               "At least one of the locations you chose isn't offered for "
+               "this city. Please go back and pick from the list."),
+    },
+    "invalid_time": {
+        "kind": "error",
+        "de": ("Zeitfenster ungültig", "Bitte überprüfe das Zeitfenster",
+               "Die Uhrzeiten müssen im Format HH:MM angegeben sein, und der "
+               "Beginn darf nicht nach dem Ende liegen. Bitte gehe zurück und "
+               "korrigiere die Angaben."),
+        "en": ("Invalid time window", "Please check the time window",
+               "Times must be given as HH:MM, and the start can't be after "
+               "the end. Please go back and correct them."),
+    },
 }
 
 
@@ -303,8 +331,72 @@ _OG_CITY_DESC = {
 
 
 def _parse_hhmm(s: str) -> time_cls:
-    h, m = s.split(":")
-    return time_cls(int(h), int(m))
+    """'HH:MM' (a trailing ':SS' is tolerated) → time. Raises ValueError on
+    anything else, including out-of-range hours; the caller turns that into a
+    400 rather than letting it surface as a 500."""
+    parts = (s or "").strip().split(":")
+    if len(parts) not in (2, 3):
+        raise ValueError(f"not HH:MM: {s!r}")
+    return time_cls(int(parts[0]), int(parts[1]))
+
+
+class _FormError(Exception):
+    """A rejected sign-up/manage form; `key` names the result page."""
+    def __init__(self, key: str):
+        super().__init__(key)
+        self.key = key
+
+
+def _filter_from_form(form, catalog) -> tuple[Filter, bool]:
+    """The Filter a sign-up or manage form asks for, validated against the
+    tenant's catalog. Returns (filter, is_sensitive); raises _FormError.
+
+    Every id has to be one the catalog offers. The form only ever posts those,
+    so a miss is a hand-built request — and it used to be stored anyway: an
+    unknown appointment_type became a PollPlan the poller sent upstream every
+    cycle, interpolated raw into the vendor's request, and each distinct junk
+    value counted toward MAX_PLANS_PER_CITY until real visitors were told the
+    wait-list was full.
+    """
+    atype = form.get("appointment_type", "").strip()
+    if not atype:
+        raise _FormError("missing_type")
+    if atype not in catalog.appointment_types.values():
+        raise _FormError("unknown_type")
+    # Special-category services (Art. 9 GDPR) need the separate explicit
+    # consent on top of the double opt-in. Enforced here rather than in the
+    # form because the box is hidden by script while an ordinary service is
+    # selected — and because a POST need never have rendered the page.
+    sensitive = catalog.is_sensitive(atype)
+    if sensitive and form.get("consent_special") != "1":
+        raise _FormError("consent_required")
+    all_locs = form.get("all_locations") == "1"
+    loc_list = form.getlist("locations")
+    if not all_locs and loc_list:
+        known = set(catalog.locations.values())
+        if any(loc not in known for loc in loc_list):
+            raise _FormError("unknown_location")
+    locations = "all" if all_locs or not loc_list else loc_list
+    weekdays = [int(d) for d in form.getlist("weekdays")
+                if d.isdigit() and 1 <= int(d) <= 7]
+    if not weekdays:
+        weekdays = [1, 2, 3, 4, 5, 6, 7]
+    try:
+        start = _parse_hhmm(form.get("time_start") or "00:00")
+        end = _parse_hhmm(form.get("time_end") or "23:59")
+    except ValueError:
+        raise _FormError("invalid_time") from None
+    if start > end:
+        # An empty window can never match; nobody means to ask for one.
+        raise _FormError("invalid_time")
+    return Filter(
+        appointment_types=[atype],
+        locations=locations,
+        weekdays=weekdays,
+        time_window_start=start,
+        time_window_end=end,
+        max_days_ahead=_parse_max_days(form.get("max_days_ahead")),
+    ), sensitive
 
 
 def _parse_max_days(raw: str | None) -> int | None:
@@ -826,37 +918,16 @@ def create_app() -> Flask:
         # An unknown city used to be stored anyway — a subscription no poller
         # would ever match — and since the redirect below builds "/{city}", it
         # also let a posted form choose the Location header.
-        if not _is_tenant(city):
-            return _result_page("unknown_city", lang, status=400)
-        atype = request.form.get("appointment_type", "").strip()
-        if not atype:
-            return _result_page("missing_type", lang, status=400)
-        # Special-category services (Art. 9 GDPR) need the separate explicit
-        # consent on top of the double opt-in. Enforced here rather than in the
-        # form because the box is hidden by script while an ordinary service is
-        # selected — and because a POST need never have rendered the page.
         try:
-            sensitive = load_catalog(city).is_sensitive(atype)
+            catalog = load_catalog(city) if city else None
         except CatalogError:
-            sensitive = False
-        if sensitive and request.form.get("consent_special") != "1":
-            return _result_page("consent_required", lang, status=400)
-        all_locs = request.form.get("all_locations") == "1"
-        loc_list = request.form.getlist("locations")
-        locations = "all" if all_locs or not loc_list else loc_list
-        weekdays = [int(d) for d in request.form.getlist("weekdays") if d.isdigit()]
-        if not weekdays:
-            weekdays = [1, 2, 3, 4, 5, 6, 7]
-        ts = request.form.get("time_start", "00:00")
-        te = request.form.get("time_end", "23:59")
-        f = Filter(
-            appointment_types=[atype],
-            locations=locations,
-            weekdays=weekdays,
-            time_window_start=_parse_hhmm(ts),
-            time_window_end=_parse_hhmm(te),
-            max_days_ahead=_parse_max_days(request.form.get("max_days_ahead")),
-        )
+            catalog = None
+        if catalog is None:
+            return _result_page("unknown_city", lang, status=400)
+        try:
+            f, sensitive = _filter_from_form(request.form, catalog)
+        except _FormError as err:
+            return _result_page(err.key, lang, status=400)
         # 5. plan-cap overflow check + insert atomically (spec 3.2.6).
         conn = connect(cfg.db_path)
         with transaction(conn):
@@ -962,52 +1033,53 @@ def create_app() -> Flask:
         conn = connect(cfg.db_path)
         if request.method == "POST":
             owner = conn.execute(
-                "SELECT city, language FROM subscriptions WHERE id=?",
+                "SELECT city, language FROM subscriptions "
+                "WHERE id=? AND deleted_at IS NULL",
                 (sub_id,)).fetchone()
-            lang = owner["language"] if owner else "de"
-            atype = request.form.get("appointment_type", "").strip()
-            if not atype:
-                return _result_page("missing_type", lang, status=400)
-            # Editing a filter is a second way to select a special-category
-            # service, so it carries the same Art. 9 consent gate as sign-up.
+            if not owner:
+                return _result_page("not_found",
+                                    request.args.get("lang", "de"), status=404)
+            lang = owner["language"]
             try:
-                sensitive = load_catalog(owner["city"]).is_sensitive(atype) if owner else False
+                catalog = load_catalog(owner["city"])
             except CatalogError:
-                sensitive = False
-            if sensitive and request.form.get("consent_special") != "1":
-                return _result_page("consent_required", lang, status=400)
-            all_locs = request.form.get("all_locations") == "1"
-            loc_list = request.form.getlist("locations")
-            locations = "all" if all_locs or not loc_list else loc_list
-            weekdays = [int(d) for d in request.form.getlist("weekdays") if d.isdigit()] or [1, 2, 3, 4, 5, 6, 7]
-            ts = request.form.get("time_start", "00:00")
-            te = request.form.get("time_end", "23:59")
-            f = Filter(appointment_types=[atype], locations=locations,
-                       weekdays=weekdays,
-                       time_window_start=_parse_hhmm(ts),
-                       time_window_end=_parse_hhmm(te),
-                       max_days_ahead=_parse_max_days(
-                           request.form.get("max_days_ahead")))
-            # Clear the cadence state along with the filter: both signals were
-            # measured against the OLD filter, and keeping them would leave
-            # someone who just narrowed a firehose down to one scarce office
-            # stuck on the slow cadence their previous filter earned.
-            conn.execute("UPDATE subscriptions SET filters_json=?, "
-                         "last_match_count=NULL, consecutive_digests=0 "
-                         "WHERE id=?",
-                         (f.to_json(), sub_id))
-            from app.repo import set_special_consent
-            set_special_consent(conn, sub_id, sensitive)
-            if sensitive:
-                # Switching into a special-category service also pulls the
-                # expiry in to the shorter retention — never pushes it out, so
-                # this can't be used to extend an ordinary subscription.
-                short = ttl_days_for(cfg, True)
-                conn.execute(
-                    "UPDATE subscriptions SET expires_at=datetime('now', ?) "
-                    "WHERE id=? AND expires_at > datetime('now', ?)",
-                    (f"+{short} days", sub_id, f"+{short} days"),
-                )
+                return _result_page("unknown_city", lang, status=400)
+            # Editing a filter is a second way to pick a service, so it gets
+            # the same validation and Art. 9 consent gate as sign-up.
+            try:
+                f, sensitive = _filter_from_form(request.form, catalog)
+            except _FormError as err:
+                return _result_page(err.key, lang, status=400)
+            with transaction(conn):
+                # The same cap check as /subscribe, minus this subscription's
+                # own current plan, which the new filter replaces. Without it
+                # the manage form was a way past the wait-list: a sign-up for
+                # a plan already being polled, then an edit to any other.
+                existing = [(s.city, s.sub_filter)
+                            for s in active_subscriptions(conn) if s.id != sub_id]
+                if would_exceed_cap(existing, owner["city"], f,
+                                    max_plans_per_city=cfg.max_plans_per_city):
+                    return _result_page("waitlist_full", lang, status=503)
+                # Clear the cadence state along with the filter: both signals
+                # were measured against the OLD filter, and keeping them would
+                # leave someone who just narrowed a firehose down to one scarce
+                # office stuck on the slow cadence their previous filter earned.
+                conn.execute("UPDATE subscriptions SET filters_json=?, "
+                             "last_match_count=NULL, consecutive_digests=0 "
+                             "WHERE id=?",
+                             (f.to_json(), sub_id))
+                from app.repo import set_special_consent
+                set_special_consent(conn, sub_id, sensitive)
+                if sensitive:
+                    # Switching into a special-category service also pulls the
+                    # expiry in to the shorter retention — never pushes it out,
+                    # so this can't be used to extend an ordinary subscription.
+                    short = ttl_days_for(cfg, True)
+                    conn.execute(
+                        "UPDATE subscriptions SET expires_at=datetime('now', ?) "
+                        "WHERE id=? AND expires_at > datetime('now', ?)",
+                        (f"+{short} days", sub_id, f"+{short} days"),
+                    )
             back_label = ("Zurück zu den Einstellungen" if lang == "de"
                           else "Back to your settings")
             return _result_page("updated", lang,
