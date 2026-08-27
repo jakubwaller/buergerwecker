@@ -510,7 +510,8 @@ def test_signing_up_again_does_not_lift_a_complaint(db):
 def _signup(c, email, ip):
     return c.post("/subscribe",
                   data={"email": email, "city": "leipzig",
-                        "appointment_type": "A", "all_locations": "1",
+                        "appointment_type": "29cd0a26-fe7a-4d65-88cd-1e05fd749c71",
+                        "all_locations": "1",
                         "lang": "de"},
                   headers={"X-Forwarded-For": ip})
 

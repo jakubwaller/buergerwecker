@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 import sqlite3
 from datetime import datetime, timedelta
 
@@ -501,8 +502,10 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
     try:
         from app.repo import active_subscriptions
         from app.planning import build_plans
-        import os
-        max_cap = int(os.environ.get("MAX_PLANS_PER_CITY", "10"))
+        # The same cap the poller builds plans with. Only a caller without a
+        # Config at all (stats(conn)) falls back to the environment.
+        max_cap = (cfg.max_plans_per_city if cfg is not None
+                   else int(os.environ.get("MAX_PLANS_PER_CITY", "10")))
         subs = active_subscriptions(conn)
         plans = build_plans([(s.city, s.sub_filter) for s in subs],
                             max_plans_per_city=max_cap)

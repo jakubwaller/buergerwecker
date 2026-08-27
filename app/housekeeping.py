@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import sqlite3
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from app.config import load_config
@@ -32,7 +33,7 @@ def run_once(conn: sqlite3.Connection) -> None:
     _prune_availability(conn)
     _check_parser_canary(conn, cfg)
     _check_backup_health(conn, cfg)
-    _sync_catalogs(conn, cfg)
+    _start_catalog_sync(cfg)
     _send_summary_email(conn, cfg)
     conn.execute(
         "INSERT INTO meta (key,value) VALUES ('last_housekeeping_at', ?) "
@@ -355,6 +356,45 @@ def _check_backup_health(conn, cfg):
                   idem_key=_idem_key(0, [], f"backup-stale-{datetime.utcnow().date()}"))
     except Exception:
         pass
+
+_sync_thread: threading.Thread | None = None
+
+def _start_catalog_sync(cfg) -> None:
+    """Run _sync_catalogs on its own thread, with its own connection.
+
+    Housekeeping runs inline in the poller's single loop, and the sync walks
+    every tenant against its live portal — TEVIS sleeps half a second per
+    service, Smart-CJM drives a three-step wizard per service — so done inline
+    it stopped polling for minutes once a day, and nothing noticed: no cycle
+    failed, the canary saw nothing, a slot that came and went in that window
+    was simply never reported. The thread is a daemon (the sync writes
+    atomically, so a stop mid-run leaves no half file) and a run still going
+    when the next day's housekeeping fires is left alone rather than doubled.
+    """
+    global _sync_thread
+    if not cfg.catalog_sync_enabled:
+        return
+    if _sync_thread is not None and _sync_thread.is_alive():
+        print("catalog sync: previous run still in progress, skipping", flush=True)
+        return
+
+    def _run():
+        from app.db import connect
+        conn = connect(cfg.db_path)
+        try:
+            _sync_catalogs(conn, cfg)
+        except Exception as exc:
+            print(f"catalog sync failed: {exc!r}", flush=True)
+        finally:
+            conn.close()
+
+    _sync_thread = threading.Thread(target=_run, name="catalog-sync", daemon=True)
+    _sync_thread.start()
+
+def wait_for_catalog_sync(timeout: float | None = None) -> None:
+    """Block until the background sync (if any) is done. For tests."""
+    if _sync_thread is not None:
+        _sync_thread.join(timeout)
 
 def _sync_catalogs(conn, cfg):
     """Refresh per-city catalog files from live APIs. Alerts developer on drift.

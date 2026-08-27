@@ -6,7 +6,7 @@ from app.filters import matches
 from app.planning import build_plans
 from app.repo import (active_subscriptions, digests_in_window, has_seen_slot,
                       record_cap_hold, reset_digest_streak)
-from app.scrapers import get_scraper
+from app.scrapers import get_scraper, UnsupportedCity
 from app.http_session import CountingSession
 from app.models import SeenKey, Slot, per_slot_key
 from app.analytics import record_availability
@@ -199,6 +199,12 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
             polled_ok.setdefault(p.city, set()).add(p.appointment_type)
             if slots_by_plan[p.key()]:
                 cities_with_any_slot.add(p.city)
+        except UnsupportedCity as exc:
+            # Not an upstream hiccup but a tenant nobody can poll — its
+            # subscribers would otherwise wait in silence until the parser
+            # canary fires hours later.
+            print(f"cycle {cycle_id}: no scraper for {exc}", flush=True)
+            slots_by_plan[p.key()] = []
         except Exception:
             slots_by_plan[p.key()] = []
         polls_delta[p.city] = polls_delta.get(p.city, 0) + 1

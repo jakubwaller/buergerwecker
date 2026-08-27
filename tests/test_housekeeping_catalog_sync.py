@@ -2,7 +2,7 @@ from datetime import time
 from unittest.mock import patch
 import pytest
 from app.db import connect, init_schema
-from app.housekeeping import run_once
+from app.housekeeping import run_once, wait_for_catalog_sync
 
 
 def _env(monkeypatch, **overrides):
@@ -45,6 +45,7 @@ def test_housekeeping_runs_catalog_sync_when_flag_on(db, monkeypatch):
          patch("app.catalog_sync.sync_city") as sync_city:
         sync_city.return_value = {"service_drift": {}, "location_drift": {}}
         run_once(db)
+        wait_for_catalog_sync()
         assert sync_city.called
         # Should be called once per city directory under catalog/; leipzig is the
         # only one shipped today.
@@ -65,6 +66,7 @@ def test_housekeeping_alerts_developer_when_catalog_drift_detected(db, monkeypat
     with patch("app.mail.send") as mail_send, \
          patch("app.catalog_sync.sync_city", side_effect=fake_sync):
         run_once(db)
+        wait_for_catalog_sync()
         # mail.send must have been called at least once with the dev email
         # and a subject mentioning catalog drift.
         drift_calls = [c for c in mail_send.call_args_list
@@ -79,3 +81,27 @@ def test_housekeeping_swallows_catalog_sync_exception(db, monkeypatch):
     with patch("app.mail.send"), \
          patch("app.catalog_sync.sync_city", side_effect=RuntimeError("boom")):
         run_once(db)  # must not raise
+        wait_for_catalog_sync()
+
+
+def test_housekeeping_does_not_wait_for_the_catalog_sync(db, monkeypatch):
+    """The sync walks every tenant's live portal and takes minutes; run_once
+    is called inline from the poll loop, so it must hand the sync off and
+    return, or polling stops for the duration."""
+    import threading
+    _env(monkeypatch, CATALOG_SYNC_ENABLED="1")
+    release = threading.Event()
+    started = threading.Event()
+
+    def slow_sync(city, http, alert_fn, catalog_root=None):
+        started.set()
+        release.wait(5)
+        return {"service_drift": {}, "location_drift": {}}
+
+    with patch("app.mail.send"), \
+         patch("app.catalog_sync.sync_city", side_effect=slow_sync):
+        run_once(db)
+        assert started.wait(5)
+        # run_once has returned while the first city is still syncing.
+        release.set()
+        wait_for_catalog_sync(5)
