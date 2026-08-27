@@ -446,6 +446,25 @@ def _offered_sensitive(catalog) -> list[str]:
                   if catalog.is_sensitive(u))
 
 
+def _stamp_meta_now(conn, key: str) -> None:
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?, CURRENT_TIMESTAMP) "
+        "ON CONFLICT (key) DO UPDATE SET value=excluded.value, "
+        "updated_at=CURRENT_TIMESTAMP",
+        (key,),
+    )
+
+
+def _bump_meta_counter(conn, key: str) -> None:
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?, '1') "
+        "ON CONFLICT (key) DO UPDATE SET "
+        "value = CAST(CAST(meta.value AS INTEGER) + 1 AS TEXT), "
+        "updated_at = CURRENT_TIMESTAMP",
+        (key,),
+    )
+
+
 def _stamp_webhook_seen(conn, provider: str) -> None:
     """Remember when this provider last reached us, for any event at all.
 
@@ -454,12 +473,7 @@ def _stamp_webhook_seen(conn, provider: str) -> None:
     appearing to work, and the first symptom is a damaged sending reputation
     weeks later. /admin grades this timestamp so the silence is visible."""
     try:
-        conn.execute(
-            "INSERT INTO meta (key, value) VALUES (?, CURRENT_TIMESTAMP) "
-            "ON CONFLICT (key) DO UPDATE SET value=excluded.value, "
-            "updated_at=CURRENT_TIMESTAMP",
-            (f"last_webhook_at_{provider}",),
-        )
+        _stamp_meta_now(conn, f"last_webhook_at_{provider}")
     except Exception:
         log.exception("failed to stamp webhook receipt")
 
@@ -471,16 +485,31 @@ def _count_webhook_error(cfg, provider: str) -> None:
     stale against a provider's format change. This counter is what /admin
     reads."""
     try:
-        conn = connect(cfg.db_path)
-        conn.execute(
-            "INSERT INTO meta (key, value) VALUES (?, '1') "
-            "ON CONFLICT (key) DO UPDATE SET "
-            "value = CAST(CAST(meta.value AS INTEGER) + 1 AS TEXT), "
-            "updated_at = CURRENT_TIMESTAMP",
-            (f"webhook_errors_{provider}",),
-        )
+        _bump_meta_counter(connect(cfg.db_path), f"webhook_errors_{provider}")
     except Exception:
         log.exception("failed to record webhook parse error")
+
+def _count_webhook_rejection(cfg, provider: str) -> None:
+    """Record a post that carried the right URL secret but a bad signature.
+
+    Only Sweego signs, and a signature mismatch is the one failure that no
+    other measure can tell from silence: the dashboard is posting, the URL is
+    right, and the delivery is thrown away with a 403 that goes nowhere. A
+    misread `SWEEGO_WEBHOOK_SECRET` — the docs never settled its encoding, see
+    `webhooks._signing_keys` — would look exactly like a webhook nobody wired
+    up, for as long as nobody compared the provider's own delivery log with
+    /admin. The count and the stamp let /admin say "rejected" instead of
+    "never reported", and the ops summary raise it while it is fresh.
+
+    A wrong *URL* secret is deliberately not counted here: that path is
+    reachable by anyone who guesses a provider name, and a scanner must not be
+    able to paint a red line on the dashboard."""
+    try:
+        conn = connect(cfg.db_path)
+        _bump_meta_counter(conn, f"webhook_rejected_{provider}")
+        _stamp_meta_now(conn, f"last_webhook_rejected_at_{provider}")
+    except Exception:
+        log.exception("failed to record webhook rejection")
 
 def create_app() -> Flask:
     app = Flask(__name__,
@@ -532,7 +561,11 @@ def create_app() -> Flask:
                 "alternate_de": f"{base}{path}",
                 "alternate_en": f"{base}{path}?lang=en",
                 "indexable": indexable,
-                "og_image": f"{base}/og-image.png"}
+                "og_image": f"{base}/og-image.png",
+                # The FAQ promises the per-subscriber daily cap in words, so
+                # it reads the configured number rather than hard-coding one.
+                "digest_cap": app.config["TERMINE_CONFIG"]
+                .max_digests_per_subscriber_per_day}
 
     def _result_page(key: str, lang: str, *, status: int = 200,
                      action_url: str | None = None,
@@ -633,6 +666,10 @@ def create_app() -> Flask:
                     timestamp=request.headers.get("webhook-timestamp", ""),
                     signature=request.headers.get("webhook-signature", ""),
                     body=body, secret=cfg.sweego_webhook_secret):
+                _count_webhook_rejection(cfg, provider)
+                log.warning("webhook %s: bad signature on %d bytes — "
+                            "SWEEGO_WEBHOOK_SECRET does not match the "
+                            "dashboard", provider, len(body))
                 return "bad signature", 403
         payload = request.get_json(force=True, silent=True)
         if payload is None:

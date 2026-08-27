@@ -309,10 +309,11 @@
               {%- if pr.silent %} <span class="adm-muted">· silent over 48h — check the webhook in the provider dashboard</span>{% endif %}
             {% elif pr.sent_recently %}
               <span class="quota-hot">never reported</span>
-              <span class="adm-muted">· {{ pr.sent_recently }} sent in 48h and no feedback — the webhook is not wired up</span>
+              <span class="adm-muted">· {{ pr.sent_recently }} sent in 48h, last {{ pr.last_sent_at }}, and no feedback — the webhook is not wired up, or was wired after that last send</span>
             {% else %}
               <span class="adm-muted">idle · nothing sent through this leg in 48h</span>
             {% endif %}
+            {%- if d.rejected.get(pr.name) %}  ·  <span class="quota-hot">{{ d.rejected[pr.name].n }} rejected for a bad signature</span> <span class="adm-muted">· last {{ d.rejected[pr.name].last }} — the signing secret in .env does not match the dashboard</span>{% endif %}
             {%- if d.parse_errors.get(pr.name) %}  ·  <span class="quota-hot">{{ d.parse_errors[pr.name] }} unreadable payloads</span>{% endif %}
           </td>
         </tr>

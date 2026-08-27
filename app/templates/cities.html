@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_parts.html" import city_grid, faq, banners %}
+{% from "_parts.html" import city_grid, faq, banners with context %}
 {% block content %}
   {{ banners(confirmed, error, lang) }}
 

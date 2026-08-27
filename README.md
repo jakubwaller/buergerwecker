@@ -21,6 +21,10 @@ which offices work for you, and receive an email the moment a matching
 slot is available on the city's official booking site. You then book it
 yourself there. We never book on your behalf.
 
+A subscription gets at most two mails in any 24 hours
+(`MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY`); slots that appear after that go into
+the next mail once the window frees. The FAQ on the site says so.
+
 For the Ausländerbehörde, booking additionally requires the personal
 Termin-Code from the office's letter — this service only tells you when a
 pickup slot is free.

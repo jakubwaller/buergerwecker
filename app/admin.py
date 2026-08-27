@@ -171,6 +171,10 @@ def summary_anomalies(s: dict, *, now: datetime) -> list[str]:
     for name in d.get("providers_silent") or []:
         out.append(f"no delivery feedback from {name} in "
                    f"{WEBHOOK_SILENT_HOURS}h — check its webhook")
+    for name in d.get("providers_rejecting") or []:
+        out.append(f"{name} delivery feedback rejected for a bad signature in "
+                   f"the last {WEBHOOK_SILENT_HOURS}h — the signing secret in "
+                   f".env does not match its dashboard")
 
     # 3. Signup volume deviates sharply from the trailing 7-day baseline — a
     #    press/Reddit surge, or an inflow that suddenly dried up.
@@ -363,7 +367,8 @@ def _deliverability(conn: sqlite3.Connection, cfg=None) -> dict:
     # cannot render during one.
     out: dict = {"configured": bool(getattr(cfg, "webhook_secret", "")),
                  "by_reason": {}, "providers": [], "providers_silent": [],
-                 "parse_errors": {}, "suppressed": 0, "watchlist": 0,
+                 "parse_errors": {}, "rejected": {}, "providers_rejecting": [],
+                 "suppressed": 0, "watchlist": 0,
                  "sent_30d": 0, "complaint_rate": None, "bounce_rate": None,
                  "complaint_30d": 0, "hard_bounce_30d": 0}
     try:
@@ -403,27 +408,54 @@ def _deliverability(conn: sqlite3.Connection, cfg=None) -> dict:
         # at the end of the fallback chain reports nothing because it sent
         # nothing, and flagging that every day teaches the reader to skip the
         # whole section.
-        sent = conn.execute(
-            "SELECT COUNT(*) AS n FROM sent_idempotency WHERE provider=? "
-            "AND sent_at > datetime('now', ?)",
+        # The last send is shown next to the count: a leg whose last send
+        # predates the day its dashboard was wired reads as "never reported"
+        # until that send ages out of the window, and the timestamp is what
+        # lets the reader tell that from a webhook that is really dead.
+        sent_row = conn.execute(
+            "SELECT COUNT(*) AS n, MAX(sent_at) AS last FROM sent_idempotency "
+            "WHERE provider=? AND sent_at > datetime('now', ?)",
             (name, f"-{WEBHOOK_SILENT_HOURS} hours"),
-        ).fetchone()["n"]
+        ).fetchone()
+        sent, last_sent = sent_row["n"], sent_row["last"]
         silent = bool(sent)
         if silent and last:
-            try:
-                silent = (datetime.utcnow() - datetime.fromisoformat(last)
-                          ) > timedelta(hours=WEBHOOK_SILENT_HOURS)
-            except ValueError:
-                silent = True
+            silent = _older_than(last, WEBHOOK_SILENT_HOURS)
         out["providers"].append({"name": name, "last_event_at": last,
-                                 "sent_recently": sent, "silent": silent})
-        if silent:
+                                 "sent_recently": sent,
+                                 "last_sent_at": last_sent, "silent": silent})
+        # A provider whose posts we are rejecting for a bad signature is
+        # silent by the numbers, but "the signing secret is wrong" is the
+        # diagnosis and "check its webhook" the symptom; one line, not two.
+        rej = conn.execute("SELECT value FROM meta WHERE key=?",
+                           (f"webhook_rejected_{name}",)).fetchone()
+        rej_at = conn.execute("SELECT value FROM meta WHERE key=?",
+                              (f"last_webhook_rejected_at_{name}",)).fetchone()
+        rejecting = False
+        if rej:
+            out["rejected"][name] = {"n": rej["value"],
+                                     "last": rej_at["value"] if rej_at else None}
+            rejecting = bool(rej_at) and not _older_than(rej_at["value"],
+                                                          WEBHOOK_SILENT_HOURS)
+        if rejecting:
+            out["providers_rejecting"].append(name)
+        elif silent:
             out["providers_silent"].append(name)
         err = conn.execute("SELECT value FROM meta WHERE key=?",
                            (f"webhook_errors_{name}",)).fetchone()
         if err:
             out["parse_errors"][name] = err["value"]
     return out
+
+
+def _older_than(stamp: str, hours: int) -> bool:
+    """True if a `meta` timestamp is more than `hours` old — or unreadable,
+    which for a liveness check is the same thing."""
+    try:
+        return (datetime.utcnow() - datetime.fromisoformat(stamp)
+                ) > timedelta(hours=hours)
+    except ValueError:
+        return True
 
 def stats(conn: sqlite3.Connection, cfg=None) -> dict:
     from app.mail import deferral_walls_today, last_deferral
