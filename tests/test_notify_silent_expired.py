@@ -80,6 +80,20 @@ def test_cohort_is_expired_unwarned_and_still_renewable(db):
     assert [r["id"] for r in rows] == [inside]
 
 
+def test_someone_who_signed_up_again_is_not_invited_back(db):
+    """Reviving the old row next to the new one would double their digests;
+    the re-signup also means the apology's call to action is moot."""
+    _sub(db, "back@example.com", expired_days_ago=3)
+    _sub(db, "Back@example.com", expired_days_ago=-90)  # fresh term, same city
+    other_city = _sub(db, "elsewhere@example.com", expired_days_ago=3)
+    sid = insert_pending(db, email="elsewhere@example.com", city="dresden",
+                         language="de", filter_=_f(), ttl_days=90)
+    confirm(db, sid)
+    rows = cohort(db, load_config())
+    # A live subscription in a DIFFERENT city does not cover the expired one.
+    assert [r["id"] for r in rows] == [other_city]
+
+
 def test_dry_run_reports_and_sends_nothing(db):
     _sub(db)
     with patch("app.mail._call_mailjet_batch") as mb:
