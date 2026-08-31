@@ -412,6 +412,28 @@ after that.
 The Datenschutz page reads all three periods from config, so it cannot promise a term the
 deploy no longer keeps.
 
+### One-off: apology mail for terms that expired before the check-in existed
+
+Terms that ended before the check-in shipped (2026-08-26, PR #70) expired silently — digests just
+stopped, and to the subscriber that looks like the service dying. `scripts/notify_silent_expired.py`
+mails the still-renewable part of that cohort once: an apology, the `/renew` link they never got,
+and the unsubscribe link. It selects confirmed, never-asked (`reminder_sent_at IS NULL`), expired
+subscriptions still inside `EXPIRED_GRACE_DAYS`; anyone already soft-deleted is left alone.
+
+Sends go through the same quota-aware batch path as digests, so the run cannot blow the daily
+pool: what does not fit is deferred and the report says so. Delivered subscribers get the
+once-per-term latch stamped, so re-running only retries the unsent rest. Dry run first:
+
+```bash
+ssh vps 'cd ~/termine-notifier && docker compose run --rm poller \
+    python scripts/notify_silent_expired.py --db /data/app.db'
+ssh vps 'cd ~/termine-notifier && docker compose run --rm poller \
+    python scripts/notify_silent_expired.py --db /data/app.db --send'
+```
+
+The cohort shrinks to nothing on its own as the grace windows close, so this script retires
+itself — after mid-September 2026 a dry run reporting 0 is the expected result.
+
 ## Polling cadence
 
 The poller wakes once a minute, but each tenant can set
