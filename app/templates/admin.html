@@ -202,8 +202,133 @@
       <div class="stat"><div class="stat-num">{{ s.signups_last_7d }}</div><div class="stat-label">Signups · 7d</div></div>
       <div class="stat"><div class="stat-num">{{ s.emails_sent_last_7d }}</div><div class="stat-label">Emails sent · 7d</div></div>
       <div class="stat"><div class="stat-num">{{ s.emails_sent_recorded }}</div><div class="stat-label">Emails sent · {% if s.emails_sent_since %}since {{ s.emails_sent_since }}{% else %}recorded{% endif %}</div></div>
-      <div class="stat"><div class="stat-num">{{ s.slots_cached }}</div><div class="stat-label">Slots cached</div></div>
+      <div class="stat"><div class="stat-num">{{ s.cancellations_24h }}</div><div class="stat-label">Cancellations · 24h</div></div>
+      <div class="stat"><div class="stat-num">{{ s.cancellations_7d }}</div><div class="stat-label">Cancellations · 7d</div></div>
+      {# Same combined figure as the Email quota section's first row — the
+         rolling 24h window is what actually gates sending. #}
+      {% set capped = s.email_usage.values()|selectattr("day_quota")|list %}
+      {% if capped %}
+        {% set roll = capped|sum(attribute="rolling") %}
+        {% set rcap = capped|sum(attribute="day_quota") %}
+        {% set rpct = (100 * roll / rcap)|round|int if rcap else 0 %}
+        <div class="stat"><div class="stat-num{% if rpct >= 80 %} quota-hot{% endif %}">{{ rpct }}%</div><div class="stat-label">Email quota · rolling 24h · {{ roll }} / {{ rcap }}</div></div>
+      {% endif %}
     </div>
+  </section>
+
+  <section class="adm-section">
+    <details class="adm-collapse" open>
+      <summary><h2>Usage <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· signups per UTC day, last 30 days</span></h2></summary>
+      {% if s.usage_daily %}
+        {% set days = s.usage_daily|reverse|list %}
+        {% set umax = (s.usage_daily|map(attribute='signups')|max) or 1 %}
+        <div class="mini-stats">
+          <div><div class="ms-num">{{ s.usage_daily|sum(attribute='signups') }}</div><div class="ms-lbl">Signups · 30d</div></div>
+          <div><div class="ms-num">{{ s.usage_daily|sum(attribute='confirmed') }}</div><div class="ms-lbl">Confirmed</div></div>
+          <div><div class="ms-num">{{ s.usage_daily|sum(attribute='deleted') }}</div><div class="ms-lbl">Cancelled</div></div>
+        </div>
+        {# Stacked column: confirmed (solid) at the base, still-pending (light) on
+           top. Hover a day for the exact split and the per-city breakdown. #}
+        <div class="bars">
+          {% for d in days %}
+            {% set bycity = d.by_city|dictsort|map('join', ' ')|join(' · ') %}
+            <div class="bar-col" title="{{ d.day }} · {{ d.signups }} signups ({{ d.confirmed }} confirmed, {{ d.deleted }} cancelled){% if bycity %} · {{ bycity }}{% endif %}">
+              {% if d.signups %}
+                <div class="bar" style="height: {{ (100 * d.signups / umax)|round(1) }}%">
+                  <div class="bar-fill" style="height: {{ (100 * d.confirmed / d.signups)|round(1) }}%"></div>
+                </div>
+              {% else %}
+                <div class="bar empty"></div>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+        {% set first_day = days|first %}{% set last_day = days|last %}
+        <div class="bar-axis"><span>{{ first_day.day }}</span><span>{{ last_day.day }}</span></div>
+        <div class="legend">
+          <span><span class="swatch" style="background:var(--accent)"></span>Confirmed</span>
+          <span><span class="swatch" style="background:color-mix(in srgb, var(--accent) 26%, transparent)"></span>Pending confirmation</span>
+        </div>
+      {% else %}
+        <p class="adm-muted">No signups in the last 30 days.</p>
+      {% endif %}
+    </details>
+  </section>
+
+  <section class="adm-section">
+    <details class="adm-collapse" open>
+      <summary><h2>Subscribers <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· distinct people with an active subscription at the end of each UTC day, last 30 days</span></h2></summary>
+      {% set days = s.subscribers_daily %}
+      {% if days %}
+        {% set smax = (days|map(attribute='people')|max) or 1 %}
+        {% set first_day = days|first %}{% set last_day = days|last %}
+        {% set delta = last_day.people - first_day.people %}
+        <div class="mini-stats">
+          <div><div class="ms-num">{{ last_day.people }}</div><div class="ms-lbl">Now</div></div>
+          <div><div class="ms-num">{{ first_day.people }}</div><div class="ms-lbl">30 days ago</div></div>
+          <div><div class="ms-num">{{ '%+d'|format(delta) }}</div><div class="ms-lbl">Change</div></div>
+          <div><div class="ms-num">{{ smax }}</div><div class="ms-lbl">Peak</div></div>
+        </div>
+        {# One column per day; hover for the people / subscription-row split. A
+           person holding several subscriptions counts once — this is the
+           headline "active subscribers" figure, back in time. #}
+        <div class="bars">
+          {% for d in days %}
+            <div class="bar-col" title="{{ d.day }} · {{ d.people }} people · {{ d.subscriptions }} subscriptions">
+              {% if d.people %}
+                <div class="bar" style="height: {{ (100 * d.people / smax)|round(1) }}%">
+                  <div class="bar-fill" style="height: 100%"></div>
+                </div>
+              {% else %}
+                <div class="bar empty"></div>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+        <div class="bar-axis"><span>{{ first_day.day }}</span><span>{{ last_day.day }}</span></div>
+      {% else %}
+        <p class="adm-muted">No subscriber history yet.</p>
+      {% endif %}
+    </details>
+  </section>
+
+  <section class="adm-section">
+    <details class="adm-collapse" open>
+      <summary><h2>Cancellations <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· distinct people whose subscription ended, per UTC day, last 30 days</span></h2></summary>
+      {% set days = s.cancellations_daily %}
+      {% if days %}
+        {% set cmax = (days|map(attribute='people')|max) or 1 %}
+        {% set first_day = days|first %}{% set last_day = days|last %}
+        <div class="mini-stats">
+          <div><div class="ms-num">{{ days|sum(attribute='people') }}</div><div class="ms-lbl">Cancelled · 30d</div></div>
+          <div><div class="ms-num">{{ days|sum(attribute='unsubscribed') }}</div><div class="ms-lbl">Unsubscribed</div></div>
+          <div><div class="ms-num">{{ days|sum(attribute='expired') }}</div><div class="ms-lbl">Expired, not renewed</div></div>
+        </div>
+        {# Stacked column: people who chose to leave (solid) at the base, people
+           whose subscription ran out unrenewed (light) on top. The split is
+           inferred from deleted_at vs expires_at — there is no reason column. #}
+        <div class="bars">
+          {% for d in days %}
+            <div class="bar-col" title="{{ d.day }} · {{ d.people }} people ({{ d.unsubscribed }} unsubscribed, {{ d.expired }} expired) · {{ d.subscriptions }} subscriptions">
+              {% if d.people %}
+                <div class="bar" style="height: {{ (100 * d.people / cmax)|round(1) }}%">
+                  <div class="bar-fill" style="height: {{ (100 * d.unsubscribed / d.people)|round(1) }}%"></div>
+                </div>
+              {% else %}
+                <div class="bar empty"></div>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+        <div class="bar-axis"><span>{{ first_day.day }}</span><span>{{ last_day.day }}</span></div>
+        <div class="legend">
+          <span><span class="swatch" style="background:var(--accent)"></span>Unsubscribed</span>
+          <span><span class="swatch" style="background:color-mix(in srgb, var(--accent) 26%, transparent)"></span>Expired, not renewed</span>
+        </div>
+      {% else %}
+        <p class="adm-muted">No cancellations in the last 30 days.</p>
+      {% endif %}
+    </details>
   </section>
 
   <section class="adm-section">
@@ -404,121 +529,6 @@
         {% endfor %}
       {% else %}
         <p class="adm-muted">No samples yet — the first one lands within ~15 minutes of the next poll.</p>
-      {% endif %}
-    </details>
-  </section>
-
-  <section class="adm-section">
-    <details class="adm-collapse" open>
-      <summary><h2>Usage <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· signups per UTC day, last 30 days</span></h2></summary>
-      {% if s.usage_daily %}
-        {% set days = s.usage_daily|reverse|list %}
-        {% set umax = (s.usage_daily|map(attribute='signups')|max) or 1 %}
-        <div class="mini-stats">
-          <div><div class="ms-num">{{ s.usage_daily|sum(attribute='signups') }}</div><div class="ms-lbl">Signups · 30d</div></div>
-          <div><div class="ms-num">{{ s.usage_daily|sum(attribute='confirmed') }}</div><div class="ms-lbl">Confirmed</div></div>
-          <div><div class="ms-num">{{ s.usage_daily|sum(attribute='deleted') }}</div><div class="ms-lbl">Cancelled</div></div>
-        </div>
-        {# Stacked column: confirmed (solid) at the base, still-pending (light) on
-           top. Hover a day for the exact split and the per-city breakdown. #}
-        <div class="bars">
-          {% for d in days %}
-            {% set bycity = d.by_city|dictsort|map('join', ' ')|join(' · ') %}
-            <div class="bar-col" title="{{ d.day }} · {{ d.signups }} signups ({{ d.confirmed }} confirmed, {{ d.deleted }} cancelled){% if bycity %} · {{ bycity }}{% endif %}">
-              {% if d.signups %}
-                <div class="bar" style="height: {{ (100 * d.signups / umax)|round(1) }}%">
-                  <div class="bar-fill" style="height: {{ (100 * d.confirmed / d.signups)|round(1) }}%"></div>
-                </div>
-              {% else %}
-                <div class="bar empty"></div>
-              {% endif %}
-            </div>
-          {% endfor %}
-        </div>
-        {% set first_day = days|first %}{% set last_day = days|last %}
-        <div class="bar-axis"><span>{{ first_day.day }}</span><span>{{ last_day.day }}</span></div>
-        <div class="legend">
-          <span><span class="swatch" style="background:var(--accent)"></span>Confirmed</span>
-          <span><span class="swatch" style="background:color-mix(in srgb, var(--accent) 26%, transparent)"></span>Pending confirmation</span>
-        </div>
-      {% else %}
-        <p class="adm-muted">No signups in the last 30 days.</p>
-      {% endif %}
-    </details>
-  </section>
-
-  <section class="adm-section">
-    <details class="adm-collapse" open>
-      <summary><h2>Subscribers <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· distinct people with an active subscription at the end of each UTC day, last 30 days</span></h2></summary>
-      {% set days = s.subscribers_daily %}
-      {% if days %}
-        {% set smax = (days|map(attribute='people')|max) or 1 %}
-        {% set first_day = days|first %}{% set last_day = days|last %}
-        {% set delta = last_day.people - first_day.people %}
-        <div class="mini-stats">
-          <div><div class="ms-num">{{ last_day.people }}</div><div class="ms-lbl">Now</div></div>
-          <div><div class="ms-num">{{ first_day.people }}</div><div class="ms-lbl">30 days ago</div></div>
-          <div><div class="ms-num">{{ '%+d'|format(delta) }}</div><div class="ms-lbl">Change</div></div>
-          <div><div class="ms-num">{{ smax }}</div><div class="ms-lbl">Peak</div></div>
-        </div>
-        {# One column per day; hover for the people / subscription-row split. A
-           person holding several subscriptions counts once — this is the
-           headline "active subscribers" figure, back in time. #}
-        <div class="bars">
-          {% for d in days %}
-            <div class="bar-col" title="{{ d.day }} · {{ d.people }} people · {{ d.subscriptions }} subscriptions">
-              {% if d.people %}
-                <div class="bar" style="height: {{ (100 * d.people / smax)|round(1) }}%">
-                  <div class="bar-fill" style="height: 100%"></div>
-                </div>
-              {% else %}
-                <div class="bar empty"></div>
-              {% endif %}
-            </div>
-          {% endfor %}
-        </div>
-        <div class="bar-axis"><span>{{ first_day.day }}</span><span>{{ last_day.day }}</span></div>
-      {% else %}
-        <p class="adm-muted">No subscriber history yet.</p>
-      {% endif %}
-    </details>
-  </section>
-
-  <section class="adm-section">
-    <details class="adm-collapse" open>
-      <summary><h2>Cancellations <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· distinct people whose subscription ended, per UTC day, last 30 days</span></h2></summary>
-      {% set days = s.cancellations_daily %}
-      {% if days %}
-        {% set cmax = (days|map(attribute='people')|max) or 1 %}
-        {% set first_day = days|first %}{% set last_day = days|last %}
-        <div class="mini-stats">
-          <div><div class="ms-num">{{ days|sum(attribute='people') }}</div><div class="ms-lbl">Cancelled · 30d</div></div>
-          <div><div class="ms-num">{{ days|sum(attribute='unsubscribed') }}</div><div class="ms-lbl">Unsubscribed</div></div>
-          <div><div class="ms-num">{{ days|sum(attribute='expired') }}</div><div class="ms-lbl">Expired, not renewed</div></div>
-        </div>
-        {# Stacked column: people who chose to leave (solid) at the base, people
-           whose subscription ran out unrenewed (light) on top. The split is
-           inferred from deleted_at vs expires_at — there is no reason column. #}
-        <div class="bars">
-          {% for d in days %}
-            <div class="bar-col" title="{{ d.day }} · {{ d.people }} people ({{ d.unsubscribed }} unsubscribed, {{ d.expired }} expired) · {{ d.subscriptions }} subscriptions">
-              {% if d.people %}
-                <div class="bar" style="height: {{ (100 * d.people / cmax)|round(1) }}%">
-                  <div class="bar-fill" style="height: {{ (100 * d.unsubscribed / d.people)|round(1) }}%"></div>
-                </div>
-              {% else %}
-                <div class="bar empty"></div>
-              {% endif %}
-            </div>
-          {% endfor %}
-        </div>
-        <div class="bar-axis"><span>{{ first_day.day }}</span><span>{{ last_day.day }}</span></div>
-        <div class="legend">
-          <span><span class="swatch" style="background:var(--accent)"></span>Unsubscribed</span>
-          <span><span class="swatch" style="background:color-mix(in srgb, var(--accent) 26%, transparent)"></span>Expired, not renewed</span>
-        </div>
-      {% else %}
-        <p class="adm-muted">No cancellations in the last 30 days.</p>
       {% endif %}
     </details>
   </section>
