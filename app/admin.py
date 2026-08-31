@@ -677,6 +677,16 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         "signups_last_7d":
             scalar("SELECT COUNT(*) FROM subscriptions "
                    "WHERE created_at > datetime('now','-7 days')"),
+        # People, not rows, matching cancellations_daily: never-confirmed
+        # sign-ups were never subscribed, so their deletion cancels nothing.
+        "cancellations_24h":
+            scalar("SELECT COUNT(DISTINCT lower(email)) FROM subscriptions "
+                   "WHERE confirmed_at IS NOT NULL "
+                   "AND deleted_at > datetime('now','-1 day')"),
+        "cancellations_7d":
+            scalar("SELECT COUNT(DISTINCT lower(email)) FROM subscriptions "
+                   "WHERE confirmed_at IS NOT NULL "
+                   "AND deleted_at > datetime('now','-7 days')"),
         "emails_sent_last_7d":
             scalar("SELECT COUNT(*) FROM sent_idempotency "
                    "WHERE sent_at > datetime('now','-7 days') "

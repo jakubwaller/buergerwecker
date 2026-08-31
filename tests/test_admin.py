@@ -104,12 +104,15 @@ def test_admin_renders_new_metrics(client):
     r = client.get("/admin?token=admin-tok")
     assert r.status_code == 200
     # Always-present labels (Overview + System sections render regardless of data).
-    for label in (b"Slots cached", b"Emails sent", b"Failure alert", b"Last backup",
+    for label in (b"Emails sent", b"Failure alert", b"Last backup",
                   # People, not subscription rows — the two counts differ.
                   b"Distinct subscribers",
+                  "Cancellations · 24h".encode(), "Cancellations · 7d".encode(),
                   # The gating window, next to the UTC-day counter it disagrees with.
                   b"rolling 24h", b"combined"):
         assert label in r.data, f"missing admin metric: {label!r}"
+    # The card was dropped: nobody could say what the number meant.
+    assert b"Slots cached" not in r.data
 
 def test_admin_renders_notifications_section(client):
     r = client.get("/admin?token=admin-tok")
@@ -206,6 +209,30 @@ def test_stats_distinct_active_subscribers(tmp_path):
     s = stats(conn)
     assert s["active_subscriptions"] == 3
     assert s["active_subscribers"] == 2
+
+def test_stats_cancellation_windows(tmp_path):
+    from datetime import time
+    from app.models import Filter
+    from app.repo import insert_pending, confirm
+    conn = connect(str(tmp_path / "c.db")); init_schema(conn)
+    f = Filter(appointment_types=["A"], locations="all", weekdays=[1, 2, 3, 4, 5, 6, 7],
+               time_window_start=time(0, 0), time_window_end=time(23, 59))
+    subs = {}
+    for email in ("fresh@example.com", "midweek@example.com", "old@example.com",
+                  "never@example.com"):
+        subs[email] = insert_pending(conn, email=email, city="leipzig",
+                                     language="de", filter_=f, ttl_days=90)
+        if email != "never@example.com":
+            confirm(conn, subs[email])
+    # Cancelled 2h, 3d and 10d ago; the never-confirmed one deleted just now
+    # counts nowhere — nobody was subscribed, so nothing was cancelled.
+    for email, age in (("fresh@example.com", "-2 hours"), ("midweek@example.com", "-3 days"),
+                       ("old@example.com", "-10 days"), ("never@example.com", "-2 hours")):
+        conn.execute(f"UPDATE subscriptions SET deleted_at=datetime('now','{age}') WHERE id=?",
+                     (subs[email],))
+    s = stats(conn)
+    assert s["cancellations_24h"] == 1
+    assert s["cancellations_7d"] == 2
 
 
 # ---------- ops-summary: anomaly detection + compact email ----------
