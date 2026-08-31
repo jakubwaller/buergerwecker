@@ -1,0 +1,78 @@
+# Auto-deploy: every push to main (i.e. every squash-merge) redeploys the VPS.
+# The command it runs is the Redeploy step of docs/DEPLOY.md — that file stays
+# the runbook; change the command there and here together.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Deploys queue rather than overlap; a newer push deploys after, never during.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check secrets are configured
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          TARGET: ${{ secrets.DEPLOY_SSH_TARGET }}
+        run: |
+          missing=""
+          [ -n "$KEY" ] || missing="$missing DEPLOY_SSH_KEY"
+          [ -n "$TARGET" ] || missing="$missing DEPLOY_SSH_TARGET"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secret(s):$missing — see docs/DEPLOY.md, 'Auto-deploy secrets'."
+            exit 1
+          fi
+
+      - name: Prepare SSH
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          echo "IdentityFile ~/.ssh/id_deploy" >> ~/.ssh/config
+          if [ -n "$KNOWN_HOSTS" ]; then
+            printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+            echo "StrictHostKeyChecking yes" >> ~/.ssh/config
+          else
+            # Trust-on-first-use: fine for a fresh runner, but a pinned
+            # DEPLOY_KNOWN_HOSTS (ssh-keyscan output) is the safer setup.
+            echo "StrictHostKeyChecking accept-new" >> ~/.ssh/config
+          fi
+
+      - name: Pull and rebuild on the VPS
+        env:
+          TARGET: ${{ secrets.DEPLOY_SSH_TARGET }}
+        run: |
+          ssh "$TARGET" 'cd ~/termine-notifier && git pull --ff-only && docker compose up -d --build'
+
+      - name: Verify the VPS runs this commit
+        env:
+          TARGET: ${{ secrets.DEPLOY_SSH_TARGET }}
+        run: |
+          deployed=$(ssh "$TARGET" 'cd ~/termine-notifier && git rev-parse HEAD')
+          if [ "$deployed" != "$GITHUB_SHA" ]; then
+            echo "::error::VPS checkout is at $deployed, expected $GITHUB_SHA"
+            exit 1
+          fi
+
+      - name: Verify /healthz
+        # The apex is the health check; www and termine.jakubwaller.eu only
+        # redirect, so probing them reports a healthy deploy as a failure.
+        run: |
+          sleep 10
+          out=$(curl -fsS --retry 5 --retry-delay 5 --retry-all-errors https://buergerwecker.de/healthz)
+          [ "$out" = "ok" ] || { echo "::error::healthz said: $out"; exit 1; }

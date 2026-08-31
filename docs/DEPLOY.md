@@ -30,7 +30,28 @@
 
 ## Redeploy
 
-The normal path after a merge to `main`. The VPS holds a clone of this repo at
+Every push to `main` (i.e. every squash-merge) deploys automatically:
+`.github/workflows/deploy.yml` runs the command below over SSH, checks the VPS
+checkout is at the pushed commit, and probes `/healthz`. Watch the Deploy run
+go green instead of deploying by hand; the manual path below remains the
+fallback when the action is red or the secrets aren't set.
+
+### Auto-deploy secrets
+
+Three repository secrets (Settings → Secrets and variables → Actions):
+
+- `DEPLOY_SSH_KEY` — private key whose public half is in the VPS user's
+  `~/.ssh/authorized_keys`. Make a dedicated one rather than reusing your own:
+  `ssh-keygen -t ed25519 -f deploy_key -N "" -C buergerwecker-deploy`, then
+  `ssh-copy-id -i deploy_key.pub vps` and paste the contents of `deploy_key`.
+- `DEPLOY_SSH_TARGET` — `user@host` of the VPS.
+- `DEPLOY_KNOWN_HOSTS` (optional but recommended) — output of
+  `ssh-keyscan <host>`, pinning the VPS host key. Without it the workflow
+  trusts the host key on first use, every run.
+
+### Manual redeploy
+
+The fallback path after a merge to `main`. The VPS holds a clone of this repo at
 `~/termine-notifier` (containers `termine-notifier-web-1`, `-poller-1`, `-backup-1`):
 
 ```bash
