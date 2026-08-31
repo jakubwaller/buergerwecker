@@ -62,7 +62,15 @@ jobs:
           # Fail here with a readable message rather than at ssh time with
           # libcrypto noise (seen on the first live run, 2026-08-31).
           if ! ssh-keygen -y -P '' -f ~/.ssh/id_deploy > /dev/null 2> /tmp/keyerr; then
-            echo "::error::DEPLOY_SSH_KEY is not a usable private key ($(tail -1 /tmp/keyerr)). Either it is passphrase-protected — make an unencrypted deploy key instead — or the paste lost characters; paste the whole file including the BEGIN/END lines."
+            # Shape metadata only — counts and marker presence, never content —
+            # so a phone-side fix can be made without a blind retry.
+            lines=$(wc -l < ~/.ssh/id_deploy)
+            bytes=$(wc -c < ~/.ssh/id_deploy)
+            begin=$(grep -c -- '-----BEGIN' ~/.ssh/id_deploy || true)
+            end=$(grep -c -- '-----END' ~/.ssh/id_deploy || true)
+            enc=$(grep -c 'ENCRYPTED' ~/.ssh/id_deploy || true)
+            nonascii=$(LC_ALL=C grep -c '[^ -~]' ~/.ssh/id_deploy || true)
+            echo "::error::DEPLOY_SSH_KEY is not a usable private key ($(tail -1 /tmp/keyerr)). Shape after repair: $lines lines, $bytes bytes, BEGIN markers: $begin, END markers: $end, ENCRYPTED header: $enc, lines with non-ASCII characters: $nonascii. If ENCRYPTED is 1 or the key has a passphrase, paste an unencrypted deploy key; if markers are 0 or non-ASCII is >0, the paste mangled the text — copy the whole file again including the BEGIN/END lines."
             exit 1
           fi
           echo "IdentityFile ~/.ssh/id_deploy" >> ~/.ssh/config
