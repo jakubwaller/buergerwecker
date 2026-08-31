@@ -127,11 +127,12 @@ def _checkin_mail(lang: str, *, city: str | None, expires_at: str,
                   grace_days: int, renew_url: str, unsub_url: str,
                   manage_url: str) -> tuple[str, str]:
     """Subject and plain-text body of the still-looking check-in."""
+    from app.i18n import format_date
     stop = datetime.fromisoformat(expires_at[:19]).date()
     resume_until = stop + timedelta(days=grace_days)
+    fmt = lambda d: format_date(d, lang)  # noqa: E731
     if lang == "en":
         where = f" in {city}" if city else ""
-        fmt = lambda d: f"{d.day} {d.strftime('%B %Y')}"  # noqa: E731
         subj = f"Still looking for an appointment{where}?"
         body = (
             f"Still looking for an appointment{where}?\n"
@@ -146,7 +147,6 @@ def _checkin_mail(lang: str, *, city: str | None, expires_at: str,
         )
     else:
         where = f" in {city}" if city else ""
-        fmt = lambda d: d.strftime("%d.%m.%Y")  # noqa: E731
         subj = f"Suchst du noch einen Termin{where}?"
         body = (
             f"Suchst du noch einen Termin{where}?\n"

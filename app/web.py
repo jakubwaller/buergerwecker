@@ -6,7 +6,7 @@ import os
 import re
 import time as time_mod
 from collections import Counter
-from datetime import time as time_cls
+from datetime import datetime, time as time_cls
 from urllib.parse import urlencode
 from html import escape
 from pathlib import Path
@@ -21,6 +21,7 @@ from app.repo import (insert_pending, active_subscriptions, confirm,
                       soft_delete, suppression_reason, clear_delivery_block)
 from app.ratelimit import GLOBAL_IP_LIMITER, email_rate_limit_ok
 from app.tokens import sign, verify, InvalidToken
+from app.i18n import format_date
 from app.planning import would_exceed_cap
 from app.mail import send as mail_send, _idem_key
 from app.webhooks import (PARSERS, apply_events, check_secret,
@@ -416,10 +417,21 @@ def _send_confirmation_email(conn, sub_id: int, email: str, lang: str,
     return send_confirmation_now(conn, sub_id, email, lang, city, cfg)
 
 
+def _end_date(expires_at: str | None, lang: str) -> str | None:
+    """A subscription's end date, formatted for the language; None if gone."""
+    if not expires_at:
+        return None
+    return format_date(datetime.fromisoformat(expires_at[:19]).date(), lang)
+
+
 def _send_manage_link_email(conn, sub_id: int, cfg) -> None:
-    """Sends a separate email with the /manage link - NEVER in digests."""
+    """Sends a separate email with the /manage link - NEVER in digests.
+
+    Also the durable copy of the end date: the confirmed page shows it once
+    and is gone, this mail stays in the inbox (user ask, 2026-08-31 — a term
+    that ends silently reads as the service having died)."""
     row = conn.execute(
-        "SELECT email, language, city FROM subscriptions WHERE id=?",
+        "SELECT email, language, city, expires_at FROM subscriptions WHERE id=?",
         (sub_id,),
     ).fetchone()
     if not row:
@@ -430,13 +442,23 @@ def _send_manage_link_email(conn, sub_id: int, cfg) -> None:
     url = f"{cfg.public_base_url}/manage/{tok}"
     city_name = city_display_name(row["city"], row["language"])
     suffix = f" ({city_name})" if city_name else ""
+    end = _end_date(row["expires_at"], row["language"])
     if row["language"] == "de":
         body = (f"Dein Verwaltungs-Link: {url}\nMit diesem Link kannst du deine "
                 f"Einstellungen jederzeit ändern oder dich abmelden.")
+        if end:
+            body += (f"\n\nDeine Anmeldung läuft bis zum {end}. Kurz vorher "
+                     f"fragen wir per E-Mail, ob du noch suchst — ein Klick "
+                     f"verlängert sie dann, ohne Antwort endet sie automatisch.")
         subj = f"Verwaltungs-Link{suffix}"
     else:
         body = (f"Your management link: {url}\nUse it any time to change your "
                 f"settings or unsubscribe.")
+        if end:
+            body += (f"\n\nYour subscription runs until {end}. Shortly before "
+                     f"that we'll email you to ask whether you're still "
+                     f"looking — one click extends it, no reply ends it "
+                     f"automatically.")
         subj = f"Management link{suffix}"
     key = _idem_key(sub_id, [], f"manage-link-{sub_id}")
     mail_send(conn, row["email"], subj, body, idem_key=key)
@@ -654,10 +676,13 @@ def create_app() -> Flask:
                 "alternate_en": f"{base}{path}?lang=en",
                 "indexable": indexable,
                 "og_image": f"{base}/og-image.png",
-                # The FAQ promises the per-subscriber daily cap in words, so
-                # it reads the configured number rather than hard-coding one.
+                # The FAQ promises the per-subscriber daily cap and the
+                # subscription term in words, so it reads the configured
+                # numbers rather than hard-coding them.
                 "digest_cap": app.config["TERMINE_CONFIG"]
-                .max_digests_per_subscriber_per_day}
+                .max_digests_per_subscriber_per_day,
+                "ttl_days": app.config["TERMINE_CONFIG"]
+                .subscription_ttl_days}
 
     def _result_page(key: str, lang: str, *, status: int = 200,
                      action_url: str | None = None,
@@ -984,8 +1009,8 @@ def create_app() -> Flask:
                                 request.args.get("lang", "de"), status=400)
         conn = connect(cfg.db_path)
         confirm(conn, sub_id)
-        row = conn.execute("SELECT language FROM subscriptions WHERE id=?",
-                           (sub_id,)).fetchone()
+        row = conn.execute("SELECT language, expires_at FROM subscriptions "
+                           "WHERE id=?", (sub_id,)).fetchone()
         lang = row["language"] if row else "de"
         # The management-link email is a convenience, NOT part of confirmation.
         # The subscription is already confirmed above (autocommit), so a
@@ -999,6 +1024,8 @@ def create_app() -> Flask:
                 sub_id,
             )
         return render_template("confirmed.html", lang=lang,
+                               expires=_end_date(row["expires_at"], lang)
+                               if row else None,
                                kofi_url=cfg.kofi_url), 200
 
     # POST is the RFC 8058 one-click unsubscribe mail clients send to the
@@ -1091,8 +1118,12 @@ def create_app() -> Flask:
                                 status=404)
         catalog = load_catalog(row["city"])
         lang = row["language"]
+        expired = (datetime.fromisoformat(row["expires_at"][:19])
+                   < datetime.utcnow())
         return render_template("manage.html",
                                lang=lang, city=row["city"],
+                               expires=_end_date(row["expires_at"], lang),
+                               expired=expired,
                                appointment_types=catalog.appointment_types_for(lang),
                                locations=catalog.locations_for(lang), token=token,
                                sensitive_services=_offered_sensitive(catalog),

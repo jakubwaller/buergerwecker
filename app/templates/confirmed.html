@@ -24,4 +24,18 @@
       Filter jederzeit ändern oder dich abmelden.
     {% endif %}
   </p>
+
+  {% if expires %}
+  <p>
+    {% if lang == 'en' %}
+      Your subscription runs until <strong>{{ expires }}</strong>. Shortly
+      before that we'll email you to ask whether you're still looking — one
+      click extends it, no reply ends it automatically.
+    {% else %}
+      Deine Anmeldung läuft bis zum <strong>{{ expires }}</strong>. Kurz
+      vorher fragen wir per E-Mail, ob du noch suchst — ein Klick verlängert
+      sie dann, ohne Antwort endet sie automatisch.
+    {% endif %}
+  </p>
+  {% endif %}
 {% endblock %}

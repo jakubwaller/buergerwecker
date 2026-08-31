@@ -5,6 +5,27 @@
     {% if lang == 'en' %}Manage your subscription{% else %}Abonnement verwalten{% endif %}
   </h1>
 
+  {% if expires %}
+  <p>
+    {% if lang == 'en' %}
+      {% if expired %}
+        This subscription expired on {{ expires }} — notifications are paused.
+      {% else %}
+        This subscription runs until {{ expires }}. Shortly before that we'll
+        email you to ask whether you're still looking.
+      {% endif %}
+    {% else %}
+      {% if expired %}
+        Diese Anmeldung ist am {{ expires }} abgelaufen — Benachrichtigungen
+        pausieren.
+      {% else %}
+        Diese Anmeldung läuft bis zum {{ expires }}. Kurz vorher fragen wir
+        per E-Mail, ob du noch suchst.
+      {% endif %}
+    {% endif %}
+  </p>
+  {% endif %}
+
   {% set current_type = current.appointment_types[0] if current.appointment_types else "" %}
   {% set all_locations = (current.locations == "all") %}
   {% set selected_loc_set = current.locations if not all_locations else [] %}
