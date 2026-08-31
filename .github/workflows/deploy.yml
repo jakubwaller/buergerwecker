@@ -38,12 +38,14 @@ jobs:
         env:
           KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          PORT: ${{ secrets.DEPLOY_SSH_PORT }}
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           printf '%s\n' "$KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
           echo "IdentityFile ~/.ssh/id_deploy" >> ~/.ssh/config
+          echo "Port ${PORT:-22}" >> ~/.ssh/config
           if [ -n "$KNOWN_HOSTS" ]; then
             printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
             echo "StrictHostKeyChecking yes" >> ~/.ssh/config

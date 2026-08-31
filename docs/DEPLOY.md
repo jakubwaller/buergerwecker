@@ -45,9 +45,10 @@ Three repository secrets (Settings → Secrets and variables → Actions):
   `ssh-keygen -t ed25519 -f deploy_key -N "" -C buergerwecker-deploy`, then
   `ssh-copy-id -i deploy_key.pub vps` and paste the contents of `deploy_key`.
 - `DEPLOY_SSH_TARGET` — `user@host` of the VPS.
+- `DEPLOY_SSH_PORT` (optional) — sshd port when it isn't 22.
 - `DEPLOY_KNOWN_HOSTS` (optional but recommended) — output of
-  `ssh-keyscan <host>`, pinning the VPS host key. Without it the workflow
-  trusts the host key on first use, every run.
+  `ssh-keyscan -p <port> <host>`, pinning the VPS host key. Without it the
+  workflow trusts the host key on first use, every run.
 
 ### Manual redeploy
 
