@@ -47,12 +47,21 @@ from app.tokens import sign  # noqa: E402
 
 
 def cohort(conn, cfg) -> list:
+    # The NOT EXISTS drops anyone who already signed up again for the same
+    # city: their old row still matches, but reviving it next to the new one
+    # would double their digests — and the person plainly needs no invitation
+    # back. NOCASE because a re-signup can spell the address differently.
     return conn.execute(
         "SELECT id, email, language, city, expires_at FROM subscriptions "
         "WHERE deleted_at IS NULL AND confirmed_at IS NOT NULL "
         "AND reminder_sent_at IS NULL "
         "AND expires_at < CURRENT_TIMESTAMP "
         "AND expires_at >= datetime('now', ?) "
+        "AND NOT EXISTS ("
+        "  SELECT 1 FROM subscriptions s2 "
+        "  WHERE s2.email = subscriptions.email COLLATE NOCASE "
+        "  AND s2.city = subscriptions.city AND s2.id != subscriptions.id "
+        "  AND s2.deleted_at IS NULL AND s2.expires_at > CURRENT_TIMESTAMP) "
         "ORDER BY expires_at",
         (f"-{cfg.expired_grace_days} days",),
     ).fetchall()
