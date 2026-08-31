@@ -67,6 +67,72 @@ def test_confirm_survives_manage_link_email_failure(client):
     assert b"best\xc3\xa4tigt" in r.data.lower()  # "bestätigt"
 
 
+def _expected_end_date(sid, lang="de"):
+    from datetime import datetime
+    from app.i18n import format_date
+    conn = connect(os.environ["DB_PATH"])
+    exp = conn.execute("SELECT expires_at FROM subscriptions WHERE id=?",
+                       (sid,)).fetchone()["expires_at"]
+    return format_date(datetime.fromisoformat(exp[:19]).date(), lang)
+
+
+def test_confirm_page_states_the_end_date(client):
+    """The user ask of 2026-08-31: a term that ends silently reads as the
+    service having died, so the end date is named at the start."""
+    from unittest.mock import patch
+    c, sid = client
+    with patch("app.web._send_manage_link_email"):
+        r = c.get(f"/confirm/{_sign(sid, 'confirm')}")
+    assert r.status_code == 200
+    html = r.data.decode()
+    assert _expected_end_date(sid) in html
+    assert "läuft bis zum" in html
+
+
+def test_manage_link_email_states_the_end_date(client):
+    from unittest.mock import patch
+    c, sid = client
+    with patch("app.web.mail_send") as ms:
+        r = c.get(f"/confirm/{_sign(sid, 'confirm')}")
+    assert r.status_code == 200
+    body = ms.call_args.args[3]
+    assert "Verwaltungs-Link" in ms.call_args.args[2]
+    assert f"läuft bis zum {_expected_end_date(sid)}" in body
+
+
+def test_manage_page_states_the_end_date(client):
+    c, sid = client
+    r = c.get(f"/manage/{_sign(sid, 'manage')}")
+    assert r.status_code == 200
+    html = r.data.decode()
+    assert f"läuft bis zum {_expected_end_date(sid)}" in html
+
+
+def test_manage_page_says_expired_when_paused(client):
+    """An expired-but-in-grace subscription must not claim to still run."""
+    c, sid = client
+    conn = connect(os.environ["DB_PATH"])
+    conn.execute("UPDATE subscriptions SET expires_at=datetime('now','-1 day') "
+                 "WHERE id=?", (sid,))
+    r = c.get(f"/manage/{_sign(sid, 'manage')}")
+    assert r.status_code == 200
+    html = r.data.decode()
+    assert "abgelaufen" in html
+    assert "läuft bis zum" not in html
+
+
+def test_faq_states_the_configured_term(client):
+    """"Every couple of weeks" is exactly what confused a subscriber; the FAQ
+    names the configured number of days instead."""
+    c, _sid = client
+    de = c.get("/").data.decode()
+    assert "Wie lange läuft meine Anmeldung?" in de
+    assert "90 Tage" in de
+    en = c.get("/?lang=en").data.decode()
+    assert "How long does my subscription run?" in en
+    assert "90 days" in en
+
+
 def test_unsubscribe_soft_deletes(client):
     from unittest.mock import patch
     c, sid = client
