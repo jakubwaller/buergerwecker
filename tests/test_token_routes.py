@@ -46,6 +46,50 @@ def test_confirm_marks_subscription_confirmed(client):
         r2 = c.get(f"/confirm/{tok}")
     assert r2.status_code in (200, 302)
 
+def _confirmed_at(sid):
+    conn = connect(os.environ["DB_PATH"])
+    return conn.execute("SELECT confirmed_at FROM subscriptions WHERE id=?",
+                        (sid,)).fetchone()[0]
+
+
+def test_confirm_link_on_an_unsubscribed_signup_is_not_found(client):
+    from unittest.mock import patch
+    c, sid = client
+    conn = connect(os.environ["DB_PATH"])
+    conn.execute("UPDATE subscriptions SET deleted_at=CURRENT_TIMESTAMP WHERE id=?",
+                 (sid,))
+    with patch("app.web._send_manage_link_email") as ms:
+        r = c.get(f"/confirm/{_sign(sid, 'confirm')}")
+    assert r.status_code == 404
+    assert "existiert nicht mehr" in r.get_data(as_text=True)
+    assert _confirmed_at(sid) is None
+    ms.assert_not_called()
+
+
+@pytest.mark.parametrize("lang, expect_text, expect_href", [
+    ("de", "Anmeldung ist abgelaufen", 'href="/leipzig"'),
+    ("en", "sign-up has expired", 'href="/leipzig?lang=en"'),
+])
+def test_confirm_link_after_the_term_ran_out_says_sign_up_again(
+        client, lang, expect_text, expect_href):
+    """Confirm tokens never expire, and an unconfirmed row outlives its term
+    for EXPIRED_GRACE_DAYS before the soft-delete. Confirming it then would
+    show "läuft bis <past date>" and mail a promise the poller never keeps."""
+    from unittest.mock import patch
+    c, sid = client
+    conn = connect(os.environ["DB_PATH"])
+    conn.execute("UPDATE subscriptions SET language=?, "
+                 "expires_at=datetime('now','-1 day') WHERE id=?", (lang, sid))
+    with patch("app.web._send_manage_link_email") as ms:
+        r = c.get(f"/confirm/{_sign(sid, 'confirm')}")
+    assert r.status_code == 410
+    html = r.get_data(as_text=True)
+    assert expect_text in html
+    assert expect_href in html
+    assert _confirmed_at(sid) is None
+    ms.assert_not_called()
+
+
 def test_confirm_survives_manage_link_email_failure(client):
     """A failure sending the (secondary) management-link email must NOT turn a
     successful confirmation into a 500. The subscription is already confirmed;
