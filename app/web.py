@@ -140,6 +140,19 @@ _RESULT_MESSAGES: dict[str, dict] = {
                "sign-up has since ended. If you are still looking for an "
                "appointment, just sign up again. It takes a minute."),
     },
+    # Same link, but the person did confirm back then and the term has since
+    # run out (grace window, row not yet soft-deleted). "Ungenutzt" would be
+    # untrue for them, and /renew still revives the row — offer that.
+    "subscription_expired": {
+        "kind": "error",
+        "de": ("Anmeldung abgelaufen", "Diese Anmeldung ist abgelaufen",
+               "Die Laufzeit deiner Anmeldung ist vorbei, die "
+               "Benachrichtigungen haben aufgehört. Suchst du noch? Ein Klick "
+               "schaltet sie wieder ein."),
+        "en": ("Subscription expired", "This subscription has expired",
+               "Your subscription's term is over and notifications have "
+               "stopped. Still looking? One click switches them back on."),
+    },
     "not_found": {
         "kind": "error",
         "de": ("Nicht gefunden", "Abonnement nicht gefunden",
@@ -1037,7 +1050,7 @@ def create_app() -> Flask:
                                 request.args.get("lang", "de"), status=400)
         conn = connect(cfg.db_path)
         row = conn.execute(
-            "SELECT language, city, expires_at, deleted_at, "
+            "SELECT language, city, expires_at, deleted_at, confirmed_at, "
             "expires_at < CURRENT_TIMESTAMP AS expired "
             "FROM subscriptions WHERE id=?", (sub_id,)).fetchone()
         lang = row["language"] if row else request.args.get("lang", "de")
@@ -1047,12 +1060,19 @@ def create_app() -> Flask:
         # confirmation of something the poller no longer looks at.
         if row is None or row["deleted_at"] is not None:
             return _result_page("not_found", lang, status=404)
-        if row["expired"]:
+        if row["expired"] and row["confirmed_at"] is None:
             q = "?lang=en" if lang == "en" else ""
             return _result_page(
                 "signup_expired", lang, status=410,
                 action_url=f"/{row['city']}{q}",
                 action_label="Sign up again" if lang == "en" else "Neu anmelden")
+        if row["expired"]:
+            renew = sign(sub_id, "renew", primary=cfg.token_secret_primary,
+                         previous=cfg.token_secret_previous)
+            return _result_page(
+                "subscription_expired", lang, status=410,
+                action_url=f"/renew/{renew}",
+                action_label="Keep looking" if lang == "en" else "Weiter suchen")
         confirm(conn, sub_id)
         # The management-link email is a convenience, NOT part of confirmation.
         # The subscription is already confirmed above (autocommit), so a

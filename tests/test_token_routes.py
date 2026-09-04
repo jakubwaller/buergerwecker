@@ -90,6 +90,32 @@ def test_confirm_link_after_the_term_ran_out_says_sign_up_again(
     ms.assert_not_called()
 
 
+def test_old_confirm_link_on_a_confirmed_expired_subscription_offers_renew(client):
+    """Confirmed weeks ago, term over, grace window still open: the person is
+    not told their link "blieb ungenutzt" — they get the renew link that
+    revives the row, and it works."""
+    from unittest.mock import patch
+    c, sid = client
+    conn = connect(os.environ["DB_PATH"])
+    conn.execute("UPDATE subscriptions SET confirmed_at=datetime('now','-30 days'), "
+                 "expires_at=datetime('now','-1 day') WHERE id=?", (sid,))
+    with patch("app.web._send_manage_link_email") as ms:
+        r = c.get(f"/confirm/{_sign(sid, 'confirm')}")
+    assert r.status_code == 410
+    html = r.get_data(as_text=True)
+    assert "Laufzeit deiner Anmeldung ist vorbei" in html
+    assert "ungenutzt" not in html
+    ms.assert_not_called()
+    import re
+    href = re.search(r'href="(/renew/[^"]+)"', html).group(1)
+    r2 = c.get(href)
+    assert r2.status_code == 200
+    assert "Wir suchen weiter" in r2.get_data(as_text=True)
+    expired = conn.execute("SELECT expires_at < CURRENT_TIMESTAMP FROM subscriptions "
+                           "WHERE id=?", (sid,)).fetchone()[0]
+    assert not expired
+
+
 def test_confirm_survives_manage_link_email_failure(client):
     """A failure sending the (secondary) management-link email must NOT turn a
     successful confirmation into a 500. The subscription is already confirmed;
