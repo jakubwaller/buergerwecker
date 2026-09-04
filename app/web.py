@@ -125,6 +125,34 @@ _RESULT_MESSAGES: dict[str, dict] = {
                "The link is malformed or no longer valid. Please use the most "
                "recent link from your email."),
     },
+    # A confirm link clicked after the sign-up's term ran out. The row is
+    # still there (soft-delete comes EXPIRED_GRACE_DAYS after expiry) but the
+    # poller already ignores it, so "bestätigt, läuft bis <past date>" would
+    # promise mail that never comes. Signing up again is the way back.
+    "signup_expired": {
+        "kind": "error",
+        "de": ("Anmeldung abgelaufen", "Diese Anmeldung ist abgelaufen",
+               "Der Bestätigungslink blieb zu lange ungenutzt, die Anmeldung "
+               "ist inzwischen beendet. Wenn du noch einen Termin suchst, "
+               "melde dich einfach neu an. Das dauert eine Minute."),
+        "en": ("Sign-up expired", "This sign-up has expired",
+               "The confirmation link went unused for too long and the "
+               "sign-up has since ended. If you are still looking for an "
+               "appointment, just sign up again. It takes a minute."),
+    },
+    # Same link, but the person did confirm back then and the term has since
+    # run out (grace window, row not yet soft-deleted). "Ungenutzt" would be
+    # untrue for them, and /renew still revives the row — offer that.
+    "subscription_expired": {
+        "kind": "error",
+        "de": ("Anmeldung abgelaufen", "Diese Anmeldung ist abgelaufen",
+               "Die Laufzeit deiner Anmeldung ist vorbei, die "
+               "Benachrichtigungen haben aufgehört. Suchst du noch? Ein Klick "
+               "schaltet sie wieder ein."),
+        "en": ("Subscription expired", "This subscription has expired",
+               "Your subscription's term is over and notifications have "
+               "stopped. Still looking? One click switches them back on."),
+    },
     "not_found": {
         "kind": "error",
         "de": ("Nicht gefunden", "Abonnement nicht gefunden",
@@ -1021,10 +1049,36 @@ def create_app() -> Flask:
             return _result_page("invalid_token",
                                 request.args.get("lang", "de"), status=400)
         conn = connect(cfg.db_path)
+        row = conn.execute(
+            "SELECT language, city, expires_at, deleted_at, confirmed_at, "
+            "expires_at < CURRENT_TIMESTAMP AS expired "
+            "FROM subscriptions WHERE id=?", (sub_id,)).fetchone()
+        lang = request.args.get("lang") or (row["language"] if row else "de")
+        # Confirm tokens never expire, so this is where a stale link is
+        # caught: a purged or unsubscribed row gets the not-found page, a
+        # row whose term ran out unconfirmed gets "sign up again" — never a
+        # confirmation of something the poller no longer looks at.
+        if row is None or row["deleted_at"] is not None:
+            return _result_page("not_found", lang, status=404)
+        if row["expired"] and row["confirmed_at"] is None:
+            q = "?lang=en" if lang == "en" else ""
+            try:
+                load_catalog(row["city"])
+                again = f"/{row['city']}{q}"
+            except CatalogError:       # city since decommissioned
+                again = f"/{q}"
+            return _result_page(
+                "signup_expired", lang, status=410,
+                action_url=again,
+                action_label="Sign up again" if lang == "en" else "Neu anmelden")
+        if row["expired"]:
+            renew = sign(sub_id, "renew", primary=cfg.token_secret_primary,
+                         previous=cfg.token_secret_previous)
+            return _result_page(
+                "subscription_expired", lang, status=410,
+                action_url=f"/renew/{renew}",
+                action_label="Keep looking" if lang == "en" else "Weiter suchen")
         confirm(conn, sub_id)
-        row = conn.execute("SELECT language, expires_at FROM subscriptions "
-                           "WHERE id=?", (sub_id,)).fetchone()
-        lang = row["language"] if row else "de"
         # The management-link email is a convenience, NOT part of confirmation.
         # The subscription is already confirmed above (autocommit), so a
         # mail-provider failure must never turn this into a 500 — log it and
@@ -1037,8 +1091,7 @@ def create_app() -> Flask:
                 sub_id,
             )
         return render_template("confirmed.html", lang=lang,
-                               expires=_end_date(row["expires_at"], lang)
-                               if row else None,
+                               expires=_end_date(row["expires_at"], lang),
                                kofi_url=cfg.kofi_url), 200
 
     # POST is the RFC 8058 one-click unsubscribe mail clients send to the

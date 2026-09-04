@@ -46,6 +46,89 @@ def test_confirm_marks_subscription_confirmed(client):
         r2 = c.get(f"/confirm/{tok}")
     assert r2.status_code in (200, 302)
 
+def _confirmed_at(sid):
+    conn = connect(os.environ["DB_PATH"])
+    return conn.execute("SELECT confirmed_at FROM subscriptions WHERE id=?",
+                        (sid,)).fetchone()[0]
+
+
+def test_confirm_link_on_an_unsubscribed_signup_is_not_found(client):
+    from unittest.mock import patch
+    c, sid = client
+    conn = connect(os.environ["DB_PATH"])
+    conn.execute("UPDATE subscriptions SET deleted_at=CURRENT_TIMESTAMP WHERE id=?",
+                 (sid,))
+    with patch("app.web._send_manage_link_email") as ms:
+        r = c.get(f"/confirm/{_sign(sid, 'confirm')}")
+    assert r.status_code == 404
+    assert "existiert nicht mehr" in r.get_data(as_text=True)
+    assert _confirmed_at(sid) is None
+    ms.assert_not_called()
+
+
+@pytest.mark.parametrize("lang, expect_text, expect_href", [
+    ("de", "Anmeldung ist abgelaufen", 'href="/leipzig"'),
+    ("en", "sign-up has expired", 'href="/leipzig?lang=en"'),
+])
+def test_confirm_link_after_the_term_ran_out_says_sign_up_again(
+        client, lang, expect_text, expect_href):
+    """Confirm tokens never expire, and an unconfirmed row outlives its term
+    for EXPIRED_GRACE_DAYS before the soft-delete. Confirming it then would
+    show "läuft bis <past date>" and mail a promise the poller never keeps."""
+    from unittest.mock import patch
+    c, sid = client
+    conn = connect(os.environ["DB_PATH"])
+    conn.execute("UPDATE subscriptions SET language=?, "
+                 "expires_at=datetime('now','-1 day') WHERE id=?", (lang, sid))
+    with patch("app.web._send_manage_link_email") as ms:
+        r = c.get(f"/confirm/{_sign(sid, 'confirm')}")
+    assert r.status_code == 410
+    html = r.get_data(as_text=True)
+    assert expect_text in html
+    assert expect_href in html
+    assert _confirmed_at(sid) is None
+    ms.assert_not_called()
+
+
+def test_expired_signup_for_a_decommissioned_city_sends_people_to_the_picker(client):
+    c, sid = client
+    conn = connect(os.environ["DB_PATH"])
+    conn.execute("UPDATE subscriptions SET city='atlantis', "
+                 "expires_at=datetime('now','-1 day') WHERE id=?", (sid,))
+    r = c.get(f"/confirm/{_sign(sid, 'confirm')}?lang=en")
+    assert r.status_code == 410
+    html = r.get_data(as_text=True)
+    assert "sign-up has expired" in html          # ?lang wins, as on /renew
+    assert 'href="/?lang=en"' in html
+    assert 'href="/atlantis' not in html
+
+
+def test_old_confirm_link_on_a_confirmed_expired_subscription_offers_renew(client):
+    """Confirmed weeks ago, term over, grace window still open: the person is
+    not told their link "blieb ungenutzt" — they get the renew link that
+    revives the row, and it works."""
+    from unittest.mock import patch
+    c, sid = client
+    conn = connect(os.environ["DB_PATH"])
+    conn.execute("UPDATE subscriptions SET confirmed_at=datetime('now','-30 days'), "
+                 "expires_at=datetime('now','-1 day') WHERE id=?", (sid,))
+    with patch("app.web._send_manage_link_email") as ms:
+        r = c.get(f"/confirm/{_sign(sid, 'confirm')}")
+    assert r.status_code == 410
+    html = r.get_data(as_text=True)
+    assert "Laufzeit deiner Anmeldung ist vorbei" in html
+    assert "ungenutzt" not in html
+    ms.assert_not_called()
+    import re
+    href = re.search(r'href="(/renew/[^"]+)"', html).group(1)
+    r2 = c.get(href)
+    assert r2.status_code == 200
+    assert "Wir suchen weiter" in r2.get_data(as_text=True)
+    expired = conn.execute("SELECT expires_at < CURRENT_TIMESTAMP FROM subscriptions "
+                           "WHERE id=?", (sid,)).fetchone()[0]
+    assert not expired
+
+
 def test_confirm_survives_manage_link_email_failure(client):
     """A failure sending the (secondary) management-link email must NOT turn a
     successful confirmation into a 500. The subscription is already confirmed;
