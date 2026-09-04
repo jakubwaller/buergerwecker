@@ -69,7 +69,7 @@ def test_full_flow(env):
             "website":"",
         })
         assert r.status_code in (200, 302)
-    assert any("Bestätigung" in s for _, s in sent_mails)
+    assert any("bestätig" in s.lower() for _, s in sent_mails)
 
     # 2. confirm
     conn = connect(env)

@@ -5,7 +5,8 @@ import pytest
 from app.db import connect, init_schema
 from app.models import Filter
 from app.repo import insert_pending, confirm, pending_confirmations
-from app.confirmations import send_confirmation_now, send_pending_confirmations
+from app.confirmations import (build_confirmation, send_confirmation_now,
+                               send_pending_confirmations)
 
 
 @pytest.fixture
@@ -91,3 +92,32 @@ def test_retry_abandons_stale_signups(db):
     with patch("app.mail._call_mailjet_batch", return_value=200) as mb:
         send_pending_confirmations(db, _cfg())
     mb.assert_not_called()
+
+
+@pytest.mark.parametrize("lang, click, own", [
+    ("de", "Klick auf diesen Link", "Wenn du dich nicht angemeldet hast"),
+    ("en", "Click this link", "If you did not sign up"),
+])
+def test_confirmation_says_to_click_and_puts_the_link_on_its_own_line(lang, click, own):
+    # A bare "Bitte bestätige dein Abonnement: <url>" got answered by reply
+    # mail instead of a click (twice, by 2026-09-04).
+    item = build_confirmation(7, "a@example.com", lang, "leipzig",
+                              _cfg(public_base_url="https://site.example"))
+    assert item.to == "a@example.com"
+    assert "Leipzig" in item.subject
+    assert click in item.body
+    assert own in item.body
+    assert "https://site.example/confirm/" in item.body
+    url_lines = [ln for ln in item.body.splitlines()
+                 if ln.startswith("https://site.example/confirm/")]
+    assert len(url_lines) == 1 and " " not in url_lines[0]
+    # who signed up where: the city, and the site as a host, not the URL
+    assert "Leipzig" in item.body
+    assert " site.example " in item.body
+
+
+def test_confirmation_without_a_city_name_still_reads_whole():
+    item = build_confirmation(7, "a@example.com", "de", "no-such-city", _cfg())
+    assert "(" not in item.subject
+    assert "in None" not in item.body and "{" not in item.body
+    assert "Klick auf diesen Link" in item.body
