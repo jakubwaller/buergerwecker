@@ -79,7 +79,7 @@ def test_full_flow(env):
     with _patch_mail():
         r = c.get(f"/confirm/{tok}")
     assert r.status_code in (200, 302)
-    assert any("Verwaltungs-Link" in s or "Management link" in s for _, s in sent_mails)
+    assert any("Anmeldung bestätigt" in s or "Sign-up confirmed" in s for _, s in sent_mails)
 
     # 3. run a polling cycle with a synthetic slot
     from app.cycle import run_cycle

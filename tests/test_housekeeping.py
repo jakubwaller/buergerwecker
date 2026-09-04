@@ -254,6 +254,44 @@ def test_checkin_in_english(db):
     assert "Yes, keep looking: https://x/renew/" in call.args[3]
 
 
+def test_heartbeat_says_what_the_silence_means(db):
+    sid = insert_pending(db, email="a@x.com", city="leipzig", language="de",
+                         filter_=_f(), ttl_days=90)
+    confirm(db, sid)
+    db.execute("UPDATE subscriptions SET confirmed_at=datetime('now','-40 days') "
+               "WHERE id=?", (sid,))
+    with patch("app.mail.send") as send:
+        run_once(db)
+    (call,) = _mails_to(send, "a@x.com")
+    assert call.args[2] == "Noch keine passenden Termine in Leipzig"
+    body = call.args[3]
+    assert "In den letzten 30 Tagen war kein Termin frei" in body
+    assert "\n\nhttps://x/manage/" in body
+    assert "Abmelden: https://x/unsubscribe/" in body
+
+
+def test_overdue_subscriber_gets_one_heartbeat_per_run_not_two(db):
+    """Confirmed 70 days ago with nothing sent: eligible for both milestones,
+    but two mails a second apart claiming "30 Tage" and "60 Tage" read as a
+    bug. The 60-day pass waits a day after the 30-day stamp."""
+    sid = insert_pending(db, email="a@x.com", city="leipzig", language="de",
+                         filter_=_f(), ttl_days=90)
+    confirm(db, sid)
+    db.execute("UPDATE subscriptions SET confirmed_at=datetime('now','-70 days') "
+               "WHERE id=?", (sid,))
+    with patch("app.mail.send") as send:
+        run_once(db)
+    (call,) = _mails_to(send, "a@x.com")
+    assert "In den letzten 30 Tagen" in call.args[3]
+    # A day later the 60-day one follows.
+    db.execute("UPDATE subscriptions SET heartbeat_30d_at=datetime('now','-2 days') "
+               "WHERE id=?", (sid,))
+    with patch("app.mail.send") as send:
+        run_once(db)
+    (call,) = _mails_to(send, "a@x.com")
+    assert "In den letzten 60 Tagen" in call.args[3]
+
+
 def test_paused_subscription_gets_no_heartbeat(db):
     """The 30-day "you're still subscribed" heartbeat must not go to someone
     whose subscription has expired and is only waiting out the grace."""

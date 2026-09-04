@@ -96,7 +96,9 @@ def test_manage_link_email_states_the_end_date(client):
         r = c.get(f"/confirm/{_sign(sid, 'confirm')}")
     assert r.status_code == 200
     body = ms.call_args.args[3]
-    assert "Verwaltungs-Link" in ms.call_args.args[2]
+    assert ms.call_args.args[2].startswith("Anmeldung bestätigt")
+    assert "deine Anmeldung ist aktiv" in body
+    assert "Verwaltungs-Link" in body          # the FAQ calls it that
     assert f"läuft bis zum {_expected_end_date(sid)}" in body
 
 

@@ -163,6 +163,23 @@ def test_digest_instructions_drop_location_for_single_location_tenant():
     assert "dann den Standort" not in line
 
 
+def test_digest_instructions_do_not_name_our_all_locations_label():
+    """"Alle Standorte" is the digest's own label for an unfiltered choice; the
+    city's site has no such entry, so the instruction must not tell people to
+    pick it."""
+    sub = _sub("de", appointment_types=["svc-A"], locations="all")
+    slots = [Slot("2026-06-12", "09:20", "loc-1", "svc-A", "tA")]
+    text = _render(sub, slots, catalog=_cat())
+    line = next(ln for ln in text.splitlines() if ln.startswith("Wähle dort"))
+    assert "„Alle Standorte“" not in line
+    assert "Standort deiner Wahl" in line
+    assert "Alle Standorte" in text            # the selection header still says it
+    text_en = _render(_sub("en", appointment_types=["svc-A"], locations="all"),
+                      slots, catalog=_cat())
+    assert "“All locations”" not in text_en
+    assert "whichever location suits you" in text_en
+
+
 def test_digest_en_booking_link_carries_lang_param():
     sub = _sub("en", appointment_types=["svc-A"], locations=["loc-1"])
     slots = [Slot("2026-06-12", "09:20", "loc-1", "svc-A", "tA")]
