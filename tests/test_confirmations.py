@@ -101,15 +101,19 @@ def test_retry_abandons_stale_signups(db):
 def test_confirmation_says_to_click_and_puts_the_link_on_its_own_line(lang, click, own):
     # A bare "Bitte bestätige dein Abonnement: <url>" got answered by reply
     # mail instead of a click (twice, by 2026-09-04).
-    item = build_confirmation(7, "a@example.com", lang, "leipzig", _cfg())
+    item = build_confirmation(7, "a@example.com", lang, "leipzig",
+                              _cfg(public_base_url="https://site.example"))
     assert item.to == "a@example.com"
     assert "Leipzig" in item.subject
     assert click in item.body
     assert own in item.body
-    assert "https://x/confirm/" in item.body
-    url_lines = [ln for ln in item.body.splitlines() if ln.startswith("https://x/confirm/")]
+    assert "https://site.example/confirm/" in item.body
+    url_lines = [ln for ln in item.body.splitlines()
+                 if ln.startswith("https://site.example/confirm/")]
     assert len(url_lines) == 1 and " " not in url_lines[0]
-    assert "Leipzig" in item.body and "x" in item.body   # who, where, from which site
+    # who signed up where: the city, and the site as a host, not the URL
+    assert "Leipzig" in item.body
+    assert " site.example " in item.body
 
 
 def test_confirmation_without_a_city_name_still_reads_whole():

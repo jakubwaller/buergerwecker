@@ -17,8 +17,8 @@ from app.tokens import sign
 _TEXT = {
     "de": {
         "subject": "Bitte bestätige deine Anmeldung bei Bürgerwecker",
-        "signed_up_city": "du hast dich gerade auf {host} für Terminbenachrichtigungen in {city} angemeldet.",
-        "signed_up": "du hast dich gerade auf {host} für Terminbenachrichtigungen angemeldet.",
+        "signed_up_city": "du hast dich auf {host} für Terminbenachrichtigungen in {city} angemeldet.",
+        "signed_up": "du hast dich auf {host} für Terminbenachrichtigungen angemeldet.",
         "body": (
             "Hallo,\n\n{signed_up}\n\n"
             "Klick auf diesen Link, um die Anmeldung zu bestätigen:\n\n{url}\n\n"
@@ -30,8 +30,8 @@ _TEXT = {
     },
     "en": {
         "subject": "Please confirm your Bürgerwecker sign-up",
-        "signed_up_city": "you just signed up on {host} for appointment notifications in {city}.",
-        "signed_up": "you just signed up on {host} for appointment notifications.",
+        "signed_up_city": "you signed up on {host} for appointment notifications in {city}.",
+        "signed_up": "you signed up on {host} for appointment notifications.",
         "body": (
             "Hello,\n\n{signed_up}\n\n"
             "Click this link to confirm your sign-up:\n\n{url}\n\n"
