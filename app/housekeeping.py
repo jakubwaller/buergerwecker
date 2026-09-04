@@ -21,7 +21,8 @@ def run_once(conn: sqlite3.Connection) -> None:
     _soft_delete_expired(conn, cfg)
     _send_renewal_reminders(conn, cfg)
     _send_heartbeats(conn, cfg, milestone_days=30, milestone_col="heartbeat_30d_at")
-    _send_heartbeats(conn, cfg, milestone_days=60, milestone_col="heartbeat_60d_at")
+    _send_heartbeats(conn, cfg, milestone_days=60, milestone_col="heartbeat_60d_at",
+                     not_right_after="heartbeat_30d_at")
     _prune_seen_slots(conn)
     _prune_idempotency(conn)
     _prune_deferrals(conn)
@@ -196,8 +197,16 @@ def _heartbeat_mail(lang: str, *, city: str | None, days: int,
             f"Bürgerwecker\n")
     return subj, body
 
-def _send_heartbeats(conn, cfg, *, milestone_days: int, milestone_col: str):
+def _send_heartbeats(conn, cfg, *, milestone_days: int, milestone_col: str,
+                     not_right_after: str | None = None):
     from app.catalog import city_display_name
+    # A row eligible for the 60-day mail is eligible for the 30-day one too,
+    # so when both are overdue (housekeeping skipped the day-30 window) the
+    # pass before this one has just stamped `not_right_after`. Two heartbeats
+    # a second apart, one saying "30 Tage", one "60 Tage", read as a bug;
+    # wait a day instead — the 60-day mail then follows on its own.
+    gap = (f"AND {not_right_after} < datetime('now','-1 day') "
+           if not_right_after else "")
     # Send to subscribers who are past the milestone age AND haven't been
     # notified recently. "Recently" = within the milestone window, so a
     # subscriber notified once 5 days after signup still gets a heartbeat
@@ -206,7 +215,7 @@ def _send_heartbeats(conn, cfg, *, milestone_days: int, milestone_col: str):
         f"SELECT id, email, language, city FROM subscriptions "
         f"WHERE deleted_at IS NULL AND confirmed_at IS NOT NULL "
         f"AND expires_at > CURRENT_TIMESTAMP "
-        f"AND {milestone_col} IS NULL "
+        f"AND {milestone_col} IS NULL {gap}"
         f"AND (last_notified_at IS NULL "
         f"     OR last_notified_at < datetime('now','-{milestone_days} days')) "
         f"AND confirmed_at < datetime('now','-{milestone_days} days')"
