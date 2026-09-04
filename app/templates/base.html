@@ -399,7 +399,9 @@
     <footer>
       Made with ♥ in Hamburg ·
       <a href="/impressum{% if lang == 'en' %}?lang=en{% endif %}">{% if lang == 'en' %}Imprint{% else %}Impressum{% endif %}</a> ·
-      <a href="/datenschutz{% if lang == 'en' %}?lang=en{% endif %}">{% if lang == 'en' %}Privacy{% else %}Datenschutz{% endif %}</a> ·
+      <a href="/datenschutz{% if lang == 'en' %}?lang=en{% endif %}">{% if lang == 'en' %}Privacy{% else %}Datenschutz{% endif %}</a>
+      <br>
+      {% if lang == 'en' %}Born from weeks of reloading Leipzig's booking page. Free and ad-free ·{% else %}Entstanden nach wochenlangem Neuladen der Leipziger Terminseite. Kostenlos und werbefrei ·{% endif %}
       <a href="{{ kofi_url or 'https://ko-fi.com/jakubwaller' }}">{% if lang == 'en' %}☕ Buy me a coffee{% else %}☕ Kaffee spendieren{% endif %}</a>
       <br>
       {% if lang == 'en' %}Built by{% else %}Erstellt von{% endif %}
