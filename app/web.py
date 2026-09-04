@@ -1053,7 +1053,7 @@ def create_app() -> Flask:
             "SELECT language, city, expires_at, deleted_at, confirmed_at, "
             "expires_at < CURRENT_TIMESTAMP AS expired "
             "FROM subscriptions WHERE id=?", (sub_id,)).fetchone()
-        lang = row["language"] if row else request.args.get("lang", "de")
+        lang = request.args.get("lang") or (row["language"] if row else "de")
         # Confirm tokens never expire, so this is where a stale link is
         # caught: a purged or unsubscribed row gets the not-found page, a
         # row whose term ran out unconfirmed gets "sign up again" — never a
@@ -1062,9 +1062,14 @@ def create_app() -> Flask:
             return _result_page("not_found", lang, status=404)
         if row["expired"] and row["confirmed_at"] is None:
             q = "?lang=en" if lang == "en" else ""
+            try:
+                load_catalog(row["city"])
+                again = f"/{row['city']}{q}"
+            except CatalogError:       # city since decommissioned
+                again = f"/{q}"
             return _result_page(
                 "signup_expired", lang, status=410,
-                action_url=f"/{row['city']}{q}",
+                action_url=again,
                 action_label="Sign up again" if lang == "en" else "Neu anmelden")
         if row["expired"]:
             renew = sign(sub_id, "renew", primary=cfg.token_secret_primary,

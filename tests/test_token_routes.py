@@ -90,6 +90,19 @@ def test_confirm_link_after_the_term_ran_out_says_sign_up_again(
     ms.assert_not_called()
 
 
+def test_expired_signup_for_a_decommissioned_city_sends_people_to_the_picker(client):
+    c, sid = client
+    conn = connect(os.environ["DB_PATH"])
+    conn.execute("UPDATE subscriptions SET city='atlantis', "
+                 "expires_at=datetime('now','-1 day') WHERE id=?", (sid,))
+    r = c.get(f"/confirm/{_sign(sid, 'confirm')}?lang=en")
+    assert r.status_code == 410
+    html = r.get_data(as_text=True)
+    assert "sign-up has expired" in html          # ?lang wins, as on /renew
+    assert 'href="/?lang=en"' in html
+    assert 'href="/atlantis' not in html
+
+
 def test_old_confirm_link_on_a_confirmed_expired_subscription_offers_renew(client):
     """Confirmed weeks ago, term over, grace window still open: the person is
     not told their link "blieb ungenutzt" — they get the renew link that
