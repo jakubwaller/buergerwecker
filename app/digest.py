@@ -153,6 +153,10 @@ def render_digest_text(sub: Subscription, slots: list[Slot], *,
     elif catalog is not None and len(catalog.locations) <= 1:
         lines.append(t(lang, "digest.book_instructions_service_only",
                        services=services))
+    elif f.locations == "all":
+        # "Alle Standorte" is our label, not a choice on the city's site.
+        lines.append(t(lang, "digest.book_instructions_any_location",
+                       services=services))
     else:
         lines.append(t(lang, "digest.book_instructions",
                        services=services, locations=locations))

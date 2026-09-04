@@ -443,23 +443,36 @@ def _send_manage_link_email(conn, sub_id: int, cfg) -> None:
     city_name = city_display_name(row["city"], row["language"])
     suffix = f" ({city_name})" if city_name else ""
     end = _end_date(row["expires_at"], row["language"])
+    # Arrives the second after the confirm click, when the reader expects
+    # "Anmeldung bestätigt" — so say that first, then the link, then the
+    # term. "Verwaltungs-Link" stays as a word: the FAQ calls it that.
     if row["language"] == "de":
-        body = (f"Dein Verwaltungs-Link: {url}\nMit diesem Link kannst du deine "
-                f"Einstellungen jederzeit ändern oder dich abmelden.")
+        where = f" in {city_name}" if city_name else ""
+        body = (f"Hallo,\n\n"
+                f"deine Anmeldung ist aktiv. Sobald ein passender Termin{where} "
+                f"frei wird, bekommst du eine Mail.\n\n"
+                f"Dein Verwaltungs-Link, mit dem du deine Einstellungen "
+                f"jederzeit ändern oder dich abmelden kannst:\n\n{url}\n")
         if end:
-            body += (f"\n\nDeine Anmeldung läuft bis zum {end}. Kurz vorher "
-                     f"fragen wir per E-Mail, ob du noch suchst — ein Klick "
-                     f"verlängert sie dann, ohne Antwort endet sie automatisch.")
-        subj = f"Verwaltungs-Link{suffix}"
+            body += (f"\nDeine Anmeldung läuft bis zum {end}. Kurz vorher "
+                     f"fragen wir per E-Mail, ob du noch suchst. Ein Klick "
+                     f"verlängert sie, ohne Antwort endet sie automatisch.\n")
+        body += "\nBürgerwecker\n"
+        subj = f"Anmeldung bestätigt{suffix}"
     else:
-        body = (f"Your management link: {url}\nUse it any time to change your "
-                f"settings or unsubscribe.")
+        where = f" in {city_name}" if city_name else ""
+        body = (f"Hello,\n\n"
+                f"your sign-up is active. As soon as a matching appointment"
+                f"{where} opens up, you will get an email.\n\n"
+                f"Your management link, to change your settings or "
+                f"unsubscribe at any time:\n\n{url}\n")
         if end:
-            body += (f"\n\nYour subscription runs until {end}. Shortly before "
+            body += (f"\nYour subscription runs until {end}. Shortly before "
                      f"that we'll email you to ask whether you're still "
-                     f"looking — one click extends it, no reply ends it "
-                     f"automatically.")
-        subj = f"Management link{suffix}"
+                     f"looking. One click extends it, no reply ends it "
+                     f"automatically.\n")
+        body += "\nBürgerwecker\n"
+        subj = f"Sign-up confirmed{suffix}"
     key = _idem_key(sub_id, [], f"manage-link-{sub_id}")
     mail_send(conn, row["email"], subj, body, idem_key=key)
 

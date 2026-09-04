@@ -162,13 +162,48 @@ def _checkin_mail(lang: str, *, city: str | None, expires_at: str,
         )
     return subj, body
 
+def _heartbeat_mail(lang: str, *, city: str | None, days: int,
+                    manage_url: str, unsub_url: str) -> tuple[str, str]:
+    """"Still subscribed, nothing matched" — says what the silence means and
+    that a narrower filter is the usual reason, with each link labelled."""
+    if lang == "en":
+        where = f" in {city}" if city else ""
+        for_city = f" for {city}" if city else ""
+        subj = f"No matching appointments yet{where}"
+        body = (
+            f"Hello,\n\n"
+            f"you are still signed up with Bürgerwecker{for_city}. In the last "
+            f"{days} days no appointment matched your filter, so we had "
+            f"nothing to send. As soon as one opens up, you will get an "
+            f"email.\n\n"
+            f"Filter too narrow? Change days, times or locations here:\n\n"
+            f"{manage_url}\n\n"
+            f"Unsubscribe: {unsub_url}\n\n"
+            f"Bürgerwecker\n")
+    else:
+        where = f" in {city}" if city else ""
+        for_city = f" für {city}" if city else ""
+        subj = f"Noch keine passenden Termine{where}"
+        body = (
+            f"Hallo,\n\n"
+            f"du bist bei Bürgerwecker weiterhin{for_city} angemeldet. In den "
+            f"letzten {days} Tagen war kein Termin frei, der zu deinem Filter "
+            f"passt, deshalb kam keine Mail. Sobald einer auftaucht, bekommst "
+            f"du eine.\n\n"
+            f"Zu eng gefiltert? Tage, Zeiten oder Standorte hier ändern:\n\n"
+            f"{manage_url}\n\n"
+            f"Abmelden: {unsub_url}\n\n"
+            f"Bürgerwecker\n")
+    return subj, body
+
 def _send_heartbeats(conn, cfg, *, milestone_days: int, milestone_col: str):
+    from app.catalog import city_display_name
     # Send to subscribers who are past the milestone age AND haven't been
     # notified recently. "Recently" = within the milestone window, so a
     # subscriber notified once 5 days after signup still gets a heartbeat
     # at day 30 if no further notifications happened in between.
     rows = conn.execute(
-        f"SELECT id, email, language FROM subscriptions "
+        f"SELECT id, email, language, city FROM subscriptions "
         f"WHERE deleted_at IS NULL AND confirmed_at IS NOT NULL "
         f"AND expires_at > CURRENT_TIMESTAMP "
         f"AND {milestone_col} IS NULL "
@@ -185,13 +220,10 @@ def _send_heartbeats(conn, cfg, *, milestone_days: int, milestone_col: str):
                          primary=cfg.token_secret_primary,
                          previous=cfg.token_secret_previous)
         unsub_url = f"{cfg.public_base_url}/unsubscribe/{unsub_tok}"
-        body = (f"Du bist weiterhin abonniert — dein Filter passt einfach noch nicht. "
-                f"Hier verwalten: {manage_url}"
-                if row["language"] == "de" else
-                f"You're still subscribed — your filter just hasn't matched yet. "
-                f"Manage here: {manage_url}")
-        subj = ("Abo-Update" if row["language"] == "de"
-                else "Subscription check-in")
+        subj, body = _heartbeat_mail(
+            "en" if row["language"] == "en" else "de",
+            city=city_display_name(row["city"], row["language"]),
+            days=milestone_days, manage_url=manage_url, unsub_url=unsub_url)
         from app.db import transaction
         try:
             with transaction(conn):
