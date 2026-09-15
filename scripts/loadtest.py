@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local load test for termine-notifier. Providers are mocked — no network,
+"""Local load test for Bürgerwecker. Providers are mocked — no network,
 no real emails — so this is safe to run anywhere and must NOT be pointed at
 production. It measures the two things a traffic spike actually stresses:
 

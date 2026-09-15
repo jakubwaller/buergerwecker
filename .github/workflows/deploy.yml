@@ -88,13 +88,13 @@ jobs:
         env:
           TARGET: ${{ secrets.DEPLOY_SSH_TARGET }}
         run: |
-          ssh "$TARGET" 'cd ~/termine-notifier && git pull --ff-only && docker compose up -d --build'
+          ssh "$TARGET" 'cd ~/buergerwecker && git pull --ff-only && docker compose up -d --build'
 
       - name: Verify the VPS runs this commit
         env:
           TARGET: ${{ secrets.DEPLOY_SSH_TARGET }}
         run: |
-          deployed=$(ssh "$TARGET" 'cd ~/termine-notifier && git rev-parse HEAD')
+          deployed=$(ssh "$TARGET" 'cd ~/buergerwecker && git rev-parse HEAD')
           if [ "$deployed" != "$GITHUB_SHA" ]; then
             echo "::error::VPS checkout is at $deployed, expected $GITHUB_SHA"
             exit 1

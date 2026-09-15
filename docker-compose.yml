@@ -1,5 +1,11 @@
+# Pinned, not derived from the checkout's directory name: containers, network
+# and images stay `buergerwecker-*` whatever path the stack is started from.
+# Without it, a `cd` through a differently named path starts a second stack
+# beside the running one — two pollers mailing from the same DB.
+name: buergerwecker
+
 services:
-  # No reverse-proxy service: the shared `elternschule-caddy` on the same Pi
+  # No reverse-proxy service: the shared `elternschule-caddy` on the same host
   # fronts every vhost. This `web` container joins the external `web_proxy`
   # network with alias `termine-web`, which Caddy reverse-proxies by name.
   web:
