@@ -28,7 +28,7 @@ Dry run by default; `--apply` writes. Idempotent — a second run inserts nothin
 
 On the VPS the DB lives inside the poller container:
 
-    docker exec termine-notifier-poller-1 \
+    docker exec buergerwecker-poller-1 \
         python scripts/backfill_day_keys.py muenster-kfz --db /data/app.db
 """
 from __future__ import annotations

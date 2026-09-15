@@ -53,18 +53,18 @@ Three repository secrets (Settings → Secrets and variables → Actions):
 ### Manual redeploy
 
 The fallback path after a merge to `main`. The VPS holds a clone of this repo at
-`~/termine-notifier` (containers `termine-notifier-web-1`, `-poller-1`, `-backup-1`):
+`~/buergerwecker` (containers `buergerwecker-web-1`, `-poller-1`, `-backup-1`):
 
 ```bash
-ssh vps 'cd ~/termine-notifier && git pull --ff-only && docker compose up -d --build'
+ssh vps 'cd ~/buergerwecker && git pull --ff-only && docker compose up -d --build'
 ```
 
 Then verify:
 
 ```bash
 curl -sS https://buergerwecker.de/healthz
-ssh vps 'cd ~/termine-notifier && docker compose ps'                    # three services Up
-ssh vps 'cd ~/termine-notifier && docker compose logs --tail=50 poller'
+ssh vps 'cd ~/buergerwecker && docker compose ps'                    # three services Up
+ssh vps 'cd ~/buergerwecker && docker compose logs --tail=50 poller'
 ```
 
 `--build` is not optional. `app/` **and `catalog/` are copied into the web and poller images**
@@ -86,7 +86,7 @@ environment. `docker compose restart` starts the *same* container, so it cannot 
 `restart` still printed the old value and `up -d` printed the new one.
 
 ```bash
-ssh vps 'cd ~/termine-notifier && docker compose up -d web poller'   # after any .env edit
+ssh vps 'cd ~/buergerwecker && docker compose up -d web poller'   # after any .env edit
 ```
 
 Nothing rebuilds if no source changed, so this is quick. It is what makes a changed
@@ -95,7 +95,7 @@ Nothing rebuilds if no source changed, so this is quick. It is what makes a chan
 ### Rollback
 
 ```bash
-ssh vps 'cd ~/termine-notifier && git checkout <last-good-sha> && docker compose up -d --build'
+ssh vps 'cd ~/buergerwecker && git checkout <last-good-sha> && docker compose up -d --build'
 ```
 
 The database is not versioned with the code. Schema changes are additive — `_add_missing_columns`
@@ -372,7 +372,7 @@ dropping the confirmation into the suppression list while the page claims it
 was sent. To lift one by hand after they ask:
 
 ```bash
-sqlite3 ~/termine-notifier/data/app.db \
+sqlite3 ~/buergerwecker/data/app.db \
   "DELETE FROM email_suppressions WHERE email='<address>' AND reason='complaint';"
 ```
 
@@ -425,9 +425,9 @@ pool: what does not fit is deferred and the report says so. Delivered subscriber
 once-per-term latch stamped, so re-running only retries the unsent rest. Dry run first:
 
 ```bash
-ssh vps 'cd ~/termine-notifier && docker compose run --rm poller \
+ssh vps 'cd ~/buergerwecker && docker compose run --rm poller \
     python scripts/notify_silent_expired.py --db /data/app.db'
-ssh vps 'cd ~/termine-notifier && docker compose run --rm poller \
+ssh vps 'cd ~/buergerwecker && docker compose run --rm poller \
     python scripts/notify_silent_expired.py --db /data/app.db --send'
 ```
 
@@ -496,15 +496,15 @@ built image while the old poller keeps running, unchanged, on the old
 granularity.
 
 ```bash
-ssh vps 'cd ~/termine-notifier && git pull --ff-only && docker compose build poller'
+ssh vps 'cd ~/buergerwecker && git pull --ff-only && docker compose build poller'
 
 # Dry run first: check `unrecognized` is at or near zero before applying.
-ssh vps 'cd ~/termine-notifier && docker compose run --rm poller \
+ssh vps 'cd ~/buergerwecker && docker compose run --rm poller \
     python scripts/backfill_day_keys.py <tenant> --db /data/app.db'
-ssh vps 'cd ~/termine-notifier && docker compose run --rm poller \
+ssh vps 'cd ~/buergerwecker && docker compose run --rm poller \
     python scripts/backfill_day_keys.py <tenant> --db /data/app.db --apply'
 
-ssh vps 'cd ~/termine-notifier && docker compose up -d --build'
+ssh vps 'cd ~/buergerwecker && docker compose up -d --build'
 ```
 
 The keys are inert until the new poller asks for them, so the gap between the
@@ -553,7 +553,7 @@ Description=Termine-Notifier SMART check
 
 [Service]
 Type=oneshot
-ExecStart=/path/to/termine-notifier/scripts/smartcheck.sh /dev/sda
+ExecStart=/path/to/buergerwecker/scripts/smartcheck.sh /dev/sda
 ```
 
 And `/etc/systemd/system/termine-smart.timer`:
