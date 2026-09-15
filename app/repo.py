@@ -1,6 +1,7 @@
 from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta
+from app.db import sql_ts
 from app.models import Filter, Subscription
 
 def insert_pending(conn: sqlite3.Connection, *, email: str, city: str,
@@ -13,12 +14,12 @@ def insert_pending(conn: sqlite3.Connection, *, email: str, city: str,
     that is when it was actually given; the double opt-in on top is what makes
     it verifiable (Art. 7(1)).
     """
-    expires_at = (datetime.utcnow() + timedelta(days=ttl_days)).isoformat()
+    expires_at = sql_ts(datetime.utcnow() + timedelta(days=ttl_days))
     cur = conn.execute(
         "INSERT INTO subscriptions (email, city, language, filters_json, "
         "expires_at, consent_special_at) VALUES (?,?,?,?,?,?)",
         (email, city, language, filter_.to_json(), expires_at,
-         datetime.utcnow().isoformat() if consent_special else None),
+         sql_ts(datetime.utcnow()) if consent_special else None),
     )
     return cur.lastrowid
 
@@ -33,7 +34,7 @@ def set_special_consent(conn: sqlite3.Connection, sub_id: int,
     """
     conn.execute(
         "UPDATE subscriptions SET consent_special_at=? WHERE id=?",
-        (datetime.utcnow().isoformat() if given else None, sub_id),
+        (sql_ts(datetime.utcnow()) if given else None, sub_id),
     )
 
 def confirm(conn: sqlite3.Connection, sub_id: int) -> None:

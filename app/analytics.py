@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from datetime import datetime
+from app.db import sql_ts
 
 # Per-tenant minimum gap between availability samples.
 SAMPLE_INTERVAL_MINUTES = int(os.environ.get("ANALYTICS_SAMPLE_MINUTES", "15"))
@@ -43,7 +44,7 @@ def record_availability(conn: sqlite3.Connection, slots_by_city: dict,
     Never raises: analytics must not be able to break a polling cycle.
     """
     now = now or datetime.utcnow()
-    now_iso = now.isoformat()
+    now_ts = sql_ts(now)
     polled_by_city = polled_by_city or {}
     try:
         for city, slots in slots_by_city.items():
@@ -75,7 +76,7 @@ def record_availability(conn: sqlite3.Connection, slots_by_city: dict,
                 "INSERT INTO availability_samples "
                 "(sampled_at, city, service_uuid, location_uuid, n_slots) "
                 "VALUES (?,?,?,?,?)",
-                [(now_iso, city, svc, loc, n) for (svc, loc), n in counts.items()],
+                [(now_ts, city, svc, loc, n) for (svc, loc), n in counts.items()],
             )
     except sqlite3.Error:
         pass
