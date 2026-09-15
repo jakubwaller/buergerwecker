@@ -337,9 +337,12 @@ def init_schema(conn: sqlite3.Connection) -> None:
         conn.execute("ROLLBACK")
         raise
     # Leftover isoformat() timestamps, rewritten in SQLite's shape (see
-    # SQL_TS_FORMAT). Idempotent: the web workers and the poller all run this
-    # on the same `up -d`, the first one converts and the rest find nothing.
-    # A value datetime() cannot parse is left exactly as it was.
+    # SQL_TS_FORMAT). Only the poller calls init_schema, so this runs once per
+    # poller start and the WHERE makes every later start a cheap no-op. Web and
+    # poller are replaced together on `up -d`: a sign-up the outgoing web
+    # container takes after this pass can still land in the old form, and the
+    # next poller start converts it. A value datetime() cannot parse is left
+    # exactly as it was.
     for table, column in _PY_WRITTEN_TIMESTAMPS:
         conn.execute(
             f"UPDATE {table} SET {column}=datetime({column}) "
