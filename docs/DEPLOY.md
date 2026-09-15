@@ -549,7 +549,7 @@ Install `smartmontools`. Add `/etc/systemd/system/termine-smart.service`:
 
 ```
 [Unit]
-Description=Termine-Notifier SMART check
+Description=Bürgerwecker SMART check
 
 [Service]
 Type=oneshot
