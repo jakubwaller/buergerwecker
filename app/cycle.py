@@ -217,9 +217,9 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
     # write touch the same row, so wrap them in one transaction — otherwise a
     # concurrent admin reader could observe a half-updated row (fresh
     # last_polled_at with stale counters, or vice versa).
-    from app.db import transaction
-    now_iso = datetime.utcnow().isoformat()
-    today = now_iso[:10]  # UTC date the *_today counters belong to
+    from app.db import sql_ts, transaction
+    now_ts = sql_ts(datetime.utcnow())
+    today = now_ts[:10]  # UTC date the *_today counters belong to
     with transaction(conn):
         for city in cities_polled:
             # Ensure the row exists.
@@ -232,7 +232,7 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
                 conn.execute(
                     "UPDATE city_state SET zero_match_since=NULL, "
                     "last_polled_at=? WHERE city=?",
-                    (now_iso, city),
+                    (now_ts, city),
                 )
             else:
                 conn.execute(
@@ -240,7 +240,7 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
                     "SET zero_match_since=COALESCE(zero_match_since, ?), "
                     "    last_polled_at=? "
                     "WHERE city=?",
-                    (now_iso, now_iso, city),
+                    (now_ts, now_ts, city),
                 )
             # Upstream poll/request counters. The CASE resets the *_today values
             # lazily when the UTC day rolls over; the all-time totals keep growing.

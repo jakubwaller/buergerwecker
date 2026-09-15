@@ -1,9 +1,33 @@
 from __future__ import annotations
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
+
+# SQLite's own timestamp shape, the one CURRENT_TIMESTAMP and datetime('now')
+# produce. Queries compare stored timestamps against those as plain text, so a
+# value written from Python has to match it: isoformat()'s "T" sorts after the
+# space, and a subscription due to expire at 05:21 stayed active until the date
+# rolled over at midnight UTC.
+SQL_TS_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+# Columns Python used to fill with isoformat(); init_schema rewrites any
+# leftover "T" values in place.
+_PY_WRITTEN_TIMESTAMPS = (
+    ("subscriptions", "expires_at"),
+    ("subscriptions", "consent_special_at"),
+    ("city_state", "zero_match_since"),
+    ("city_state", "last_canary_alert_at"),
+    ("city_state", "last_polled_at"),
+    ("availability_samples", "sampled_at"),
+)
+
+
+def sql_ts(dt: datetime) -> str:
+    """`dt` (naive UTC) in SQLite's timestamp shape — see SQL_TS_FORMAT."""
+    return dt.strftime(SQL_TS_FORMAT)
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS subscriptions (
@@ -312,6 +336,16 @@ def init_schema(conn: sqlite3.Connection) -> None:
     except BaseException:
         conn.execute("ROLLBACK")
         raise
+    # Leftover isoformat() timestamps, rewritten in SQLite's shape (see
+    # SQL_TS_FORMAT). Idempotent: the web workers and the poller all run this
+    # on the same `up -d`, the first one converts and the rest find nothing.
+    # A value datetime() cannot parse is left exactly as it was.
+    for table, column in _PY_WRITTEN_TIMESTAMPS:
+        conn.execute(
+            f"UPDATE {table} SET {column}=datetime({column}) "
+            f"WHERE {column} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*' "
+            f"AND datetime({column}) IS NOT NULL"
+        )
     conn.execute(
         "INSERT INTO meta (key, value) VALUES ('schema_version', ?) "
         "ON CONFLICT (key) DO UPDATE SET value=excluded.value, "

@@ -333,6 +333,7 @@ def _prune_availability(conn):
 def _check_parser_canary(conn, cfg):
     """Email developer if any city has been all-zero for > threshold during business hours."""
     from datetime import datetime, timedelta
+    from app.db import sql_ts
     now = datetime.utcnow()
     # Skip outside typical-load hours (08:00–20:00 Europe/Berlin ≈ 06:00–18:00 UTC)
     if not (6 <= now.hour <= 18):
@@ -367,7 +368,7 @@ def _check_parser_canary(conn, cfg):
                       idem_key=_idem_key(0, [], f"canary-{city}-{now.date()}"))
             conn.execute(
                 "UPDATE city_state SET last_canary_alert_at=? WHERE city=?",
-                (now.isoformat(), city),
+                (sql_ts(now), city),
             )
         except Exception:
             pass

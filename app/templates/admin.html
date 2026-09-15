@@ -595,7 +595,9 @@
     (function () {
       function rel(iso) {
         if (!iso) return null;
-        var str = iso;
+        // The backend stores SQLite's "YYYY-MM-DD HH:MM:SS"; only the "T"
+        // form is a date string every browser's Date will parse.
+        var str = iso.replace(' ', 'T');
         // Naive timestamps from the backend are UTC; mark them so as such.
         if (!/[zZ]$|[+-]\d\d:?\d\d$/.test(str)) str += 'Z';
         var d = new Date(str);
