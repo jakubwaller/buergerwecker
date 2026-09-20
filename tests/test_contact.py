@@ -51,6 +51,17 @@ def test_get_renders_form_with_project_preselected(client):
     assert '<option value="zapfkompass" selected' in body
 
 
+def test_crashgap_is_a_selectable_project(client):
+    body = client.get("/kontakt?projekt=crashgap").get_data(as_text=True)
+    assert '<option value="crashgap" selected' in body
+    with patch("app.web.mail_send") as send:
+        r = _post(client, "10.1.0.9", projekt="crashgap")
+    assert r.status_code == 200
+    _conn, _to, subject, body = send.call_args.args
+    assert "CrashGap" in subject
+    assert "Projekt: CrashGap" in body
+
+
 def test_valid_submission_sends_to_developer(client):
     with patch("app.web.mail_send") as send:
         r = _post(client, "10.1.0.1", message="Ist das Fass leer?")
