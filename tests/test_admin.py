@@ -290,7 +290,7 @@ def test_anomaly_empty_catalog_is_reported():
     kills that tenant's polling, so it must reach the summary."""
     a = summary_anomalies(_summary_stats(empty_catalogs=["leipzig/appointment_type.json"]),
                           now=NOW)
-    assert any("catalog empty on disk" in x and "leipzig/appointment_type.json" in x
+    assert any("catalog file empty on disk" in x and "leipzig/appointment_type.json" in x
                for x in a)
 
 
