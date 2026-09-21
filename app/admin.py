@@ -92,6 +92,28 @@ def _walls_detail(walls: dict | None) -> str:
                 "slot may be gone by then")
     return f" ({', '.join(bits)}{tail})"
 
+def _empty_catalogs() -> list[str]:
+    """Tenants whose service or location catalog is empty on disk — what a
+    live API answering `success` with no results leaves after the daily sync
+    rewrites the file. Such a tenant polls nothing and nobody is told, now
+    that drift no longer sends its own mail, so it goes into the summary."""
+    import json
+    from app.catalog import CATALOG_ROOT
+    out: list[str] = []
+    try:
+        dirs = sorted(p for p in CATALOG_ROOT.iterdir() if p.is_dir())
+    except OSError:
+        return out
+    for d in dirs:
+        for name in ("appointment_type.json", "locations.json"):
+            try:
+                if not json.loads((d / name).read_text(encoding="utf-8")):
+                    out.append(f"{d.name}/{name}")
+            except (OSError, ValueError):
+                continue  # missing/garbled files are load_catalog's error to raise
+    return out
+
+
 def summary_anomalies(s: dict, *, now: datetime) -> list[str]:
     """Short, human-readable lines for anything worth a look — empty when all is
     healthy. Pure: reads a stats() dict + injected `now`.
@@ -216,6 +238,11 @@ def summary_anomalies(s: dict, *, now: datetime) -> list[str]:
     bk = _parse_ts(s.get("last_backup_at"))
     if bk is None or now - bk > timedelta(hours=BACKUP_STALE_HOURS):
         out.append(f"backup is stale (>{BACKUP_STALE_HOURS}h) or missing")
+
+    empty = s.get("empty_catalogs") or []
+    if empty:
+        out.append("catalog empty on disk (sync overwrote it with nothing, "
+                   "polling of that tenant is dead): " + ", ".join(empty))
 
     return out
 
@@ -695,6 +722,7 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         "upstream_by_host": upstream_by_host,
         "city_labels": city_labels,
         "city_names": city_names,
+        "empty_catalogs": _empty_catalogs(),
         "last_polled_at_by_city": last_polled_at_by_city,
         "slots_cached": scalar("SELECT COUNT(*) FROM slots_cache"),
         "deliverability": _deliverability(conn, cfg),

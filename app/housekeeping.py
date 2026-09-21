@@ -1,5 +1,4 @@
 from __future__ import annotations
-import json
 import sqlite3
 import threading
 from datetime import datetime, timedelta
@@ -402,7 +401,7 @@ def _check_backup_health(conn, cfg):
 _sync_thread: threading.Thread | None = None
 
 def _start_catalog_sync(cfg) -> None:
-    """Run _sync_catalogs on its own thread, with its own connection.
+    """Run _sync_catalogs on its own thread.
 
     Housekeeping runs inline in the poller's single loop, and the sync walks
     every tenant against its live portal — TEVIS sleeps half a second per
@@ -421,14 +420,10 @@ def _start_catalog_sync(cfg) -> None:
         return
 
     def _run():
-        from app.db import connect
-        conn = connect(cfg.db_path)
         try:
-            _sync_catalogs(conn, cfg)
+            _sync_catalogs(cfg)
         except Exception as exc:
             print(f"catalog sync failed: {exc!r}", flush=True)
-        finally:
-            conn.close()
 
     _sync_thread = threading.Thread(target=_run, name="catalog-sync", daemon=True)
     _sync_thread.start()
@@ -438,7 +433,7 @@ def wait_for_catalog_sync(timeout: float | None = None) -> None:
     if _sync_thread is not None:
         _sync_thread.join(timeout)
 
-def _sync_catalogs(conn, cfg):
+def _sync_catalogs(cfg):
     """Refresh per-city catalog files from live APIs. Drift is logged, not mailed.
 
     Gated by CATALOG_SYNC_ENABLED so test environments don't make network calls.
