@@ -105,6 +105,8 @@ def _empty_catalogs() -> list[str]:
     except OSError:
         return out
     for d in dirs:
+        if not (d / "scraper_config.json").is_file():
+            continue  # scaffold, not a live tenant (see available_cities)
         for name in ("appointment_type.json", "locations.json"):
             try:
                 if not json.loads((d / name).read_text(encoding="utf-8")):
@@ -241,8 +243,10 @@ def summary_anomalies(s: dict, *, now: datetime) -> list[str]:
 
     empty = s.get("empty_catalogs") or []
     if empty:
-        out.append("catalog empty on disk (sync overwrote it with nothing, "
-                   "polling of that tenant is dead): " + ", ".join(empty))
+        out.append("catalog file empty on disk (the sync overwrote it with "
+                   "nothing; empty locations.json stops that tenant's polling, "
+                   "empty appointment_type.json empties its sign-up form): "
+                   + ", ".join(empty))
 
     return out
 
