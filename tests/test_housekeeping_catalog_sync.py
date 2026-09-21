@@ -53,7 +53,7 @@ def test_housekeeping_runs_catalog_sync_when_flag_on(db, monkeypatch):
         assert "leipzig" in called_cities
 
 
-def test_housekeeping_alerts_developer_when_catalog_drift_detected(db, monkeypatch):
+def test_housekeeping_does_not_mail_developer_on_catalog_drift(db, monkeypatch):
     _env(monkeypatch, CATALOG_SYNC_ENABLED="1", DEVELOPER_EMAIL="dev@example.com")
     drift_result = {"service_drift": {"added": ["NewService"]}, "location_drift": {}}
 
@@ -67,12 +67,9 @@ def test_housekeeping_alerts_developer_when_catalog_drift_detected(db, monkeypat
          patch("app.catalog_sync.sync_city", side_effect=fake_sync):
         run_once(db)
         wait_for_catalog_sync()
-        # mail.send must have been called at least once with the dev email
-        # and a subject mentioning catalog drift.
         drift_calls = [c for c in mail_send.call_args_list
-                       if "catalog" in (c.args[2] if len(c.args) > 2 else "").lower()
-                       or "drift" in (c.args[2] if len(c.args) > 2 else "").lower()]
-        assert drift_calls, f"no drift alert email sent; calls={mail_send.call_args_list}"
+                       if "drift" in (c.args[2] if len(c.args) > 2 else "").lower()]
+        assert not drift_calls, f"drift mail sent; calls={mail_send.call_args_list}"
 
 
 def test_housekeeping_swallows_catalog_sync_exception(db, monkeypatch):

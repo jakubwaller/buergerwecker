@@ -439,7 +439,7 @@ def wait_for_catalog_sync(timeout: float | None = None) -> None:
         _sync_thread.join(timeout)
 
 def _sync_catalogs(conn, cfg):
-    """Refresh per-city catalog files from live APIs. Alerts developer on drift.
+    """Refresh per-city catalog files from live APIs. Drift is logged, not mailed.
 
     Gated by CATALOG_SYNC_ENABLED so test environments don't make network calls.
     Failures here must never crash the daily run.
@@ -453,24 +453,10 @@ def _sync_catalogs(conn, cfg):
         return
 
     def _alert(*, city, service_drift, location_drift):
-        lines = [f"Catalog drift detected for {city}.", ""]
-        if service_drift:
-            lines.append("Services:")
-            lines.append(json.dumps(service_drift, ensure_ascii=False, indent=2))
-        if location_drift:
-            lines.append("Locations:")
-            lines.append(json.dumps(location_drift, ensure_ascii=False, indent=2))
-        lines.append("")
-        lines.append("Catalog files have been overwritten on disk with live values.")
-        body = "\n".join(lines)
-        try:
-            mail_send(conn, cfg.developer_email,
-                      f"[buergerwecker] catalog drift: {city}",
-                      body,
-                      idem_key=_idem_key(0, [],
-                                         f"catalog-drift-{city}-{datetime.utcnow().date()}"))
-        except Exception:
-            pass
+        # Drift no longer sends a developer mail; the catalog files are still
+        # overwritten with the live values, so just leave a trace in the log.
+        print(f"catalog drift: {city} services={service_drift} "
+              f"locations={location_drift}", flush=True)
 
     http = requests.Session()
     for city_dir in sorted(p for p in root.iterdir() if p.is_dir()):

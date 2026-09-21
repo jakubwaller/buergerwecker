@@ -96,7 +96,7 @@ def summary_anomalies(s: dict, *, now: datetime) -> list[str]:
     """Short, human-readable lines for anything worth a look — empty when all is
     healthy. Pure: reads a stats() dict + injected `now`.
 
-    Hard failures (parser canary, stale backup, catalog drift, quota block,
+    Hard failures (parser canary, stale backup, quota block,
     poller errors) already send their own targeted mail. The first three checks
     here surface *softer* signals those don't; the last two simply reflect a
     recent hard alert so this one mail is a complete picture, not a thing to
