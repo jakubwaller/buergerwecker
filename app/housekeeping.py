@@ -1,5 +1,4 @@
 from __future__ import annotations
-import json
 import sqlite3
 import threading
 from datetime import datetime, timedelta
@@ -402,7 +401,7 @@ def _check_backup_health(conn, cfg):
 _sync_thread: threading.Thread | None = None
 
 def _start_catalog_sync(cfg) -> None:
-    """Run _sync_catalogs on its own thread, with its own connection.
+    """Run _sync_catalogs on its own thread.
 
     Housekeeping runs inline in the poller's single loop, and the sync walks
     every tenant against its live portal — TEVIS sleeps half a second per
@@ -421,14 +420,10 @@ def _start_catalog_sync(cfg) -> None:
         return
 
     def _run():
-        from app.db import connect
-        conn = connect(cfg.db_path)
         try:
-            _sync_catalogs(conn, cfg)
+            _sync_catalogs(cfg)
         except Exception as exc:
             print(f"catalog sync failed: {exc!r}", flush=True)
-        finally:
-            conn.close()
 
     _sync_thread = threading.Thread(target=_run, name="catalog-sync", daemon=True)
     _sync_thread.start()
@@ -438,8 +433,8 @@ def wait_for_catalog_sync(timeout: float | None = None) -> None:
     if _sync_thread is not None:
         _sync_thread.join(timeout)
 
-def _sync_catalogs(conn, cfg):
-    """Refresh per-city catalog files from live APIs. Alerts developer on drift.
+def _sync_catalogs(cfg):
+    """Refresh per-city catalog files from live APIs. Drift is logged, not mailed.
 
     Gated by CATALOG_SYNC_ENABLED so test environments don't make network calls.
     Failures here must never crash the daily run.
@@ -453,24 +448,10 @@ def _sync_catalogs(conn, cfg):
         return
 
     def _alert(*, city, service_drift, location_drift):
-        lines = [f"Catalog drift detected for {city}.", ""]
-        if service_drift:
-            lines.append("Services:")
-            lines.append(json.dumps(service_drift, ensure_ascii=False, indent=2))
-        if location_drift:
-            lines.append("Locations:")
-            lines.append(json.dumps(location_drift, ensure_ascii=False, indent=2))
-        lines.append("")
-        lines.append("Catalog files have been overwritten on disk with live values.")
-        body = "\n".join(lines)
-        try:
-            mail_send(conn, cfg.developer_email,
-                      f"[buergerwecker] catalog drift: {city}",
-                      body,
-                      idem_key=_idem_key(0, [],
-                                         f"catalog-drift-{city}-{datetime.utcnow().date()}"))
-        except Exception:
-            pass
+        # Drift no longer sends a developer mail; the catalog files are still
+        # overwritten with the live values, so just leave a trace in the log.
+        print(f"catalog drift: {city} services={service_drift} "
+              f"locations={location_drift}", flush=True)
 
     http = requests.Session()
     for city_dir in sorted(p for p in root.iterdir() if p.is_dir()):
