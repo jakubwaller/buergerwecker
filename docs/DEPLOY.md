@@ -423,10 +423,14 @@ retirement rule below keeps that from retiring anyone.
 - APNs `410` / `BadDeviceToken`, FCM `UNREGISTERED`: the token is dead,
   *or* our configuration is wrong (`APNS_TOPIC`, `APNS_SANDBOX`, the FCM JSON
   of another project), which answers exactly the same for every device at
-  once. The two are told apart by the one thing a misconfiguration cannot
-  produce, a delivery: the device is retired, and its subscriptions end, only
-  once the platform has delivered to someone since that device first answered
-  dead (`push_devices.dead_since`). Until then the poller logs
+  once. The two are told apart by what a platform-wide misconfiguration
+  cannot produce, a delivery: the device is retired, and its subscriptions
+  end, only once the platform has delivered to someone since that device
+  first answered dead (`push_devices.dead_since`). The rule cannot see a
+  *mixed* fleet: `APNS_SANDBOX=1` with a development build registered next to
+  TestFlight devices lets the development phone's delivery count as evidence
+  against every TestFlight device, which is the other reason the VPS never
+  points at the sandbox. Until then the poller logs
   `push: … answered dead-token … has delivered nothing since; not retiring`
   every cycle a slot matches. That line on every cycle with no `retired`
   line ever is the misconfiguration signature; fix the knob it names. A

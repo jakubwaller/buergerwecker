@@ -388,12 +388,16 @@ def send_push_batch(conn: sqlite3.Connection, items: list[OutgoingPush],
         # The relay said "dead token". That is also what a wrong APNS_TOPIC,
         # APNS_SANDBOX or FCM project says, for every device at once, and
         # retiring on it would end every app user's subscriptions with no way
-        # back. The one thing a misconfiguration cannot produce is a delivery,
-        # so a device is retired only once the platform has delivered to
-        # someone since this device first answered dead: in this cycle, or in
-        # a later one (the first dead answer is remembered in dead_since). Dead
-        # phones cost a request per cycle until then; wiped subscriptions
-        # cannot be bought back.
+        # back. A misconfiguration that hits the whole platform cannot produce
+        # a delivery, so a device is retired only once the platform has
+        # delivered to someone since this device first answered dead: in this
+        # cycle, or in a later one (the first dead answer is remembered in
+        # dead_since). Dead phones cost a request per cycle until then; wiped
+        # subscriptions cannot be bought back. The rule is blind to a *mixed*
+        # fleet: with APNS_SANDBOX=1 a development build on the sandbox
+        # delivers while every TestFlight device answers BadDeviceToken, and
+        # that delivery would count as evidence. The runbook keeps the VPS on
+        # production for that reason.
         retire_now: list[tuple[OutgoingPush, str]] = []
         hold: list[tuple[OutgoingPush, str]] = []
         for it, reason in answers:

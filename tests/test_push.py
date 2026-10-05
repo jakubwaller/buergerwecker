@@ -645,12 +645,14 @@ def test_register_device_revives_the_same_token_and_keeps_its_subscriptions(db):
     dev = _device(db, token="same")
     sid = _push_sub(db, dev)
     retire_device(db, dev, "Unregistered")
+    db.execute("UPDATE push_devices SET dead_since=CURRENT_TIMESTAMP WHERE id=?", (dev,))
     again = register_device(db, platform="apns", token="same",
                             secret_hash="n" * 64, language="en")
     assert again == dev
     row = db.execute("SELECT * FROM push_devices WHERE id=?", (dev,)).fetchone()
     assert row["retired_at"] is None and row["secret_hash"] == "n" * 64
     assert row["language"] == "en"
+    assert row["dead_since"] is None   # the evidence clock starts over
     # The retirement soft-deleted the subscription; a revived device starts
     # clean and the app re-subscribes. The row itself is still there for the
     # 30-day purge.

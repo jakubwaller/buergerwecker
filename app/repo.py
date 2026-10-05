@@ -46,13 +46,15 @@ def register_device(conn: sqlite3.Connection, *, platform: str, token: str,
                     secret_hash: str, language: str) -> int:
     """Create or revive the row for a push token. The same token coming back
     (reinstall, a re-run of the app's first launch) is the same device: it
-    takes the new secret, loses any retirement, and keeps its subscriptions."""
+    takes the new secret, loses any retirement and any remembered dead
+    answer (the evidence clock starts over), and keeps its subscriptions."""
     row = conn.execute(
         "INSERT INTO push_devices (platform, token, secret_hash, language) "
         "VALUES (?,?,?,?) "
         "ON CONFLICT (platform, token) DO UPDATE SET "
         "secret_hash=excluded.secret_hash, language=excluded.language, "
-        "retired_at=NULL, retire_reason=NULL, last_seen_at=CURRENT_TIMESTAMP "
+        "retired_at=NULL, retire_reason=NULL, dead_since=NULL, "
+        "last_seen_at=CURRENT_TIMESTAMP "
         "RETURNING id",
         (platform, token, secret_hash, language),
     ).fetchone()
