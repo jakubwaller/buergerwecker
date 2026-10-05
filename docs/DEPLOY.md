@@ -398,7 +398,7 @@ APNS_TEAM_ID=<10-char Apple team id>        # Developer account → Membership
 APNS_KEY_ID=<10-char key id>                # Keys → the APNs auth key (.p8)
 APNS_KEY_P8_FILE=/run/secrets/apns.p8       # or APNS_KEY_P8=<PEM inline>
 APNS_TOPIC=<bundle id of the app>
-APNS_SANDBOX=0                              # 1 for TestFlight/dev builds
+APNS_SANDBOX=0                              # 1 only for Xcode development builds
 FCM_SERVICE_ACCOUNT_JSON_FILE=/run/secrets/fcm.json   # or ..._JSON=<inline>
 PUSH_TTL_SECONDS=1800                       # how long a relay holds a push
 ```
@@ -411,10 +411,11 @@ Generate new private key, for a project whose Cloud Messaging API (v1) is
 enabled. Both are credentials for *sending*: they name the app, not any
 person.
 
-`APNS_SANDBOX` must match the build: a production key works against both
-hosts, but a sandbox-built app's tokens get `BadDeviceToken` from the
-production host, which retires the device. Leave it at `0` on the VPS once the
-store build is out.
+`APNS_SANDBOX` must match the build. Only a development-signed build straight
+from Xcode uses the sandbox; **TestFlight and App Store builds use
+production**, so the VPS stays at `0` from the first beta on. A mismatch, like
+a wrong `APNS_TOPIC`, answers `BadDeviceToken` for every device; the breaker
+below keeps that from retiring anyone.
 
 ### What the poller does with a relay's answer
 
@@ -422,8 +423,14 @@ store build is out.
 - APNs `410` / `BadDeviceToken`, FCM `UNREGISTERED`: the token is dead. The
   device is retired on the spot and its subscriptions end (the app
   re-registers on next launch). `push_devices.retire_reason` says which.
-- `429`, `5xx`, relay unreachable: released, the next cycle retries. Nothing
-  is recorded as seen.
+  **Breaker:** three or more such answers on one platform in one cycle with
+  nothing delivered there is our configuration, not dead phones (a wrong
+  `APNS_TOPIC`, `APNS_SANDBOX`, or the FCM JSON of another project). Nobody is
+  retired, the pushes wait for the next cycle, and the log says
+  `push: … answered dead-token Nx with nothing delivered; not retiring`.
+- `429`, `5xx`, relay unreachable: released, the next cycle retries, and the
+  platform is not tried again this cycle (an outage must not hold the poller
+  for a timeout per device). Nothing is recorded as seen.
 - `403` / `401`: our credentials. The provider token is renewed and the push
   retried once; refused again, everything on that platform waits for the next
   cycle. A persistent `push: apns auth` line in the poller log means the key
@@ -438,8 +445,9 @@ ssh vps 'cd ~/buergerwecker && docker compose logs --since 1h poller | grep "pus
 ```
 
 Silence is the healthy state. Retention: a retired device is purged 30 days
-after retirement, a live one 30 days after its last subscription ended
-(housekeeping, same clock as an address).
+after retirement; a live one once 30 days have passed since both its last
+registration and the end of its last subscription (housekeeping, same clock as
+an address).
 
 ## Subscription term & the "still looking?" check-in
 

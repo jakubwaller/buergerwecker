@@ -328,17 +328,21 @@ def _prune_suppressions(conn, cfg=None):
 def _prune_push_devices(conn):
     """A push token is as much a person's data as an address is: it goes on
     the same 30-day clock. A retired device (dead token) is purged 30 days
-    after retirement; a live one that has carried no subscription for 30 days
-    (the app was used once and never again, or every subscription was
-    deleted) goes too. The app re-registers on its next launch, so nothing is
-    lost. ON DELETE CASCADE takes any soft-deleted subscriptions along.
-    Depends on `_purge_hard` having run first in `run_once`."""
+    after retirement. A live one goes once it has carried no live
+    subscription for 30 days and has not registered in 30 days either: the
+    app was used once and never again, or every subscription was deleted and
+    the device was not heard from since. The app re-registers on its next
+    launch, so nothing is lost. ON DELETE CASCADE takes any soft-deleted
+    subscriptions along. Depends on `_purge_hard` having run first in
+    `run_once`."""
     conn.execute(
         "DELETE FROM push_devices WHERE "
         "  (retired_at IS NOT NULL AND retired_at < datetime('now','-30 days')) "
         "  OR (last_seen_at < datetime('now','-30 days') AND NOT EXISTS ("
         "        SELECT 1 FROM subscriptions s "
-        "        WHERE s.device_id = push_devices.id AND s.deleted_at IS NULL))")
+        "        WHERE s.device_id = push_devices.id "
+        "        AND (s.deleted_at IS NULL "
+        "             OR s.deleted_at > datetime('now','-30 days'))))")
 
 def _prune_slots_cache(conn):
     # Slots are short-lived in the upstream system; 14 days is generous.

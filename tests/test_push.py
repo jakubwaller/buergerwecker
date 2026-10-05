@@ -323,6 +323,52 @@ def test_relay_5xx_defers_and_releases_the_claim(db):
     assert live_devices(db, [dev])
 
 
+def test_one_deferral_ends_the_platform_for_this_cycle(db):
+    """During an outage every further request would cost TIMEOUT_S and block
+    the poller; the second device is not even tried."""
+    d1, d2 = _device(db, token="a"), _device(db, token="b")
+    relay = FakeRelay([(503, {"reason": "ServiceUnavailable"})])
+    with patch("app.push._post", relay):
+        res = send_push_batch(db, [_item(d1, "k1"), _item(d2, "k2")], _cfg())
+    assert res.deferred == 2 and len(relay.calls) == 1
+    assert _claimed(db, "k1") is None and _claimed(db, "k2") is None
+
+
+def test_platform_wide_dead_token_answers_retire_nobody(db):
+    """A wrong APNS_TOPIC answers BadDeviceToken for every device. Retiring on
+    that would end every app user's subscriptions in one cycle."""
+    devs = [_device(db, token=f"t{i}") for i in range(3)]
+    sids = [_push_sub(db, d) for d in devs]
+    relay = FakeRelay([(400, {"reason": "DeviceTokenNotForTopic"})] * 3)
+    with patch("app.push._post", relay):
+        res = send_push_batch(db, [_item(d, f"k{i}") for i, d in enumerate(devs)],
+                              _cfg())
+    assert res.retired == set() and res.deferred == 3
+    assert len(live_devices(db, devs)) == 3
+    alive = db.execute("SELECT COUNT(*) FROM subscriptions WHERE deleted_at IS NULL "
+                       "AND id IN (%s)" % ",".join("?" * 3), sids).fetchone()[0]
+    assert alive == 3
+
+
+def test_dead_token_answers_still_retire_once_something_got_through(db):
+    devs = [_device(db, token=f"t{i}") for i in range(4)]
+    relay = FakeRelay([(200, {})] + [(410, {"reason": "Unregistered"})] * 3)
+    with patch("app.push._post", relay):
+        res = send_push_batch(db, [_item(d, f"k{i}") for i, d in enumerate(devs)],
+                              _cfg())
+    assert res.delivered == {"k0"}
+    assert res.retired == set(devs[1:])
+
+
+def test_two_dead_tokens_are_below_the_breaker(db):
+    devs = [_device(db, token=f"t{i}") for i in range(2)]
+    relay = FakeRelay([(410, {"reason": "Unregistered"})] * 2)
+    with patch("app.push._post", relay):
+        res = send_push_batch(db, [_item(d, f"k{i}") for i, d in enumerate(devs)],
+                              _cfg())
+    assert res.retired == set(devs)
+
+
 def test_relay_unreachable_defers(db):
     dev = _device(db)
 
@@ -663,13 +709,17 @@ def test_prune_push_devices_purges_retired_and_abandoned_rows_only(db):
     dormant_with_sub = _device(db, token="dormant")      # old, but still subscribed
     _push_sub(db, dormant_with_sub)
     db.execute("UPDATE push_devices SET last_seen_at=? WHERE id=?", (old, dormant_with_sub))
-    unsubscribed = _device(db, token="unsubbed")         # old, subscription deleted
+    unsubscribed = _device(db, token="unsubbed")         # old, subscription long gone
     sid = _push_sub(db, unsubscribed)
-    db.execute("UPDATE subscriptions SET deleted_at=CURRENT_TIMESTAMP WHERE id=?", (sid,))
+    db.execute("UPDATE subscriptions SET deleted_at=? WHERE id=?", (old, sid))
     db.execute("UPDATE push_devices SET last_seen_at=? WHERE id=?", (old, unsubscribed))
+    just_left = _device(db, token="just-left")           # old, but unsubscribed today
+    sid2 = _push_sub(db, just_left)
+    db.execute("UPDATE subscriptions SET deleted_at=CURRENT_TIMESTAMP WHERE id=?", (sid2,))
+    db.execute("UPDATE push_devices SET last_seen_at=? WHERE id=?", (old, just_left))
     _prune_push_devices(db)
     left = {r["token"] for r in db.execute("SELECT token FROM push_devices")}
-    assert left == {"r-new", "dormant"}
+    assert left == {"r-new", "dormant", "just-left"}
     # The cascade took the deleted subscription of the purged device along.
     assert db.execute("SELECT COUNT(*) FROM subscriptions WHERE id=?",
                       (sid,)).fetchone()[0] == 0

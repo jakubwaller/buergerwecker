@@ -51,7 +51,7 @@ class Config:
     apns_key_id: str = ""
     apns_key_p8: str = ""          # PEM text of the .p8 signing key
     apns_topic: str = ""           # the app's bundle id
-    apns_sandbox: bool = False     # TestFlight/dev builds use the sandbox host
+    apns_sandbox: bool = False     # Xcode development builds only; TestFlight is production
     fcm_service_account_json: str = ""   # the service-account JSON, as text
     push_ttl_seconds: int = 1800
 

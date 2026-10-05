@@ -664,7 +664,8 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
     provider_7d: dict[str, int] = {}
     for r in conn.execute(
         "SELECT provider, COUNT(*) AS n FROM sent_idempotency "
-        "WHERE sent_at > datetime('now','-7 days') AND provider != 'pending' "
+        "WHERE sent_at > datetime('now','-7 days') "
+        "AND provider NOT IN ('pending', 'apns', 'fcm') "
         "GROUP BY provider"
     ).fetchall():
         provider_7d[r["provider"]] = r["n"]
@@ -721,7 +722,7 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         "emails_sent_last_7d":
             scalar("SELECT COUNT(*) FROM sent_idempotency "
                    "WHERE sent_at > datetime('now','-7 days') "
-                   "AND provider != 'pending'"),
+                   "AND provider NOT IN ('pending', 'apns', 'fcm')"),
         "upstream_by_city": upstream_by_city,
         "upstream_by_host": upstream_by_host,
         "city_labels": city_labels,
