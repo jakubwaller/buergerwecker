@@ -35,7 +35,7 @@ def _pem(key) -> str:
 EC_PEM = _pem(ec.generate_private_key(ec.SECP256R1()))
 RSA_PEM = _pem(rsa.generate_private_key(public_exponent=65537, key_size=2048))
 SERVICE_ACCOUNT = (
-    '{"project_id": "bw-test", "client_email": "fcm@bw-test.iam.example.com", '
+    '{"project_id": "bw-test", "client_email": "fcm@example.com", '
     '"token_uri": "https://oauth2.example.com/token", '
     '"private_key": ' + __import__("json").dumps(RSA_PEM) + '}')
 
