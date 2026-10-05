@@ -382,6 +382,82 @@ complaint arrived, so they sign up again as a new subscriber.
 Both send paths honour the list — `send_batch` via `_dead_addresses` and the
 transactional `send()` via its own check. Do not add a third.
 
+## Push delivery (the app)
+
+App subscribers are notified by push instead of mail: the poller sends through
+Apple's APNs (iPhone) and Google's FCM (Android) from the same digest flush,
+under the same idempotency key and the same seen_slots bookkeeping. Without the
+env vars below nothing changes — a push-only subscription would simply never
+be delivered (and its slots stay unseen), so set them before the app is
+released, not after.
+
+### Env vars
+
+```
+APNS_TEAM_ID=<10-char Apple team id>        # Developer account → Membership
+APNS_KEY_ID=<10-char key id>                # Keys → the APNs auth key (.p8)
+APNS_KEY_P8_FILE=/run/secrets/apns.p8       # or APNS_KEY_P8=<PEM inline>
+APNS_TOPIC=<bundle id of the app>
+APNS_SANDBOX=0                              # 1 only for Xcode development builds
+FCM_SERVICE_ACCOUNT_JSON_FILE=/run/secrets/fcm.json   # or ..._JSON=<inline>
+PUSH_TTL_SECONDS=1800                       # how long a relay holds a push
+```
+
+Only the poller needs them. Mount the two key files read-only into the poller
+container and point the `_FILE` variants at them; inline values work too but a
+multi-line PEM in `.env` is fragile. The APNs key is downloadable once from
+Apple; the FCM file is Firebase → Project settings → Service accounts →
+Generate new private key, for a project whose Cloud Messaging API (v1) is
+enabled. Both are credentials for *sending*: they name the app, not any
+person.
+
+`APNS_SANDBOX` must match the build. Only a development-signed build straight
+from Xcode uses the sandbox; **TestFlight and App Store builds use
+production**, so the VPS stays at `0` from the first beta on. A mismatch, like
+a wrong `APNS_TOPIC`, answers `BadDeviceToken` for every device; the
+retirement rule below keeps that from retiring anyone.
+
+### What the poller does with a relay's answer
+
+- `200`: delivered; `sent_idempotency.provider` is `apns` or `fcm`.
+- APNs `410` / `BadDeviceToken`, FCM `UNREGISTERED`: the token is dead,
+  *or* our configuration is wrong (`APNS_TOPIC`, `APNS_SANDBOX`, the FCM JSON
+  of another project), which answers exactly the same for every device at
+  once. The two are told apart by what a platform-wide misconfiguration
+  cannot produce, a delivery: the device is retired, and its subscriptions
+  end, only once the platform has delivered to someone since that device
+  first answered dead (`push_devices.dead_since`). The rule cannot see a
+  *mixed* fleet: `APNS_SANDBOX=1` with a development build registered next to
+  TestFlight devices lets the development phone's delivery count as evidence
+  against every TestFlight device, which is the other reason the VPS never
+  points at the sandbox. Until then the poller logs
+  `push: … answered dead-token … has delivered nothing since; not retiring`
+  every cycle a slot matches. That line on every cycle with no `retired`
+  line ever is the misconfiguration signature; fix the knob it names. A
+  retired device's `retire_reason` says which answer did it, and the app
+  re-registers on next launch.
+- `5xx`, FCM `429` (project quota), relay unreachable: released, the next
+  cycle retries, and the platform is not tried again this cycle (an outage
+  must not hold the poller for a timeout per device). APNs `429` is per
+  device token and releases only that push. Nothing is recorded as seen.
+- `403` / `401`: our credentials. The provider token is renewed and the push
+  retried once; refused again, everything on that platform waits for the next
+  cycle. A persistent `push: apns auth` line in the poller log means the key
+  or team id is wrong.
+- Any other `400`: our payload. Dropped and logged (`push: … refused payload`);
+  retrying cannot help.
+
+### Verifying after deploy
+
+```
+ssh vps 'cd ~/buergerwecker && docker compose logs --since 1h poller | grep "push:"'
+```
+
+Silence is the healthy state. Retention: a retired device is purged 30 days
+after retirement; a live one once 30 days have passed since both its last
+registration and the end of its last subscription (housekeeping, same clock as
+an address).
+
 ## Subscription term & the "still looking?" check-in
 
 A subscription's term is short on purpose. Most people never click *Abmelden* after they have

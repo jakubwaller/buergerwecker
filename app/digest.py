@@ -2,10 +2,11 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 from app.i18n import t
 from app.models import SeenKey, Subscription, Slot, per_slot_key
 from app.mail import (send, send_batch, maybe_quota_alert, Outgoing,
-                      _idem_key)
+                      BatchResult, _idem_key)
 
 # Render at most this many slots per digest email (soonest first). Keeps even
 # an abundant tenant's digest far under Gmail's ~102KB clipping threshold;
@@ -179,8 +180,10 @@ def render_digest_text(sub: Subscription, slots: list[Slot], *,
 @dataclass
 class QueuedDigest:
     """A rendered digest staged for batched delivery. Carries the subscription
-    and slots so the flush can record seen_slots only for what was delivered."""
-    item: Outgoing
+    and slots so the flush can record seen_slots only for what was delivered.
+    `item` is an `Outgoing` mail or, for an app subscription, an
+    `app.push.OutgoingPush`; both carry the idem_key the flush keys on."""
+    item: Outgoing | Any
     subscription: Subscription
     slots: list[Slot]
     # Slots the filter matched this cycle, already-seen ones included. Recorded
@@ -234,23 +237,39 @@ def send_digest(*, conn: sqlite3.Connection, subscription: Subscription,
                     primary=cfg.token_secret_primary,
                     previous=cfg.token_secret_previous)
         booking_url = f"{cfg.public_base_url}/go/sub/{goto}"
-    body = render_digest_text(subscription, matched_slots,
-                              unsubscribe_url=unsub_url,
-                              public_base_url=cfg.public_base_url,
-                              kofi_url=cfg.kofi_url,
-                              catalog=catalog,
-                              booking_url=booking_url,
-                              manage_url=manage_url)
-    from app.catalog import city_display_name
-    city_name = city_display_name(subscription.city, subscription.language)
-    subj = (t(subscription.language, "digest.subject_city", city=city_name)
-            if city_name else t(subscription.language, "digest.subject"))
     key = _idem_key(subscription.id,
                     [s.hash() for s in matched_slots],
                     cycle_id)
+    device_id = getattr(subscription, "device_id", None)
+    if device_id is not None:
+        # An app subscription: a push instead of a mail, same idempotency key,
+        # same seen_slots bookkeeping on delivery. The booking URL is the one
+        # the mail would carry, the opaque /go/sub/ form for a sensitive Amt.
+        from app.push import OutgoingPush, render_push
+        go_url = booking_url or f"{cfg.public_base_url}/go/{subscription.city}"
+        if booking_url is None and subscription.language == "en":
+            go_url += "?lang=en"
+        title, push_body, data = render_push(subscription, matched_slots,
+                                             catalog=catalog, booking_url=go_url)
+        item = OutgoingPush(device_id=device_id, title=title, body=push_body,
+                            idem_key=key, data=data,
+                            collapse_id=f"sub-{subscription.id}")
+    else:
+        body = render_digest_text(subscription, matched_slots,
+                                  unsubscribe_url=unsub_url,
+                                  public_base_url=cfg.public_base_url,
+                                  kofi_url=cfg.kofi_url,
+                                  catalog=catalog,
+                                  booking_url=booking_url,
+                                  manage_url=manage_url)
+        from app.catalog import city_display_name
+        city_name = city_display_name(subscription.city, subscription.language)
+        subj = (t(subscription.language, "digest.subject_city", city=city_name)
+                if city_name else t(subscription.language, "digest.subject"))
+        item = Outgoing(to=subscription.email, subject=subj, body=body,
+                        idem_key=key, unsub_url=unsub_url)
     queued = QueuedDigest(
-        item=Outgoing(to=subscription.email, subject=subj, body=body,
-                      idem_key=key, unsub_url=unsub_url),
+        item=item,
         subscription=subscription,
         slots=list(matched_slots),
         match_count=match_count,
@@ -288,9 +307,18 @@ def flush_digests(conn: sqlite3.Connection, sink: list, cfg) -> None:
     from app.repo import (record_digest_delivery, record_seen_slot,
                           set_last_notified)
     sink = sorted(sink, key=lambda q: str(q.subscription.last_notified_at or ""))
-    result = send_batch(conn, [q.item for q in sink], cfg)
+    # Mail and push take different roads to the same bookkeeping. The push
+    # module is imported only when there is a push digest to send, so a deploy
+    # without app users never loads the relay clients.
+    mail_items = [q.item for q in sink if isinstance(q.item, Outgoing)]
+    push_items = [q.item for q in sink if not isinstance(q.item, Outgoing)]
+    result = send_batch(conn, mail_items, cfg) if mail_items else BatchResult()
+    delivered = set(result.delivered)
+    if push_items:
+        from app.push import send_push_batch
+        delivered |= send_push_batch(conn, push_items, cfg).delivered
     for q in sink:
-        if q.item.idem_key not in result.delivered:
+        if q.item.idem_key not in delivered:
             continue
         with transaction(conn):
             # Several slots can share one key at day granularity (the whole

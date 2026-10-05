@@ -24,6 +24,73 @@ def insert_pending(conn: sqlite3.Connection, *, email: str, city: str,
     return cur.lastrowid
 
 
+def insert_push_subscription(conn: sqlite3.Connection, *, device_id: int,
+                             city: str, language: str, filter_: Filter,
+                             ttl_days: int, consent_special: bool = False) -> int:
+    """An app subscription, live at once. There is no double opt-in: the OS
+    permission prompt the app had to pass is the opt-in, and there is no
+    address to verify. `email` is the '' sentinel (see the schema)."""
+    now = sql_ts(datetime.utcnow())
+    expires_at = sql_ts(datetime.utcnow() + timedelta(days=ttl_days))
+    cur = conn.execute(
+        "INSERT INTO subscriptions (email, device_id, city, language, "
+        "filters_json, confirmed_at, expires_at, consent_special_at) "
+        "VALUES ('', ?,?,?,?,?,?,?)",
+        (device_id, city, language, filter_.to_json(), now, expires_at,
+         now if consent_special else None),
+    )
+    return cur.lastrowid
+
+
+def register_device(conn: sqlite3.Connection, *, platform: str, token: str,
+                    secret_hash: str, language: str) -> int:
+    """Create or revive the row for a push token. The same token coming back
+    (reinstall, a re-run of the app's first launch) is the same device: it
+    takes the new secret, loses any retirement and any remembered dead
+    answer (the evidence clock starts over), and keeps its subscriptions."""
+    row = conn.execute(
+        "INSERT INTO push_devices (platform, token, secret_hash, language) "
+        "VALUES (?,?,?,?) "
+        "ON CONFLICT (platform, token) DO UPDATE SET "
+        "secret_hash=excluded.secret_hash, language=excluded.language, "
+        "retired_at=NULL, retire_reason=NULL, dead_since=NULL, "
+        "last_seen_at=CURRENT_TIMESTAMP "
+        "RETURNING id",
+        (platform, token, secret_hash, language),
+    ).fetchone()
+    return row[0]
+
+
+def live_devices(conn: sqlite3.Connection,
+                 device_ids: list[int]) -> dict[int, tuple[str, str]]:
+    """{device_id: (platform, token)} for the ids that are not retired."""
+    if not device_ids:
+        return {}
+    marks = ",".join("?" * len(device_ids))
+    rows = conn.execute(
+        f"SELECT id, platform, token FROM push_devices "
+        f"WHERE id IN ({marks}) AND retired_at IS NULL",
+        list(device_ids),
+    ).fetchall()
+    return {r["id"]: (r["platform"], r["token"]) for r in rows}
+
+
+def retire_device(conn: sqlite3.Connection, device_id: int, reason: str) -> None:
+    """The relay says the token is dead (APNs 410, FCM UNREGISTERED). The
+    device's subscriptions end with it: nothing could reach them, and a
+    reinstall registers afresh."""
+    conn.execute(
+        "UPDATE push_devices SET retired_at=CURRENT_TIMESTAMP, retire_reason=? "
+        "WHERE id=? AND retired_at IS NULL",
+        (reason, device_id),
+    )
+    conn.execute(
+        "UPDATE subscriptions SET deleted_at=CURRENT_TIMESTAMP "
+        "WHERE device_id=? AND deleted_at IS NULL",
+        (device_id,),
+    )
+
+
 def set_special_consent(conn: sqlite3.Connection, sub_id: int,
                         given: bool) -> None:
     """Record (or clear) the Art. 9 consent on an existing subscription.
@@ -92,6 +159,7 @@ def _row_to_subscription(row: sqlite3.Row) -> Subscription:
                           if "last_match_count" in row.keys() else None),
         consecutive_digests=(row["consecutive_digests"]
                              if "consecutive_digests" in row.keys() else 0) or 0,
+        device_id=(row["device_id"] if "device_id" in row.keys() else None),
     )
 
 def active_subscriptions(conn: sqlite3.Connection) -> list[Subscription]:

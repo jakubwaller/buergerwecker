@@ -664,7 +664,8 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
     provider_7d: dict[str, int] = {}
     for r in conn.execute(
         "SELECT provider, COUNT(*) AS n FROM sent_idempotency "
-        "WHERE sent_at > datetime('now','-7 days') AND provider != 'pending' "
+        "WHERE sent_at > datetime('now','-7 days') "
+        "AND provider NOT IN ('pending', 'apns', 'fcm') "
         "GROUP BY provider"
     ).fetchall():
         provider_7d[r["provider"]] = r["n"]
@@ -692,7 +693,7 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         # People, not rows: one address may hold several subscriptions. lower()
         # folds rows that predate the subscribe form's lowercasing.
         "active_subscribers":
-            scalar("SELECT COUNT(DISTINCT lower(email)) FROM subscriptions "
+            scalar("SELECT COUNT(DISTINCT COALESCE('d'||device_id, lower(email))) FROM subscriptions "
                    "WHERE deleted_at IS NULL AND confirmed_at IS NOT NULL "
                    "AND expires_at > CURRENT_TIMESTAMP"),
         "active_subscriptions_by_city": by_city_subs,
@@ -711,17 +712,17 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         # People, not rows, matching cancellations_daily: never-confirmed
         # sign-ups were never subscribed, so their deletion cancels nothing.
         "cancellations_24h":
-            scalar("SELECT COUNT(DISTINCT lower(email)) FROM subscriptions "
+            scalar("SELECT COUNT(DISTINCT COALESCE('d'||device_id, lower(email))) FROM subscriptions "
                    "WHERE confirmed_at IS NOT NULL "
                    "AND deleted_at > datetime('now','-1 day')"),
         "cancellations_7d":
-            scalar("SELECT COUNT(DISTINCT lower(email)) FROM subscriptions "
+            scalar("SELECT COUNT(DISTINCT COALESCE('d'||device_id, lower(email))) FROM subscriptions "
                    "WHERE confirmed_at IS NOT NULL "
                    "AND deleted_at > datetime('now','-7 days')"),
         "emails_sent_last_7d":
             scalar("SELECT COUNT(*) FROM sent_idempotency "
                    "WHERE sent_at > datetime('now','-7 days') "
-                   "AND provider != 'pending'"),
+                   "AND provider NOT IN ('pending', 'apns', 'fcm')"),
         "upstream_by_city": upstream_by_city,
         "upstream_by_host": upstream_by_host,
         "city_labels": city_labels,

@@ -257,7 +257,7 @@ def subscribers_daily(conn: sqlite3.Connection, *, days: int = 30) -> list[dict]
     window stops exactly where the record is still complete.
     """
     return _day_series(conn, days, (
-        "(SELECT COUNT(DISTINCT lower(email)) FROM subscriptions "
+        "(SELECT COUNT(DISTINCT COALESCE('d'||device_id, lower(email))) FROM subscriptions "
         " WHERE confirmed_at IS NOT NULL AND confirmed_at <= cutoff "
         "   AND (deleted_at IS NULL OR deleted_at > cutoff) "
         "   AND datetime(expires_at) > cutoff) AS people, "
@@ -281,11 +281,11 @@ def cancellations_daily(conn: sqlite3.Connection, *, days: int = 30) -> list[dic
     """
     live = "confirmed_at IS NOT NULL AND deleted_at >= day AND deleted_at < cutoff"
     return _day_series(conn, days, (
-        f"(SELECT COUNT(DISTINCT lower(email)) FROM subscriptions WHERE {live}) "
+        f"(SELECT COUNT(DISTINCT COALESCE('d'||device_id, lower(email))) FROM subscriptions WHERE {live}) "
         "  AS people, "
         f"(SELECT COUNT(*) FROM subscriptions WHERE {live}) AS subscriptions, "
-        f"(SELECT COUNT(DISTINCT lower(email)) FROM subscriptions WHERE {live} "
+        f"(SELECT COUNT(DISTINCT COALESCE('d'||device_id, lower(email))) FROM subscriptions WHERE {live} "
         "   AND datetime(expires_at) > deleted_at) AS unsubscribed, "
-        f"(SELECT COUNT(DISTINCT lower(email)) FROM subscriptions WHERE {live} "
+        f"(SELECT COUNT(DISTINCT COALESCE('d'||device_id, lower(email))) FROM subscriptions WHERE {live} "
         "   AND datetime(expires_at) <= deleted_at) AS expired"
     ))
