@@ -22,5 +22,9 @@
   "digest.window_days": "within the next {n} days",
   "digest.more_available": "… and {n} more matching appointments are currently bookable online — the soonest are listed above.",
   "digest.sensitive_redacted": "(withheld for privacy)",
-  "digest.book_instructions_redacted": "Select your appointment type there again — for privacy reasons we don't name it in this email."
+  "digest.book_instructions_redacted": "Select your appointment type there again — for privacy reasons we don't name it in this email.",
+  "push.title": "New appointments available",
+  "push.title_city": "New appointments in {city}",
+  "push.more": "+{n} more",
+  "push.body_redacted": "{n} new matching appointments. Tap to open the booking page."
 }

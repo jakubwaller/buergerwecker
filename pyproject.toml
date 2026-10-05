@@ -11,6 +11,10 @@ dependencies = [
   "requests>=2.32",
   "beautifulsoup4>=4.12",
   "python-dotenv>=1.0",
+  # Push delivery for the app: APNs speaks HTTP/2 only, both APNs and the
+  # FCM OAuth exchange authenticate with a signed JWT (ES256 / RS256).
+  "httpx[http2]>=0.27",
+  "PyJWT[crypto]>=2.9",
 ]
 
 [project.optional-dependencies]

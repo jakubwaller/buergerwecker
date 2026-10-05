@@ -382,6 +382,65 @@ complaint arrived, so they sign up again as a new subscriber.
 Both send paths honour the list — `send_batch` via `_dead_addresses` and the
 transactional `send()` via its own check. Do not add a third.
 
+## Push delivery (the app)
+
+App subscribers are notified by push instead of mail: the poller sends through
+Apple's APNs (iPhone) and Google's FCM (Android) from the same digest flush,
+under the same idempotency key and the same seen_slots bookkeeping. Without the
+env vars below nothing changes — a push-only subscription would simply never
+be delivered (and its slots stay unseen), so set them before the app is
+released, not after.
+
+### Env vars
+
+```
+APNS_TEAM_ID=<10-char Apple team id>        # Developer account → Membership
+APNS_KEY_ID=<10-char key id>                # Keys → the APNs auth key (.p8)
+APNS_KEY_P8_FILE=/run/secrets/apns.p8       # or APNS_KEY_P8=<PEM inline>
+APNS_TOPIC=<bundle id of the app>
+APNS_SANDBOX=0                              # 1 for TestFlight/dev builds
+FCM_SERVICE_ACCOUNT_JSON_FILE=/run/secrets/fcm.json   # or ..._JSON=<inline>
+PUSH_TTL_SECONDS=1800                       # how long a relay holds a push
+```
+
+Only the poller needs them. Mount the two key files read-only into the poller
+container and point the `_FILE` variants at them; inline values work too but a
+multi-line PEM in `.env` is fragile. The APNs key is downloadable once from
+Apple; the FCM file is Firebase → Project settings → Service accounts →
+Generate new private key, for a project whose Cloud Messaging API (v1) is
+enabled. Both are credentials for *sending*: they name the app, not any
+person.
+
+`APNS_SANDBOX` must match the build: a production key works against both
+hosts, but a sandbox-built app's tokens get `BadDeviceToken` from the
+production host, which retires the device. Leave it at `0` on the VPS once the
+store build is out.
+
+### What the poller does with a relay's answer
+
+- `200`: delivered; `sent_idempotency.provider` is `apns` or `fcm`.
+- APNs `410` / `BadDeviceToken`, FCM `UNREGISTERED`: the token is dead. The
+  device is retired on the spot and its subscriptions end (the app
+  re-registers on next launch). `push_devices.retire_reason` says which.
+- `429`, `5xx`, relay unreachable: released, the next cycle retries. Nothing
+  is recorded as seen.
+- `403` / `401`: our credentials. The provider token is renewed and the push
+  retried once; refused again, everything on that platform waits for the next
+  cycle. A persistent `push: apns auth` line in the poller log means the key
+  or team id is wrong.
+- Any other `400`: our payload. Dropped and logged (`push: … refused payload`);
+  retrying cannot help.
+
+### Verifying after deploy
+
+```
+ssh vps 'cd ~/buergerwecker && docker compose logs --since 1h poller | grep "push:"'
+```
+
+Silence is the healthy state. Retention: a retired device is purged 30 days
+after retirement, a live one 30 days after its last subscription ended
+(housekeeping, same clock as an address).
+
 ## Subscription term & the "still looking?" check-in
 
 A subscription's term is short on purpose. Most people never click *Abmelden* after they have

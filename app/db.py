@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 # SQLite's own timestamp shape, the one CURRENT_TIMESTAMP and datetime('now')
 # produce. Queries compare stored timestamps against those as plain text, so a
@@ -47,10 +47,38 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   confirmation_sent_at TIMESTAMP,
   last_match_count  INTEGER,
   consecutive_digests INTEGER NOT NULL DEFAULT 0,
-  consent_special_at TIMESTAMP
+  consent_special_at TIMESTAMP,
+  -- Set on an app subscription: digests go to this push device instead of
+  -- an address, and `email` is '' (never NULL — the NOT NULL predates the
+  -- app, and a sentinel keeps every `WHERE email=?` lookup from matching a
+  -- push row). Deleting the device takes its subscriptions with it, which is
+  -- what "delete my data" from the app means.
+  device_id         INTEGER REFERENCES push_devices(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_active_subs
   ON subscriptions(deleted_at, confirmed_at, expires_at, city);
+
+-- One row per app install that registered for push. `token` is the APNs
+-- device token or the FCM registration token, opaque to us and to anyone
+-- reading a backup: it addresses a device through Apple's or Google's relay
+-- and names nobody. `secret_hash` is the SHA-256 of the per-device secret the
+-- app authenticates its API calls with; the secret itself is only ever shown
+-- once, at registration. A device is retired (not deleted) when the relay
+-- reports the token dead (APNs 410, FCM UNREGISTERED), so the API can tell
+-- the app to re-register; housekeeping purges retired rows after 30 days.
+CREATE TABLE IF NOT EXISTS push_devices (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  platform      TEXT NOT NULL,
+  token         TEXT NOT NULL,
+  secret_hash   TEXT NOT NULL,
+  language      TEXT NOT NULL DEFAULT 'de',
+  created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_seen_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  retired_at    TIMESTAMP,
+  retire_reason TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_push_devices_token
+  ON push_devices(platform, token);
 
 CREATE TABLE IF NOT EXISTS seen_slots (
   subscription_id INTEGER NOT NULL,
@@ -292,6 +320,10 @@ def init_schema(conn: sqlite3.Connection) -> None:
         "last_match_count": "INTEGER",
         "consecutive_digests": "INTEGER NOT NULL DEFAULT 0",
         "consent_special_at": "TIMESTAMP",
+        # device_id: the app's push device, NULL on every mail subscription.
+        # ADD COLUMN may carry a REFERENCES clause as long as the default is
+        # NULL, which it is.
+        "device_id": "INTEGER REFERENCES push_devices(id) ON DELETE CASCADE",
     })
     # best_time: the earliest time told under a day key. Existing day-key rows
     # get NULL, which has_seen_slot reads as "told at an unknown time" and

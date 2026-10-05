@@ -22,5 +22,9 @@
   "digest.window_days": "innerhalb der nächsten {n} Tage",
   "digest.more_available": "… und {n} weitere passende Termine sind aktuell online buchbar — die frühesten stehen oben.",
   "digest.sensitive_redacted": "(aus Datenschutzgründen nicht genannt)",
-  "digest.book_instructions_redacted": "Wähle dort dein Anliegen erneut aus — aus Datenschutzgründen nennen wir es in dieser E-Mail nicht."
+  "digest.book_instructions_redacted": "Wähle dort dein Anliegen erneut aus — aus Datenschutzgründen nennen wir es in dieser E-Mail nicht.",
+  "push.title": "Neue Termine verfügbar",
+  "push.title_city": "Neue Termine in {city}",
+  "push.more": "+{n} weitere",
+  "push.body_redacted": "{n} neue passende Termine. Tippen, um zur Buchung zu gehen."
 }

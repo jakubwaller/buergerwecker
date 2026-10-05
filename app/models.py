@@ -131,6 +131,14 @@ class Subscription:
     # adaptive interval. Reset to 0 by any cycle that finds this subscriber
     # eligible with nothing to send.
     consecutive_digests: int = 0
+    # The app's push device when this subscription is notified by push rather
+    # than mail; `email` is '' on those rows. None = an ordinary mail
+    # subscription.
+    device_id: int | None = None
+
+    @property
+    def is_push(self) -> bool:
+        return self.device_id is not None
 
 @dataclass(frozen=True)
 class PollPlan:

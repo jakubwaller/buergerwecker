@@ -45,6 +45,15 @@ class Config:
     kofi_url: str
     db_path: str
     catalog_sync_enabled: bool
+    # Push delivery for the app (app/push.py). Every field optional: a deploy
+    # without them has no app users and never calls Apple or Google.
+    apns_team_id: str = ""
+    apns_key_id: str = ""
+    apns_key_p8: str = ""          # PEM text of the .p8 signing key
+    apns_topic: str = ""           # the app's bundle id
+    apns_sandbox: bool = False     # TestFlight/dev builds use the sandbox host
+    fcm_service_account_json: str = ""   # the service-account JSON, as text
+    push_ttl_seconds: int = 1800
 
 def _req(key: str) -> str:
     val = os.environ.get(key)
@@ -67,6 +76,20 @@ def ttl_days_for(cfg, sensitive: bool) -> int:
     if sensitive:
         return min(cfg.sensitive_subscription_ttl_days, cfg.subscription_ttl_days)
     return cfg.subscription_ttl_days
+
+
+def _secret_or_file(key: str) -> str:
+    """`KEY` holds the value itself, or `KEY_FILE` names a file holding it.
+    Key material is friendlier as a mounted file than as a multi-line .env
+    value; both end up as the same string."""
+    val = os.environ.get(key, "")
+    if val:
+        return val
+    path = os.environ.get(f"{key}_FILE", "")
+    if path:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+    return ""
 
 
 def load_config() -> Config:
@@ -177,4 +200,13 @@ def load_config() -> Config:
         kofi_url=_req("KOFI_URL"),
         db_path=os.environ.get("DB_PATH", "/data/app.db"),
         catalog_sync_enabled=os.environ.get("CATALOG_SYNC_ENABLED", "0") == "1",
+        apns_team_id=os.environ.get("APNS_TEAM_ID", ""),
+        apns_key_id=os.environ.get("APNS_KEY_ID", ""),
+        apns_key_p8=_secret_or_file("APNS_KEY_P8"),
+        apns_topic=os.environ.get("APNS_TOPIC", ""),
+        apns_sandbox=os.environ.get("APNS_SANDBOX", "0") == "1",
+        fcm_service_account_json=_secret_or_file("FCM_SERVICE_ACCOUNT_JSON"),
+        # How long a relay may hold a push for an offline phone. Slots vanish
+        # in minutes; a notification delivered an hour late is noise.
+        push_ttl_seconds=int(os.environ.get("PUSH_TTL_SECONDS", "1800")),
     )

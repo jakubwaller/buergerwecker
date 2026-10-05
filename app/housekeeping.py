@@ -29,6 +29,7 @@ def run_once(conn: sqlite3.Connection) -> None:
     _prune_cap_holds(conn)
     _prune_email_failures(conn)
     _prune_suppressions(conn, cfg)
+    _prune_push_devices(conn)
     _prune_slots_cache(conn)
     _prune_availability(conn)
     _check_parser_canary(conn, cfg)
@@ -88,8 +89,11 @@ def _send_renewal_reminders(conn, cfg):
     from app.catalog import city_display_name
     from app.db import transaction
     rows = conn.execute(
+        # App subscriptions have no address to write to; their term simply
+        # runs out, and the app re-subscribes (push check-in: a later PR).
         "SELECT id, email, language, city, expires_at FROM subscriptions "
         "WHERE deleted_at IS NULL AND confirmed_at IS NOT NULL "
+        "AND device_id IS NULL "
         "AND reminder_sent_at IS NULL "
         "AND expires_at BETWEEN CURRENT_TIMESTAMP AND datetime('now', ?)",
         (f"+{cfg.renewal_reminder_days_before} days",),
@@ -213,6 +217,7 @@ def _send_heartbeats(conn, cfg, *, milestone_days: int, milestone_col: str,
     rows = conn.execute(
         f"SELECT id, email, language, city FROM subscriptions "
         f"WHERE deleted_at IS NULL AND confirmed_at IS NOT NULL "
+        f"AND device_id IS NULL "
         f"AND expires_at > CURRENT_TIMESTAMP "
         f"AND {milestone_col} IS NULL {gap}"
         f"AND (last_notified_at IS NULL "
@@ -319,6 +324,21 @@ def _prune_suppressions(conn, cfg=None):
         "        WHERE s.email = email_suppressions.email))",
         (f"-{int(days)} days",),
     )
+
+def _prune_push_devices(conn):
+    """A push token is as much a person's data as an address is: it goes on
+    the same 30-day clock. A retired device (dead token) is purged 30 days
+    after retirement; a live one that has carried no subscription for 30 days
+    (the app was used once and never again, or every subscription was
+    deleted) goes too. The app re-registers on its next launch, so nothing is
+    lost. ON DELETE CASCADE takes any soft-deleted subscriptions along.
+    Depends on `_purge_hard` having run first in `run_once`."""
+    conn.execute(
+        "DELETE FROM push_devices WHERE "
+        "  (retired_at IS NOT NULL AND retired_at < datetime('now','-30 days')) "
+        "  OR (last_seen_at < datetime('now','-30 days') AND NOT EXISTS ("
+        "        SELECT 1 FROM subscriptions s "
+        "        WHERE s.device_id = push_devices.id AND s.deleted_at IS NULL))")
 
 def _prune_slots_cache(conn):
     # Slots are short-lived in the upstream system; 14 days is generous.
