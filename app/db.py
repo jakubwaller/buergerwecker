@@ -75,7 +75,11 @@ CREATE TABLE IF NOT EXISTS push_devices (
   created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   last_seen_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   retired_at    TIMESTAMP,
-  retire_reason TEXT
+  retire_reason TEXT,
+  -- First dead-token answer the relay gave for this token, cleared by any
+  -- delivery. A device is retired only once the platform has delivered to
+  -- someone after this moment (see push.send_push_batch).
+  dead_since    TIMESTAMP
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_push_devices_token
   ON push_devices(platform, token);

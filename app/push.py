@@ -41,9 +41,6 @@ MAX_PUSH_LINES = 3
 MAX_TIMES_PER_LINE = 3
 
 PLATFORMS = ("apns", "fcm")
-# Dead-token answers on one platform in one cycle, with nothing delivered
-# there, from which on it is our configuration speaking and nobody is retired.
-_SYSTEMIC_RETIRE_MIN = 3
 
 
 class PushAuthError(Exception):
@@ -241,11 +238,12 @@ def _send_one(cfg, platform: str, item: OutgoingPush, token: str) -> httpx.Respo
 # ---------------------------------------------------------------------------
 # What a relay's answer means
 
-OK = "ok"          # delivered to the relay
-RETIRE = "retire"  # the token is dead: retire the device, end its subscriptions
-DEFER = "defer"    # relay throttled or down: release the claim, next cycle retries
-AUTH = "auth"      # our credentials were refused: refresh, retry once, then give up this cycle
-DROP = "drop"      # the relay read our payload and refused it: retrying cannot help
+OK = "ok"            # delivered to the relay
+RETIRE = "retire"    # the token is dead: retire the device, end its subscriptions
+DEFER = "defer"      # relay down or out of quota: release, platform waits for next cycle
+THROTTLE = "throttle"  # this one token is being throttled: release just this item
+AUTH = "auth"        # our credentials were refused: refresh, retry once, then give up this cycle
+DROP = "drop"        # the relay read our payload and refused it: retrying cannot help
 
 _APNS_DEAD_TOKEN = {"BadDeviceToken", "DeviceTokenNotForTopic", "Unregistered",
                     "ExpiredToken"}
@@ -270,7 +268,11 @@ def _apns_verdict(resp: httpx.Response) -> tuple[str, str]:
         return RETIRE, reason or str(status)
     if status == 403 or reason in _APNS_AUTH:
         return AUTH, reason or str(status)
-    if status == 429 or status >= 500:
+    if status == 429:
+        # Apple: "too many requests were made consecutively to the same
+        # device token". The other devices are fine.
+        return THROTTLE, reason or str(status)
+    if status >= 500:
         return DEFER, reason or str(status)
     return DROP, reason or str(status)
 
@@ -313,12 +315,15 @@ def send_push_batch(conn: sqlite3.Connection, items: list[OutgoingPush],
     does); an already-claimed key is skipped as already-sent. A device that is
     retired, unknown, or on a platform this deploy has no credentials for is
     reported undeliverable without a claim. A dead-token answer retires the
-    device inside the same call, unless a whole platform answers that way with
-    nothing delivered (then it is our configuration, and nobody is retired).
-    Throttling, an unreachable relay, or credentials refused twice end that
-    platform's turn for the cycle and release the claims so the next cycle
-    (with its fresh cycle_id) tries again; the caller must not record
-    seen_slots for those, exactly as for a quota-deferred mail.
+    device only once the platform has delivered to someone since that device
+    first answered dead: a wrong APNS_TOPIC, APNS_SANDBOX or FCM project makes
+    every device answer dead and nothing succeed, and that must not end every
+    app user's subscriptions, while three uninstalled phones are retired the
+    moment any live device gets a push. An unreachable relay, a quota wall, or
+    credentials refused twice end that platform's turn for the cycle; a
+    per-token throttle releases just that item. Everything released is
+    retried by the next cycle (fresh cycle_id), and the caller must not record
+    seen_slots for it, exactly as for a quota-deferred mail.
     """
     from app.db import transaction
     from app.repo import live_devices, retire_device
@@ -349,12 +354,19 @@ def send_push_batch(conn: sqlite3.Connection, items: list[OutgoingPush],
                     "UPDATE sent_idempotency SET provider=?, "
                     "sent_at=CURRENT_TIMESTAMP WHERE idem_key=?",
                     (platform, it.idem_key))
+                conn.execute("UPDATE push_devices SET dead_since=NULL "
+                             "WHERE id=? AND dead_since IS NOT NULL",
+                             (it.device_id,))
             result.delivered.add(it.idem_key)
             result.sent_by_platform[platform] = (
                 result.sent_by_platform.get(platform, 0) + 1)
         elif verdict == RETIRE:
-            # Judged per platform after the loop, not per answer: see below.
+            # Judged after the loop, once this cycle's deliveries are known.
             dead.setdefault(platform, []).append((it, reason))
+        elif verdict == THROTTLE:
+            released.append(it)
+            print(f"push: {platform} throttling device {it.device_id} "
+                  f"({reason}); retried next cycle", flush=True)
         elif verdict == DROP:
             with transaction(conn):
                 conn.execute("DELETE FROM sent_idempotency WHERE idem_key=?",
@@ -363,39 +375,62 @@ def send_push_batch(conn: sqlite3.Connection, items: list[OutgoingPush],
             print(f"push: {platform} refused payload for device "
                   f"{it.device_id}: {reason}", flush=True)
         else:  # DEFER, or AUTH after the one retry
-            # One throttled, unreachable or refused answer ends this platform's
-            # turn for the cycle. The rest would only repeat it, and during an
-            # outage each repeat costs a TIMEOUT_S the poller does not have:
-            # the mail digests and every city poll wait behind this loop.
+            # One unreachable, out-of-quota or refused answer ends this
+            # platform's turn for the cycle. The rest would only repeat it,
+            # and during an outage each repeat costs a TIMEOUT_S the poller
+            # does not have: the mail digests and every city poll wait behind
+            # this loop.
             released.append(it)
             unusable.add(platform)
             print(f"push: {platform} {verdict} ({reason}); the platform waits "
                   f"for the next cycle", flush=True)
     for platform, answers in dead.items():
-        if (len(answers) >= _SYSTEMIC_RETIRE_MIN
-                and not result.sent_by_platform.get(platform)):
-            # Every answer on this platform says "dead token" and nothing got
-            # through. That is our configuration (APNS_TOPIC, APNS_SANDBOX,
-            # the FCM project), not a batch of uninstalled phones, and
-            # retiring on it would end every app user's subscriptions in one
-            # cycle with no way back. Nobody is retired; the pushes wait for
-            # the next cycle and the log names the likely knob.
-            released.extend(it for it, _ in answers)
-            print(f"push: {platform} answered dead-token {len(answers)}x with "
-                  f"nothing delivered; not retiring. Check APNS_TOPIC and "
-                  f"APNS_SANDBOX, or the FCM project ({answers[0][1]})",
-                  flush=True)
-            continue
-        with transaction(conn):
-            for it, reason in answers:
-                retire_device(conn, it.device_id, reason)
-                conn.execute("DELETE FROM sent_idempotency WHERE idem_key=?",
-                             (it.idem_key,))
+        # The relay said "dead token". That is also what a wrong APNS_TOPIC,
+        # APNS_SANDBOX or FCM project says, for every device at once, and
+        # retiring on it would end every app user's subscriptions with no way
+        # back. The one thing a misconfiguration cannot produce is a delivery,
+        # so a device is retired only once the platform has delivered to
+        # someone since this device first answered dead: in this cycle, or in
+        # a later one (the first dead answer is remembered in dead_since). Dead
+        # phones cost a request per cycle until then; wiped subscriptions
+        # cannot be bought back.
+        retire_now: list[tuple[OutgoingPush, str]] = []
+        hold: list[tuple[OutgoingPush, str]] = []
         for it, reason in answers:
-            result.retired.add(it.device_id)
-            result.undeliverable.add(it.idem_key)
-            print(f"push: {platform} retired device {it.device_id}: {reason}",
-                  flush=True)
+            if result.sent_by_platform.get(platform):
+                retire_now.append((it, reason))
+                continue
+            row = conn.execute("SELECT dead_since FROM push_devices WHERE id=?",
+                               (it.device_id,)).fetchone()
+            since = row["dead_since"] if row else None
+            if since and conn.execute(
+                    "SELECT 1 FROM sent_idempotency WHERE provider=? "
+                    "AND sent_at >= ? LIMIT 1", (platform, since)).fetchone():
+                retire_now.append((it, reason))
+            else:
+                hold.append((it, reason))
+        if retire_now:
+            with transaction(conn):
+                for it, reason in retire_now:
+                    retire_device(conn, it.device_id, reason)
+                    conn.execute("DELETE FROM sent_idempotency WHERE idem_key=?",
+                                 (it.idem_key,))
+            for it, reason in retire_now:
+                result.retired.add(it.device_id)
+                result.undeliverable.add(it.idem_key)
+                print(f"push: {platform} retired device {it.device_id}: {reason}",
+                      flush=True)
+        if hold:
+            with transaction(conn):
+                conn.executemany(
+                    "UPDATE push_devices SET dead_since="
+                    "COALESCE(dead_since, CURRENT_TIMESTAMP) WHERE id=?",
+                    [(it.device_id,) for it, _ in hold])
+            released.extend(it for it, _ in hold)
+            print(f"push: {platform} answered dead-token for {len(hold)} "
+                  f"device(s) ({hold[0][1]}) and has delivered nothing since; "
+                  f"not retiring. If every cycle says this, check APNS_TOPIC "
+                  f"and APNS_SANDBOX, or the FCM project", flush=True)
     if released:
         with transaction(conn):
             conn.executemany("DELETE FROM sent_idempotency WHERE idem_key=?",
