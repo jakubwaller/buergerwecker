@@ -64,8 +64,9 @@ CREATE INDEX IF NOT EXISTS idx_active_subs
 -- and names nobody. `secret_hash` is the SHA-256 of the per-device secret the
 -- app authenticates its API calls with; the secret itself is only ever shown
 -- once, at registration. A device is retired (not deleted) when the relay
--- reports the token dead (APNs 410, FCM UNREGISTERED), so the API can tell
--- the app to re-register; housekeeping purges retired rows after 30 days.
+-- reports the token dead (APNs 410, FCM UNREGISTERED) and the platform is
+-- known to be working, so the API can tell the app to re-register;
+-- housekeeping purges retired rows after 30 days.
 CREATE TABLE IF NOT EXISTS push_devices (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   platform      TEXT NOT NULL,

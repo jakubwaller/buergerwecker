@@ -414,23 +414,28 @@ person.
 `APNS_SANDBOX` must match the build. Only a development-signed build straight
 from Xcode uses the sandbox; **TestFlight and App Store builds use
 production**, so the VPS stays at `0` from the first beta on. A mismatch, like
-a wrong `APNS_TOPIC`, answers `BadDeviceToken` for every device; the breaker
-below keeps that from retiring anyone.
+a wrong `APNS_TOPIC`, answers `BadDeviceToken` for every device; the
+retirement rule below keeps that from retiring anyone.
 
 ### What the poller does with a relay's answer
 
 - `200`: delivered; `sent_idempotency.provider` is `apns` or `fcm`.
-- APNs `410` / `BadDeviceToken`, FCM `UNREGISTERED`: the token is dead. The
-  device is retired on the spot and its subscriptions end (the app
-  re-registers on next launch). `push_devices.retire_reason` says which.
-  **Breaker:** three or more such answers on one platform in one cycle with
-  nothing delivered there is our configuration, not dead phones (a wrong
-  `APNS_TOPIC`, `APNS_SANDBOX`, or the FCM JSON of another project). Nobody is
-  retired, the pushes wait for the next cycle, and the log says
-  `push: … answered dead-token Nx with nothing delivered; not retiring`.
-- `429`, `5xx`, relay unreachable: released, the next cycle retries, and the
-  platform is not tried again this cycle (an outage must not hold the poller
-  for a timeout per device). Nothing is recorded as seen.
+- APNs `410` / `BadDeviceToken`, FCM `UNREGISTERED`: the token is dead,
+  *or* our configuration is wrong (`APNS_TOPIC`, `APNS_SANDBOX`, the FCM JSON
+  of another project), which answers exactly the same for every device at
+  once. The two are told apart by the one thing a misconfiguration cannot
+  produce, a delivery: the device is retired, and its subscriptions end, only
+  once the platform has delivered to someone since that device first answered
+  dead (`push_devices.dead_since`). Until then the poller logs
+  `push: … answered dead-token … has delivered nothing since; not retiring`
+  every cycle a slot matches. That line on every cycle with no `retired`
+  line ever is the misconfiguration signature; fix the knob it names. A
+  retired device's `retire_reason` says which answer did it, and the app
+  re-registers on next launch.
+- `5xx`, FCM `429` (project quota), relay unreachable: released, the next
+  cycle retries, and the platform is not tried again this cycle (an outage
+  must not hold the poller for a timeout per device). APNs `429` is per
+  device token and releases only that push. Nothing is recorded as seen.
 - `403` / `401`: our credentials. The provider token is renewed and the push
   retried once; refused again, everything on that platform waits for the next
   cycle. A persistent `push: apns auth` line in the poller log means the key

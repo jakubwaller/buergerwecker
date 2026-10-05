@@ -282,13 +282,14 @@ def test_apns_provider_token_is_reused_across_sends(db):
 
 
 def test_apns_410_retires_the_device_and_ends_its_subscriptions(db):
+    live = _device(db, token="live")   # a delivery this cycle proves the platform works
     dev = _device(db)
     sid = _push_sub(db, dev)
-    relay = FakeRelay([(410, {"reason": "Unregistered"})])
+    relay = FakeRelay([(200, {}), (410, {"reason": "Unregistered"})])
     with patch("app.push._post", relay):
-        res = send_push_batch(db, [_item(dev)], _cfg())
+        res = send_push_batch(db, [_item(live, "k0"), _item(dev)], _cfg())
     assert res.retired == {dev} and res.undeliverable == {"k1"}
-    assert res.delivered == set()
+    assert res.delivered == {"k0"}
     row = db.execute("SELECT retired_at, retire_reason FROM push_devices "
                      "WHERE id=?", (dev,)).fetchone()
     assert row["retired_at"] is not None and row["retire_reason"] == "Unregistered"
@@ -298,9 +299,9 @@ def test_apns_410_retires_the_device_and_ends_its_subscriptions(db):
 
 
 def test_apns_bad_device_token_is_a_dead_token_too(db):
-    dev = _device(db)
-    with patch("app.push._post", FakeRelay([(400, {"reason": "BadDeviceToken"})])):
-        res = send_push_batch(db, [_item(dev)], _cfg())
+    live, dev = _device(db, token="live"), _device(db)
+    with patch("app.push._post", FakeRelay([(200, {}), (400, {"reason": "BadDeviceToken"})])):
+        res = send_push_batch(db, [_item(live, "k0"), _item(dev)], _cfg())
     assert res.retired == {dev}
 
 
@@ -323,6 +324,16 @@ def test_relay_5xx_defers_and_releases_the_claim(db):
     assert live_devices(db, [dev])
 
 
+def test_apns_429_is_per_token_and_releases_only_that_push(db):
+    d1, d2 = _device(db, token="a"), _device(db, token="b")
+    relay = FakeRelay([(429, {"reason": "TooManyRequests"}), (200, {})])
+    with patch("app.push._post", relay):
+        res = send_push_batch(db, [_item(d1, "k1"), _item(d2, "k2")], _cfg())
+    assert res.deferred == 1 and res.delivered == {"k2"}
+    assert len(relay.calls) == 2
+    assert _claimed(db, "k1") is None
+
+
 def test_one_deferral_ends_the_platform_for_this_cycle(db):
     """During an outage every further request would cost TIMEOUT_S and block
     the poller; the second device is not even tried."""
@@ -334,39 +345,68 @@ def test_one_deferral_ends_the_platform_for_this_cycle(db):
     assert _claimed(db, "k1") is None and _claimed(db, "k2") is None
 
 
-def test_platform_wide_dead_token_answers_retire_nobody(db):
-    """A wrong APNS_TOPIC answers BadDeviceToken for every device. Retiring on
-    that would end every app user's subscriptions in one cycle."""
-    devs = [_device(db, token=f"t{i}") for i in range(3)]
-    sids = [_push_sub(db, d) for d in devs]
-    relay = FakeRelay([(400, {"reason": "DeviceTokenNotForTopic"})] * 3)
-    with patch("app.push._post", relay):
-        res = send_push_batch(db, [_item(d, f"k{i}") for i, d in enumerate(devs)],
-                              _cfg())
-    assert res.retired == set() and res.deferred == 3
-    assert len(live_devices(db, devs)) == 3
-    alive = db.execute("SELECT COUNT(*) FROM subscriptions WHERE deleted_at IS NULL "
-                       "AND id IN (%s)" % ",".join("?" * 3), sids).fetchone()[0]
-    assert alive == 3
-
-
-def test_dead_token_answers_still_retire_once_something_got_through(db):
-    devs = [_device(db, token=f"t{i}") for i in range(4)]
-    relay = FakeRelay([(200, {})] + [(410, {"reason": "Unregistered"})] * 3)
-    with patch("app.push._post", relay):
-        res = send_push_batch(db, [_item(d, f"k{i}") for i, d in enumerate(devs)],
-                              _cfg())
-    assert res.delivered == {"k0"}
-    assert res.retired == set(devs[1:])
-
-
-def test_two_dead_tokens_are_below_the_breaker(db):
+def test_dead_token_answers_with_nothing_delivered_retire_nobody(db):
+    """A wrong APNS_TOPIC answers BadDeviceToken for every device, one or a
+    hundred. Retiring on that would end every app user's subscriptions."""
     devs = [_device(db, token=f"t{i}") for i in range(2)]
-    relay = FakeRelay([(410, {"reason": "Unregistered"})] * 2)
+    sids = [_push_sub(db, d) for d in devs]
+    relay = FakeRelay([(400, {"reason": "DeviceTokenNotForTopic"})] * 2)
     with patch("app.push._post", relay):
         res = send_push_batch(db, [_item(d, f"k{i}") for i, d in enumerate(devs)],
                               _cfg())
-    assert res.retired == set(devs)
+    assert res.retired == set() and res.deferred == 2
+    assert len(live_devices(db, devs)) == 2
+    alive = db.execute("SELECT COUNT(*) FROM subscriptions WHERE deleted_at IS NULL "
+                       "AND id IN (?,?)", sids).fetchone()[0]
+    assert alive == 2
+    since = [r[0] for r in db.execute("SELECT dead_since FROM push_devices ORDER BY id")]
+    assert all(since)   # remembered for the next cycle's evidence
+
+
+def test_dead_tokens_retire_once_something_got_through_this_cycle(db):
+    devs = [_device(db, token=f"t{i}") for i in range(4)]
+    relay = FakeRelay([(410, {"reason": "Unregistered"})] * 3 + [(200, {})])
+    with patch("app.push._post", relay):
+        res = send_push_batch(db, [_item(d, f"k{i}") for i, d in enumerate(devs)],
+                              _cfg())
+    assert res.delivered == {"k3"}
+    assert res.retired == set(devs[:3])   # the delivery came after them in the loop
+
+
+def test_a_dead_token_is_retired_once_a_later_cycle_delivers_on_the_platform(db):
+    """Cycle 1: only a dead answer, held. Cycle 2: someone else gets a push.
+    Cycle 3: the same dead answer now has its evidence and retires."""
+    dead, live = _device(db, token="dead"), _device(db, token="live")
+    with patch("app.push._post", FakeRelay([(410, {"reason": "Unregistered"})])):
+        assert send_push_batch(db, [_item(dead, "c1")], _cfg()).retired == set()
+    with patch("app.push._post", FakeRelay([(200, {})])):
+        send_push_batch(db, [_item(live, "c2")], _cfg())
+    with patch("app.push._post", FakeRelay([(410, {"reason": "Unregistered"})])):
+        res = send_push_batch(db, [_item(dead, "c3")], _cfg())
+    assert res.retired == {dead}
+
+
+def test_a_delivery_before_the_first_dead_answer_is_no_evidence(db):
+    """A platform that worked yesterday and answers dead for everyone today
+    is a configuration that changed today."""
+    dead, live = _device(db, token="dead"), _device(db, token="live")
+    with patch("app.push._post", FakeRelay([(200, {})])):
+        send_push_batch(db, [_item(live, "c1")], _cfg())
+    db.execute("UPDATE sent_idempotency SET sent_at=datetime('now','-1 day')")
+    with patch("app.push._post", FakeRelay([(410, {"reason": "Unregistered"})] * 2)):
+        send_push_batch(db, [_item(dead, "c2")], _cfg())
+        res = send_push_batch(db, [_item(dead, "c3")], _cfg())
+    assert res.retired == set() and res.deferred == 1
+
+
+def test_a_delivery_clears_a_devices_dead_since(db):
+    dev = _device(db)
+    with patch("app.push._post", FakeRelay([(410, {"reason": "Unregistered"})])):
+        send_push_batch(db, [_item(dev, "c1")], _cfg())
+    assert db.execute("SELECT dead_since FROM push_devices").fetchone()[0]
+    with patch("app.push._post", FakeRelay([(200, {})])):
+        send_push_batch(db, [_item(dev, "c2")], _cfg())
+    assert db.execute("SELECT dead_since FROM push_devices").fetchone()[0] is None
 
 
 def test_relay_unreachable_defers(db):
@@ -439,12 +479,14 @@ def test_fcm_access_token_is_cached_across_sends(db):
 
 
 def test_fcm_unregistered_retires_the_device(db):
+    live = _device(db, "fcm", "live")
     dev = _device(db, "fcm", "dead")
     sid = _push_sub(db, dev)
-    with patch("app.push._post", FakeRelay([_fcm_error(404, "UNREGISTERED",
+    with patch("app.push._post", FakeRelay([(200, {}),
+                                            _fcm_error(404, "UNREGISTERED",
                                                        "Requested entity was not found.",
                                                        "NOT_FOUND")])):
-        res = send_push_batch(db, [_item(dev)], _cfg())
+        res = send_push_batch(db, [_item(live, "k0"), _item(dev)], _cfg())
     assert res.retired == {dev}
     assert db.execute("SELECT retire_reason FROM push_devices WHERE id=?",
                       (dev,)).fetchone()["retire_reason"] == "UNREGISTERED"
@@ -453,8 +495,9 @@ def test_fcm_unregistered_retires_the_device(db):
 
 
 def test_fcm_invalid_argument_about_the_token_retires_but_about_the_payload_drops(db):
-    d1, d2 = _device(db, "fcm", "a"), _device(db, "fcm", "b")
+    live, d1, d2 = _device(db, "fcm", "live"), _device(db, "fcm", "a"), _device(db, "fcm", "b")
     relay = FakeRelay([
+        (200, {}),
         _fcm_error(400, "INVALID_ARGUMENT",
                    "The registration token is not a valid FCM registration token",
                    "INVALID_ARGUMENT"),
@@ -463,7 +506,8 @@ def test_fcm_invalid_argument_about_the_token_retires_but_about_the_payload_drop
                    "INVALID_ARGUMENT"),
     ])
     with patch("app.push._post", relay):
-        res = send_push_batch(db, [_item(d1, "k1"), _item(d2, "k2")], _cfg())
+        res = send_push_batch(db, [_item(live, "k0"), _item(d1, "k1"), _item(d2, "k2")],
+                              _cfg())
     assert res.retired == {d1}
     assert res.undeliverable == {"k1", "k2"}
     assert set(live_devices(db, [d1, d2])) == {d2}
@@ -478,12 +522,12 @@ def test_fcm_token_exchange_failure_defers_without_sending(db):
     assert relay.token_calls == 2   # once, then once more after forgetting
 
 
-def test_fcm_quota_429_defers(db):
-    dev = _device(db, "fcm", "a")
-    with patch("app.push._post", FakeRelay([_fcm_error(429, "QUOTA_EXCEEDED",
-                                                       "", "RESOURCE_EXHAUSTED")])):
-        res = send_push_batch(db, [_item(dev)], _cfg())
-    assert res.deferred == 1
+def test_fcm_quota_429_is_project_wide_and_ends_the_platform_for_this_cycle(db):
+    d1, d2 = _device(db, "fcm", "a"), _device(db, "fcm", "b")
+    relay = FakeRelay([_fcm_error(429, "QUOTA_EXCEEDED", "", "RESOURCE_EXHAUSTED")])
+    with patch("app.push._post", relay):
+        res = send_push_batch(db, [_item(d1, "k1"), _item(d2, "k2")], _cfg())
+    assert res.deferred == 2 and len(relay.calls) == 1
 
 
 # ---------------------------------------------------------------------------
