@@ -162,6 +162,16 @@ export const STRINGS = {
     "date.dayMonth": "{wd}., {d}. {m}",
     "date.atTime": "{day}, {time}",
     "date.time": "{time} Uhr",
+
+    // The home-screen widget (client/ios/App/BuergerweckerWidget, the Android
+    // widget). Its native code cannot read this file, so www/widget.js hands it
+    // these strings together with the weekday/month/date ones above.
+    "widget.name": "Frühester Termin",
+    "widget.description": "Der früheste freie Termin in deinen Städten. Gebucht wird in der App oder auf der Seite der Stadt.",
+    "widget.openApp": "Lege in der App einen Alarm an, dann zeigt dieses Widget den frühesten freien Termin.",
+    "widget.noSlots": "Gerade kein freier Termin",
+    "widget.noSnapshot": "Noch keine Daten",
+    "widget.asOf": "Stand {time}",
   },
 
   en: {
@@ -320,6 +330,13 @@ export const STRINGS = {
     "date.dayMonth": "{wd} {d} {m}",
     "date.atTime": "{day}, {time}",
     "date.time": "{time}",
+
+    "widget.name": "Earliest slot",
+    "widget.description": "The earliest free slot in your cities. You book in the app or on the city's own page.",
+    "widget.openApp": "Set up an alert in the app and this widget shows the earliest free slot.",
+    "widget.noSlots": "No free slot right now",
+    "widget.noSnapshot": "No data yet",
+    "widget.asOf": "As of {time}",
   },
 };
 

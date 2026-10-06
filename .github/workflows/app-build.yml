@@ -13,8 +13,9 @@
 #                    client/ios/testflight/what-to-test.*.txt to that build; only with the
 #                    `distribute` input ticked (and the repo variable ASC_BETA_GROUP set) is
 #                    the build also added to that beta group and submitted for Beta App Review
-#   apple-setup      once per account: the bundle id with Push Notifications, and the
-#                    distribution certificate for client/ios/distribution.csr
+#   apple-setup      once per account: the app's and the widget's bundle ids (Push
+#                    Notifications, App Groups), and the distribution certificate for
+#                    client/ios/distribution.csr
 #   beta-text-pull   print what TestFlight currently shows, no build needed
 #   play             build the Android App Bundle, sign it with the upload key, keep it
 #                    as an artifact and, if PLAY_SERVICE_ACCOUNT_JSON is set, send it to
@@ -351,6 +352,7 @@ jobs:
             <key>provisioningProfiles</key>
             <dict>
               <key>de.buergerwecker.app</key><string>Buergerwecker CI de.buergerwecker.app</string>
+              <key>de.buergerwecker.app.widget</key><string>Buergerwecker CI de.buergerwecker.app.widget</string>
             </dict>
             <key>manageAppVersionAndBuildNumber</key><false/>
           </dict>

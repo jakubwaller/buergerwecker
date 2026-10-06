@@ -2,11 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Push Notifications. `development` here; the App Store export
-	     (testflight job) rewrites it to `production` from the profile. -->
-	<key>aps-environment</key>
-	<string>development</string>
-	<!-- The home-screen widget reads what the page wrote for it from here. -->
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>group.de.buergerwecker.app</string>

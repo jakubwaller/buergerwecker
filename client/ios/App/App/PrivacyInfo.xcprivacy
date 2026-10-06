@@ -31,8 +31,10 @@
 			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
 			<key>NSPrivacyAccessedAPITypeReasons</key>
 			<!-- CA92.1: the app's own defaults (the Preferences plugin keeps the
-			     device credentials and the chosen language there). -->
-			<array><string>CA92.1</string></array>
+			     device credentials and the chosen language there).
+			     1C8F.1: the App Group's defaults, where the page writes the city
+			     list the home-screen widget shows (WidgetBridgePlugin.swift). -->
+			<array><string>CA92.1</string><string>1C8F.1</string></array>
 		</dict>
 	</array>
 </dict>

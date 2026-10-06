@@ -5,7 +5,8 @@ import { openExternal, plugin } from "../native.js";
 import { SITE_URL } from "../api.js";
 import * as push from "../push.js";
 import * as store from "../store.js";
-import { state, render, forgetCaches, resetNav } from "../state.js";
+import * as widget from "../widget.js";
+import { state, render, forgetCaches, resetNav, syncWidget } from "../state.js";
 
 export const title = () => t("settings.title");
 
@@ -32,6 +33,8 @@ export function mount(el) {
             render();
             // The server writes pushes in the device's language.
             push.updateLanguage(l).catch(() => {});
+            // The widget's words and dates are in the app's language too.
+            syncWidget();
           },
         },
         LANG_NAMES[l],
@@ -46,6 +49,7 @@ export function mount(el) {
     try {
       await push.deleteEverything();
       state.subs = null;
+      widget.clear().catch(() => {});
       state.checkin = null;
       forgetCaches();
       resetNav();

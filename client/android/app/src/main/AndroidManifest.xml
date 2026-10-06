@@ -38,6 +38,14 @@
             android:resource="@drawable/ic_stat_notify"
         />
 
+        <!-- The home-screen widget (EarliestSlotWidget.java): the earliest free slot. -->
+        <receiver android:name=".EarliestSlotWidget" android:exported="true" android:label="@string/widget_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/earliest_slot_widget_info" />
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
