@@ -617,7 +617,8 @@ def create_app() -> Flask:
     app.config["TERMINE_CONFIG"] = load_config()
     # The app's JSON API (app/api.py). Imported here, not at the top: it
     # borrows the client-IP and message helpers from this module.
-    from app.api import api as api_blueprint
+    from app.api import api as api_blueprint, register_cors
+    register_cors(app)
     app.register_blueprint(api_blueprint)
 
     @app.after_request
