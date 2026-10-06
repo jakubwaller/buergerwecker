@@ -54,6 +54,10 @@ class Config:
     apns_sandbox: bool = False     # Xcode development builds only; TestFlight is production
     fcm_service_account_json: str = ""   # the service-account JSON, as text
     push_ttl_seconds: int = 1800
+    # The app's JSON API under /api/v1. Off until the app is released: an open
+    # registration endpoint lets anyone create subscriptions without a
+    # confirmation step.
+    app_api_enabled: bool = False
     # The mail pool is the free provider chain (about 600/day). When its
     # rolling-24h usage reaches `mail_pool_pressure_pct` of the summed caps,
     # every mail subscriber's daily cap drops to `mail_cap_under_pressure`
@@ -217,6 +221,7 @@ def load_config() -> Config:
         # How long a relay may hold a push for an offline phone. Slots vanish
         # in minutes; a notification delivered an hour late is noise.
         push_ttl_seconds=int(os.environ.get("PUSH_TTL_SECONDS", "1800")),
+        app_api_enabled=os.environ.get("APP_API_ENABLED", "0") == "1",
         mail_pool_pressure_pct=int(os.environ.get("MAIL_POOL_PRESSURE_PCT", "80")),
         mail_cap_under_pressure=int(
             os.environ.get("MAIL_CAP_UNDER_PRESSURE", "1")),
