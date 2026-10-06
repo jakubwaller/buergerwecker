@@ -244,7 +244,11 @@ export async function deleteEverything() {
     }
   }
   device = null;
+  // Everything this app kept, except the language the person chose: deleting
+  // their data is no reason to switch the app to another language.
+  const lang = await store.get("lang");
   await store.clear();
+  if (lang) await store.set("lang", lang);
   try {
     await pushPlugin()?.removeAllDeliveredNotifications?.();
   } catch {

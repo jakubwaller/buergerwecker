@@ -173,3 +173,16 @@ test("a verify push that lands while PUT /device is in flight is not undone", as
   assert.equal(push.awaitingVerification(), false);
   assert.equal(push.getDevice().token, "tok-2");
 });
+
+test("delete my data: the server's row, then every stored key but the language", async () => {
+  prefs.set("device", JSON.stringify({ id: 5, secret: "sec", token: "tok-1", platform: "apns", verified: true }));
+  prefs.set("lang", JSON.stringify("en"));
+  prefs.set("onboarded", "true");
+  await push.loadDevice();
+  routes = [{ method: "DELETE", path: "/device", reply: [204] }];
+  await push.deleteEverything();
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.path}`), ["DELETE /device"]);
+  assert.equal(push.getDevice(), null);
+  assert.deepEqual([...prefs.keys()], ["lang"]);
+  assert.equal(prefs.get("lang"), JSON.stringify("en"));
+});
