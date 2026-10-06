@@ -182,12 +182,15 @@ For App Review 4.2 / 4.2.2 the app's answer to "a repackaged website" is what a 
 push, no account, and a widget. The widget only shows; it never books and a tap opens the app.
 
 - **Data.** It fetches `GET /api/v1/cities/<slug>/slots` itself, the public snapshot route (no device
-  credential, so none is shared with it), and takes the earliest slot over the services the alerts
-  watch. Nothing new leaves the phone: the same host, the same route the app's city overview reads.
+  credential, so none is shared with it), and shows the earliest slot that would also trigger an
+  alert: each alert's service plus its offices, weekdays, time window and days ahead, matched like the
+  server's `app/filters.py` (inclusive time bounds, ISO weekdays, office ids, Berlin's today). The
+  snapshot keeps only the 100 soonest slots per service, so a match further out than that is not seen.
+  Nothing matching: "no matching slot right now" with the as-of time. Nothing new leaves the phone: the same host, the same route the app's city overview reads.
   While `APP_API_ENABLED` is off (every route 404) or the network is down it shows the last answer
   with its "as of" time; with none, a neutral "set up an alert in the app" text.
 - **Which cities.** The page decides (`www/widget.js`): the cities of the *active* alerts, at most
-  five, with the services each watches, the language, and the strings and weekday/month words from
+  five, with each alert's filter, the language, and the strings and weekday/month words from
   `i18n.js` (native code cannot read it). It writes that through the local `WidgetBridge` plugin
   (`setConfig` / `clear`) after the alert list loads or changes, after a language change, and on
   "Delete my data". No alerts: the widget asks the person to open the app.

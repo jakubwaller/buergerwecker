@@ -31,20 +31,33 @@ const IOS = "ios/App/BuergerweckerWidget/BuergerweckerWidget.swift";
 const IOS_PLUGIN = "ios/App/App/WidgetBridgePlugin.swift";
 const JAVA = "android/app/src/main/java/de/buergerwecker/app";
 
-const sub = (city, appointment_type, active = true) => ({ id: `${city}-${appointment_type}`, city, appointment_type, active });
+const sub = (city, appointment_type, active = true, extra = {}) => ({
+  id: `${city}-${appointment_type}`, city, appointment_type, active,
+  locations: "all", weekdays: [1, 2, 3, 4, 5, 6, 7], time_start: "00:00", time_end: "23:59", max_days_ahead: null, ...extra,
+});
+const open = { locations: "all", weekdays: [1, 2, 3, 4, 5, 6, 7], timeStart: "00:00", timeEnd: "23:59", maxDaysAhead: null };
 const cityList = [
   { slug: "leipzig", city: "Leipzig", office: "Bürgeramt" },
   { slug: "bonn", city: "Bonn", office: "Bürgerdienste" },
 ];
 
-test("the config lists the cities of the active alerts, with the services each one watches", () => {
+test("the config lists the cities of the active alerts, each alert with its own filter", () => {
   const c = buildConfig([sub("leipzig", "a"), sub("leipzig", "b"), sub("bonn", "c"), sub("leipzig", "x", false)], cityList, "de");
-  assert.equal(c.v, 1);
+  assert.equal(c.v, 2);
   assert.equal(c.lang, "de");
   assert.deepEqual(c.cities, [
-    { slug: "leipzig", name: "Leipzig", office: "Bürgeramt", services: ["a", "b"] },
-    { slug: "bonn", name: "Bonn", office: "Bürgerdienste", services: ["c"] },
+    { slug: "leipzig", name: "Leipzig", office: "Bürgeramt", alerts: [{ service: "a", ...open }, { service: "b", ...open }] },
+    { slug: "bonn", name: "Bonn", office: "Bürgerdienste", alerts: [{ service: "c", ...open }] },
   ]);
+});
+
+test("offices, weekdays, time window and days ahead travel with the alert, as the server's filter has them", () => {
+  const f = { locations: ["o1", "o2"], weekdays: [1, 3], time_start: "08:30", time_end: "12:00", max_days_ahead: 14 };
+  const [a] = buildConfig([sub("leipzig", "a", true, f)], cityList, "de").cities[0].alerts;
+  assert.deepEqual(a, { service: "a", locations: ["o1", "o2"], weekdays: [1, 3], timeStart: "08:30", timeEnd: "12:00", maxDaysAhead: 14 });
+  // A 0 or missing limit is no limit, as Filter.from_json normalises it.
+  const [b] = buildConfig([sub("leipzig", "a", true, { max_days_ahead: 0 })], cityList, "de").cities[0].alerts;
+  assert.equal(b.maxDaysAhead, null);
 });
 
 test("no active alert, no cities: the widget asks the person to open the app", () => {
@@ -62,14 +75,14 @@ test("an unknown city falls back to its slug, and the list is capped", () => {
 test("the widget gets the page's own words and date tables, in the chosen language", () => {
   for (const lang of ["de", "en"]) {
     const s = widgetStrings(lang);
-    for (const k of ["widget.openApp", "widget.noSlots", "widget.noSnapshot", "widget.asOf", "date.today", "date.tomorrow",
+    for (const k of ["widget.openApp", "widget.noMatch", "widget.noSnapshot", "widget.asOf", "date.today", "date.tomorrow",
                      "date.dayMonth", "date.atTime", "date.time"]) assert.ok(s[k], `${lang} ${k}`);
     for (let i = 1; i <= 7; i++) assert.ok(s[`weekday.${i}`], `${lang} weekday.${i}`);
     for (let i = 1; i <= 12; i++) assert.ok(s[`month.${i}`], `${lang} month.${i}`);
     assert.ok(!("tab.cities" in s), "nothing else leaks into the widget");
   }
-  assert.equal(buildConfig([], [], "de").strings["widget.noSlots"], STRINGS.de["widget.noSlots"]);
-  assert.equal(buildConfig([], [], "en").strings["widget.noSlots"], STRINGS.en["widget.noSlots"]);
+  assert.equal(buildConfig([], [], "de").strings["widget.noMatch"], STRINGS.de["widget.noMatch"]);
+  assert.equal(buildConfig([], [], "en").strings["widget.noMatch"], STRINGS.en["widget.noMatch"]);
 });
 
 test("sync hands the plugin one JSON string and never a credential; clear forgets", async () => {
@@ -190,4 +203,50 @@ test("the Android widget is declared with the platform's update period, and does
     // A boolean, so a failure does not print the whole source file.
     assert.ok(!/setRequestMethod|httpMethod|"(POST|PUT|DELETE)"|\/go\/|booking_url/.test(read(f)), `${f} only reads`);
   }
+});
+
+// --- "Delete my data" during a fetch ---------------------------------------
+
+test("a refresh that outlives a clear() saves nothing: the config is re-read before the cache is written", () => {
+  const swift = read(IOS);
+  const load = swift.slice(swift.indexOf("private func load()"));
+  assert.ok(load.indexOf("Config.load()") < load.indexOf("withTaskGroup"), "config read first");
+  const reread = load.indexOf("guard let current = Config.load()");
+  assert.ok(reread > load.indexOf("withTaskGroup"), "and again after the fetch");
+  assert.ok(reread < load.indexOf("Cache.save(cache)"), "before the save");
+  assert.match(load.slice(reread, load.indexOf("Cache.save(cache)")), /removeObject\(forKey: Shared\.cacheKey\)/);
+  assert.match(load, /slugs\.contains/);
+
+  const java = read(`${JAVA}/EarliestSlotWidget.java`);
+  const refresh = java.slice(java.indexOf("private static void refresh"), java.indexOf("static JSONObject keepOnly"));
+  const fetched = refresh.indexOf("futures.get(i).get(");
+  const again = refresh.indexOf("readConfig(prefs)", fetched);
+  assert.ok(fetched > 0 && again > fetched, "config re-read after the fetch");
+  assert.ok(again < refresh.indexOf("putString(KEY_CACHE"), "before the save");
+  assert.match(refresh.slice(again), /current == null[\s\S]*remove\(KEY_CACHE\)/);
+  assert.match(refresh, /keepOnly\(next, current\)/);
+});
+
+// --- The alert's filter, natively ------------------------------------------
+
+test("both platforms mirror app/filters.py matches(): same checks, same bounds", () => {
+  const py = readFileSync(new URL("../../app/filters.py", import.meta.url), "utf8");
+  // The server's own lines the natives are written from.
+  assert.match(py, /f\.locations != "all" and slot\.location_uuid not in f\.locations/);
+  assert.match(py, /\(d - today\)\.days > f\.max_days_ahead/);
+  assert.match(py, /d\.isoweekday\(\) not in f\.weekdays/);
+  assert.match(py, /t < f\.time_window_start or t > f\.time_window_end/);
+  assert.match(py, /ZoneInfo\("Europe\/Berlin"\)/);
+  const swift = read(IOS);
+  const java = read(`${JAVA}/EarliestSlotWidget.java`);
+  for (const [name, src] of [["swift", swift], ["java", java]]) {
+    assert.match(src, /Europe\/Berlin/, `${name}: Berlin today`);
+    assert.match(src, /t >= lo && t <= hi/, `${name}: inclusive time bounds`);
+    assert.match(src, /> ?ahead/, `${name}: days ahead is exclusive of the limit itself`);
+  }
+  assert.match(swift, /wd == 1 \? 7 : wd - 1/);
+  assert.match(java, /dow == Calendar\.SUNDAY \? 7 : dow - 1/);
+  // Office id, not name: the slots payload carries `location`.
+  assert.match(swift, /location: e\.location,/);
+  assert.match(java, /e\.optString\("location"\)/);
 });

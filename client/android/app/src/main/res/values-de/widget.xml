@@ -3,6 +3,6 @@
     <string name="widget_name">Frühester Termin</string>
     <string name="widget_description">Der früheste freie Termin in deinen Städten. Gebucht wird in der App oder auf der Seite der Stadt.</string>
     <string name="widget_open_app">Lege in der App einen Alarm an, dann zeigt dieses Widget den frühesten freien Termin.</string>
-    <string name="widget_no_slots">Gerade kein freier Termin</string>
+    <string name="widget_no_match">Gerade kein passender Termin</string>
     <string name="widget_no_snapshot">Noch keine Daten</string>
 </resources>

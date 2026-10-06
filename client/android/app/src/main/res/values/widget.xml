@@ -7,7 +7,7 @@
     <string name="widget_name">Earliest slot</string>
     <string name="widget_description">The earliest free slot in your cities. You book in the app or on the city\'s own page.</string>
     <string name="widget_open_app">Set up an alert in the app and this widget shows the earliest free slot.</string>
-    <string name="widget_no_slots">No free slot right now</string>
+    <string name="widget_no_match">No matching slot right now</string>
     <string name="widget_no_snapshot">No data yet</string>
 
     <color name="widget_background">#FFFFFFFF</color>

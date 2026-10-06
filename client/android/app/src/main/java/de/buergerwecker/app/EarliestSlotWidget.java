@@ -133,9 +133,9 @@ public class EarliestSlotWidget extends AppWidgetProvider {
                 for (int i = 0; cities != null && i < cities.length(); i++) {
                     final JSONObject city = cities.getJSONObject(i);
                     final String slug = city.getString("slug");
-                    final JSONArray services = city.optJSONArray("services");
+                    final JSONArray alerts = city.optJSONArray("alerts");
                     slugs.add(slug);
-                    futures.add(pool.submit(() -> fetch(slug, services, lang)));
+                    futures.add(pool.submit(() -> fetch(slug, alerts, lang)));
                 }
                 for (int i = 0; i < slugs.size(); i++) {
                     Snap snap = null;
@@ -150,14 +150,32 @@ public class EarliestSlotWidget extends AppWidgetProvider {
             } finally {
                 pool.shutdownNow();
             }
-            // Only the cities still in the list stay cached.
-            prefs.edit().putString(KEY_CACHE, next.toString()).apply();
+            // The fetch above can take a while; "Delete my data" may have
+            // cleared the list meanwhile. Re-read it: with it gone nothing is
+            // saved, and only the cities the current list still names are kept.
+            JSONObject current = readConfig(prefs);
+            if (current == null) {
+                prefs.edit().remove(KEY_CACHE).apply();
+            } else {
+                prefs.edit().putString(KEY_CACHE, keepOnly(next, current).toString()).apply();
+            }
         }
         render(context, manager, ids);
     }
 
+    /** `cache` without the cities the config no longer lists. */
+    static JSONObject keepOnly(JSONObject cache, JSONObject config) throws JSONException {
+        JSONObject out = new JSONObject();
+        JSONArray cities = config.optJSONArray("cities");
+        for (int i = 0; cities != null && i < cities.length(); i++) {
+            String slug = cities.getJSONObject(i).optString("slug");
+            if (cache.has(slug)) out.put(slug, cache.get(slug));
+        }
+        return out;
+    }
+
     /** null on any failure (network, 404 while the gate is closed, bad JSON). */
-    private static Snap fetch(String slug, JSONArray services, String lang) {
+    private static Snap fetch(String slug, JSONArray alerts, String lang) {
         HttpURLConnection conn = null;
         try {
             URL url = new URL(API_BASE + "/cities/" + URLEncoder.encode(slug, "UTF-8")
@@ -172,7 +190,7 @@ public class EarliestSlotWidget extends AppWidgetProvider {
                 String line;
                 while ((line = in.readLine()) != null) body.append(line);
             }
-            return parse(new JSONObject(body.toString()), services);
+            return parse(new JSONObject(body.toString()), alerts, Calendar.getInstance());
         } catch (Exception e) {
             return null;
         } finally {
@@ -180,27 +198,100 @@ public class EarliestSlotWidget extends AppWidgetProvider {
         }
     }
 
-    /** The earliest slot over the watched services (all of them when none are named). */
-    static Snap parse(JSONObject body, JSONArray wanted) throws JSONException {
+    /**
+     * The earliest slot that would also trigger one of the alerts: the alert's
+     * own service, and its filter on top (matches() below).
+     */
+    static Snap parse(JSONObject body, JSONArray alerts, Calendar now) throws JSONException {
         Snap snap = new Snap();
         JSONArray services = body.optJSONArray("services");
         for (int i = 0; services != null && i < services.length(); i++) {
             JSONObject svc = services.getJSONObject(i);
-            if (wanted != null && wanted.length() > 0 && !contains(wanted, svc.optString("id"))) continue;
+            List<JSONObject> mine = new ArrayList<>();
+            for (int k = 0; alerts != null && k < alerts.length(); k++) {
+                JSONObject a = alerts.getJSONObject(k);
+                if (a.optString("service").equals(svc.optString("id"))) mine.add(a);
+            }
+            if (mine.isEmpty()) continue;
             snap.hasData = true;
             long polled = parseInstant(svc.isNull("polled_at") ? null : svc.optString("polled_at"));
             if (polled > snap.polledAt) snap.polledAt = polled;
-            JSONObject e = svc.isNull("earliest") ? null : svc.optJSONObject("earliest");
-            if (e == null || e.isNull("date")) continue;
-            String date = e.getString("date");
-            String time = e.isNull("time") ? null : e.optString("time");
-            if (!snap.hasSlot() || (date + " " + (time == null ? "" : time)).compareTo(snap.sortKey()) < 0) {
-                snap.date = date;
-                snap.time = time;
-                snap.office = e.isNull("location_name") ? null : e.optString("location_name");
+            JSONArray slots = svc.optJSONArray("slots");
+            for (int j = 0; slots != null && j < slots.length(); j++) {
+                JSONObject e = slots.getJSONObject(j);
+                String date = e.optString("date", null);
+                String time = e.isNull("time") ? null : e.optString("time");
+                String location = e.isNull("location") ? null : e.optString("location");
+                if (date == null) continue;
+                boolean ok = false;
+                for (JSONObject a : mine) if (matches(a, date, time, location, now)) { ok = true; break; }
+                if (!ok) continue;
+                if (!snap.hasSlot() || (date + " " + (time == null ? "" : time)).compareTo(snap.sortKey()) < 0) {
+                    snap.date = date;
+                    snap.time = time;
+                    snap.office = e.isNull("location_name") ? null : e.optString("location_name");
+                }
             }
         }
         return snap;
+    }
+
+    /**
+     * Mirrors app/filters.py matches() (the service is checked by the caller):
+     * offices "all" or a membership test, the day's ISO weekday in the list,
+     * the time between start and end inclusive, and, when set, no further than
+     * maxDaysAhead from today's date in Europe/Berlin (the cities' own zone).
+     */
+    static boolean matches(JSONObject a, String date, String time, String location, Calendar now) {
+        JSONArray offices = a.optJSONArray("locations"); // a string "all" is not an array
+        if (offices != null && !contains(offices, location == null ? "" : location)) return false;
+        String[] p = date.split("-");
+        if (p.length != 3) return false;
+        int y, m, d;
+        try {
+            y = Integer.parseInt(p[0]);
+            m = Integer.parseInt(p[1]);
+            d = Integer.parseInt(p[2]);
+        } catch (NumberFormatException e) {
+            return false;
+        }
+        TimeZone berlin = TimeZone.getTimeZone("Europe/Berlin");
+        Calendar day = Calendar.getInstance(berlin);
+        day.clear();
+        day.set(y, m - 1, d, 12, 0, 0);
+        int ahead = a.optInt("maxDaysAhead", 0);
+        if (!a.isNull("maxDaysAhead") && ahead > 0) {
+            Calendar today = Calendar.getInstance(berlin);
+            today.setTimeInMillis(now.getTimeInMillis());
+            today.set(Calendar.HOUR_OF_DAY, 12);
+            today.set(Calendar.MINUTE, 0);
+            today.set(Calendar.SECOND, 0);
+            today.set(Calendar.MILLISECOND, 0);
+            long days = Math.round((day.getTimeInMillis() - today.getTimeInMillis()) / 86_400_000.0);
+            if (days > ahead) return false;
+        }
+        int dow = day.get(Calendar.DAY_OF_WEEK); // 1 = Sunday
+        int iso = dow == Calendar.SUNDAY ? 7 : dow - 1;
+        JSONArray weekdays = a.optJSONArray("weekdays");
+        if (weekdays != null) {
+            boolean in = false;
+            for (int i = 0; i < weekdays.length(); i++) if (weekdays.optInt(i) == iso) in = true;
+            if (!in) return false;
+        }
+        int t = minutes(time), lo = minutes(a.optString("timeStart", "00:00")), hi = minutes(a.optString("timeEnd", "23:59"));
+        if (t < 0 || lo < 0 || hi < 0) return false;
+        return t >= lo && t <= hi;
+    }
+
+    private static int minutes(String hhmm) {
+        if (hhmm == null) return -1;
+        String[] p = hhmm.split(":");
+        if (p.length != 2) return -1;
+        try {
+            return Integer.parseInt(p[0]) * 60 + Integer.parseInt(p[1]);
+        } catch (NumberFormatException e) {
+            return -1;
+        }
     }
 
     private static boolean contains(JSONArray a, String s) {
@@ -296,7 +387,7 @@ public class EarliestSlotWidget extends AppWidgetProvider {
             if (showOffice) v.setTextViewText(ROW_OFFICES[i], office);
             String text;
             if (hasSlot) text = slotText(strings, row.snap.date, row.snap.time);
-            else text = context.getString(row.snap != null && row.snap.hasData ? R.string.widget_no_slots : R.string.widget_no_snapshot);
+            else text = context.getString(row.snap != null && row.snap.hasData ? R.string.widget_no_match : R.string.widget_no_snapshot);
             v.setTextViewText(ROW_SLOTS[i], text);
             if (row.snap != null && row.snap.polledAt > newest) newest = row.snap.polledAt;
         }

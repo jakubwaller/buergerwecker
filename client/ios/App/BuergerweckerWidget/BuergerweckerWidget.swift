@@ -30,7 +30,24 @@ struct Config: Decodable {
         let slug: String
         let name: String
         let office: String?
-        let services: [String]?
+        let alerts: [Alert]?
+    }
+    // One alert's filter, as the server's app/filters.py matches() reads it.
+    struct Alert: Decodable {
+        let service: String
+        let locations: Locations?   // "all" or a list of office ids
+        let weekdays: [Int]?        // ISO, 1 = Monday
+        let timeStart: String?      // "HH:MM", inclusive
+        let timeEnd: String?        // "HH:MM", inclusive
+        let maxDaysAhead: Int?
+    }
+    enum Locations: Decodable {
+        case all
+        case list([String])
+        init(from decoder: Decoder) throws {
+            let c = try decoder.singleValueContainer()
+            if let ids = try? c.decode([String].self) { self = .list(ids) } else { self = .all }
+        }
     }
     let lang: String?
     let strings: [String: String]?
@@ -65,12 +82,13 @@ private struct SlotsResponse: Decodable {
     struct Earliest: Decodable {
         let date: String
         let time: String?
+        let location: String?
         let location_name: String?
     }
     struct Service: Decodable {
         let id: String
         let polled_at: String?
-        let earliest: Earliest?
+        let slots: [Earliest]?
     }
     let services: [Service]
 }
@@ -78,7 +96,7 @@ private struct SlotsResponse: Decodable {
 enum SlotsAPI {
     // nil on any failure (network, 404 while the gate is closed, bad JSON):
     // the caller falls back to the cache.
-    static func fetch(slug: String, services: [String], lang: String) async -> Snapshot? {
+    static func fetch(slug: String, alerts: [Config.Alert], lang: String) async -> Snapshot? {
         var comps = URLComponents(string: "\(Shared.apiBase)/cities/\(slug)/slots")
         comps?.queryItems = [URLQueryItem(name: "lang", value: lang)]
         guard let url = comps?.url else { return nil }
@@ -88,13 +106,55 @@ enum SlotsAPI {
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200,
               let body = try? JSONDecoder().decode(SlotsResponse.self, from: data) else { return nil }
-        let wanted = body.services.filter { services.isEmpty || services.contains($0.id) }
+        return snapshot(from: body, alerts: alerts)
+    }
+
+    // The earliest slot that would also trigger one of the alerts: the
+    // alert's own service, and its filter on top.
+    fileprivate static func snapshot(from body: SlotsResponse, alerts: [Config.Alert], now: Date = Date()) -> Snapshot {
         let iso = ISO8601DateFormatter()
+        let watched = Set(alerts.map { $0.service })
+        let wanted = body.services.filter { watched.contains($0.id) }
         let polled = wanted.compactMap { $0.polled_at.flatMap(iso.date(from:)) }.max()
-        let slots = wanted.compactMap { s in
-            s.earliest.map { Slot(date: $0.date, time: $0.time, office: $0.location_name) }
+        var best: Slot?
+        for svc in wanted {
+            for alert in alerts where alert.service == svc.id {
+                for e in svc.slots ?? [] where Filter.matches(alert, date: e.date, time: e.time, location: e.location, now: now) {
+                    let slot = Slot(date: e.date, time: e.time, office: e.location_name)
+                    if best == nil || slot.sortKey < best!.sortKey { best = slot }
+                }
+            }
         }
-        return Snapshot(slot: slots.min { $0.sortKey < $1.sortKey }, polledAt: polled, hasData: !wanted.isEmpty)
+        return Snapshot(slot: best, polledAt: polled, hasData: !wanted.isEmpty)
+    }
+}
+
+// Mirrors app/filters.py matches() (the service is checked by the caller):
+// offices "all" or a membership test, the day's ISO weekday in the list, the
+// time between start and end inclusive, and, when set, no further than
+// maxDaysAhead from today's date in Europe/Berlin (the cities' own zone).
+enum Filter {
+    static func matches(_ a: Config.Alert, date: String, time: String?, location: String?, now: Date) -> Bool {
+        if case .list(let ids)? = a.locations, !ids.contains(location ?? "") { return false }
+        let p = date.split(separator: "-").compactMap { Int($0) }
+        guard p.count == 3 else { return false }
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "Europe/Berlin") ?? .current
+        guard let day = cal.date(from: DateComponents(year: p[0], month: p[1], day: p[2], hour: 12)) else { return false }
+        if let ahead = a.maxDaysAhead, ahead > 0 {
+            let today = cal.startOfDay(for: now)
+            let n = cal.dateComponents([.day], from: today, to: cal.startOfDay(for: day)).day ?? 0
+            if n > ahead { return false }
+        }
+        let wd = cal.component(.weekday, from: day)  // 1 = Sunday
+        if !(a.weekdays ?? [1, 2, 3, 4, 5, 6, 7]).contains(wd == 1 ? 7 : wd - 1) { return false }
+        guard let t = minutes(time), let lo = minutes(a.timeStart ?? "00:00"), let hi = minutes(a.timeEnd ?? "23:59") else { return false }
+        return t >= lo && t <= hi
+    }
+
+    static func minutes(_ hhmm: String?) -> Int? {
+        let p = (hhmm ?? "").split(separator: ":").compactMap { Int($0) }
+        return p.count == 2 ? p[0] * 60 + p[1] : nil
     }
 }
 
@@ -115,10 +175,10 @@ enum Cache {
 // configured yet (the app never opened since install), in the device language.
 private let fallbackStrings: [String: [String: String]] = [
     "de": ["widget.openApp": "Lege in der App einen Alarm an, dann zeigt dieses Widget den frühesten freien Termin.",
-           "widget.noSlots": "Gerade kein freier Termin", "widget.noSnapshot": "Noch keine Daten",
+           "widget.noMatch": "Gerade kein passender Termin", "widget.noSnapshot": "Noch keine Daten",
            "widget.asOf": "Stand {time}"],
     "en": ["widget.openApp": "Set up an alert in the app and this widget shows the earliest free slot.",
-           "widget.noSlots": "No free slot right now", "widget.noSnapshot": "No data yet",
+           "widget.noMatch": "No matching slot right now", "widget.noSnapshot": "No data yet",
            "widget.asOf": "As of {time}"],
 ]
 
@@ -224,17 +284,25 @@ struct SlotProvider: TimelineProvider {
         var fresh: [String: Snapshot] = [:]
         await withTaskGroup(of: (String, Snapshot?).self) { group in
             for c in cities {
-                group.addTask { (c.slug, await SlotsAPI.fetch(slug: c.slug, services: c.services ?? [], lang: lang)) }
+                group.addTask { (c.slug, await SlotsAPI.fetch(slug: c.slug, alerts: c.alerts ?? [], lang: lang)) }
             }
             for await (slug, snap) in group { if let snap { fresh[slug] = snap } }
         }
         // Only the cities still in the list stay in the cache, so a removed
         // alert leaves nothing behind.
-        cache = cache.filter { key, _ in cities.contains { $0.slug == key } }
-        for (slug, snap) in fresh { cache[slug] = snap }
+        // The fetch above can take a while; "Delete my data" may have cleared
+        // the list meanwhile. Re-read it: with it gone nothing is saved (or
+        // kept), and only slugs the current list still names are.
+        guard let current = Config.load() else {
+            Shared.defaults?.removeObject(forKey: Shared.cacheKey)
+            return SlotEntry(date: Date(), words: Words(nil), rows: [])
+        }
+        let slugs = Set(current.cities.map { $0.slug })
+        cache = cache.filter { slugs.contains($0.key) }
+        for (slug, snap) in fresh where slugs.contains(slug) { cache[slug] = snap }
         Cache.save(cache)
-        let rows = cities.map { Row(id: $0.slug, name: $0.name, office: $0.office ?? "", snapshot: cache[$0.slug]) }
-        return SlotEntry(date: Date(), words: Words(config.strings), rows: rows)
+        let rows = current.cities.map { Row(id: $0.slug, name: $0.name, office: $0.office ?? "", snapshot: cache[$0.slug]) }
+        return SlotEntry(date: Date(), words: Words(current.strings), rows: rows)
     }
 }
 
@@ -311,7 +379,7 @@ struct SlotView: View {
     }
 
     private func emptyText(_ row: Row) -> String {
-        entry.words(row.snapshot?.hasData == true ? "widget.noSlots" : "widget.noSnapshot")
+        entry.words(row.snapshot?.hasData == true ? "widget.noMatch" : "widget.noSnapshot")
     }
 
     @ViewBuilder private func asOf(_ row: Row) -> some View {
