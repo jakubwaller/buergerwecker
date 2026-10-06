@@ -23,6 +23,7 @@ import { plugin, platform } from "./native.js";
 const DEVICE_KEY = "device";
 
 let device = null; // { id, secret, token, platform, verified: true|false|null }
+let verifySeq = 0; // counts accepted verify codes (onToken's race with the push)
 let lang = () => "de";
 let handlers = { changed() {}, error() {}, received() {}, tapped() {} };
 
@@ -124,8 +125,14 @@ export async function onToken(token) {
   if (!device) return registerFresh(token);
   if (device.token === token) return;
   try {
-    await api.updateDevice({ token });
-    await saveDevice({ ...device, token });
+    const seq = verifySeq;
+    const r = await api.updateDevice({ token });
+    // A changed token is unverified again until the setup push sent to it
+    // comes back; the waiting screen shows meanwhile. Should that push have
+    // been posted already while this request was in flight, it stays verified.
+    let verified = device.verified;
+    if (typeof r?.verified === "boolean") verified = r.verified || verifySeq !== seq;
+    await saveDevice({ ...device, token, verified });
   } catch (e) {
     // token_in_use: the token already belongs to a device row, which a fresh
     // POST /devices takes over. 401/410: this device is gone. 403: an
@@ -180,7 +187,10 @@ export async function refreshStatus() {
   return device;
 }
 
-// The code from a {type: "verify"} push. true when the server took it; false
+// The code from a {type: "verify"} push, whenever one arrives: after
+// registration, after a token rotation (PUT /device answers verified: false
+// and a push to the new token follows), after a reinstall. true when the
+// server took it; false
 // on a server without the route (404) or with no device. A wrong or expired
 // code throws {error: "invalid_code"}, and the waiting screen offers Resend.
 export async function verify(code) {
@@ -193,6 +203,7 @@ export async function verify(code) {
     throw e;
   }
   if (r && r.verified === false) return false;
+  verifySeq++;
   await saveDevice({ ...device, verified: true });
   return true;
 }

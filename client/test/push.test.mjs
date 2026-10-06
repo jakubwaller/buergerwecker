@@ -134,3 +134,42 @@ test("GET /device on launch picks up a flipped flag", async () => {
   await push.refreshStatus();
   assert.equal(push.awaitingVerification(), true);
 });
+
+test("a rotated token is unverified until the push sent to it comes back", async () => {
+  prefs.set("device", JSON.stringify({ id: 5, secret: "sec", token: "tok-1", platform: "apns", verified: true }));
+  await push.loadDevice();
+  routes = [
+    { method: "PUT", path: "/device", reply: [200, { device_id: 5, verified: false }] },
+    { method: "POST", path: "/device/verify", reply: [200, { verified: true }] },
+  ];
+  await push.onToken("tok-2");
+  assert.equal(push.awaitingVerification(), true);
+  assert.equal(await push.verify("code-for-tok-2"), true);
+  assert.equal(push.awaitingVerification(), false);
+});
+
+test("a verify push that lands while PUT /device is in flight is not undone", async () => {
+  prefs.set("device", JSON.stringify({ id: 5, secret: "sec", token: "tok-1", platform: "apns", verified: true }));
+  await push.loadDevice();
+  let release;
+  const gate = new Promise((r) => (release = r));
+  routes = [{ method: "POST", path: "/device/verify", reply: [200, { verified: true }] }];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    if (opts.method === "PUT") {
+      await gate;
+      return { status: 200, text: async () => JSON.stringify({ device_id: 5, verified: false }) };
+    }
+    return realFetch(url, opts);
+  };
+  try {
+    const rotating = push.onToken("tok-2");
+    await push.verify("code");
+    release();
+    await rotating;
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.equal(push.awaitingVerification(), false);
+  assert.equal(push.getDevice().token, "tok-2");
+});

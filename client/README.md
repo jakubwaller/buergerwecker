@@ -25,7 +25,9 @@ call sends `Authorization: Bearer <id>.<secret>`. "Delete my data" is one `DELET
    then every authenticated route answers `403 device_unverified`, and the app shows one
    waiting screen with a Resend button (`POST /device/verify/resend`, one a minute,
    `retry_after` on a 429). `GET /device` is read on every launch: a device the server asks to
-   verify again (a reinstall re-registering the same token) gets the waiting screen again.
+   verify again (a reinstall re-registering the same token) gets the waiting screen again, and
+   so does a token rotation: `PUT /device` with a new token answers `verified: false` and a
+   setup push to the new token follows. A verify push is posted whenever it arrives.
    A server without these routes answers 404 on them and reports no `verified`; the app takes
    that as "not yet" and carries on.
 3. **Cities**, grouped by city like the website's switcher (one city, several offices).
