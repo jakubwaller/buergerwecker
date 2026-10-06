@@ -91,6 +91,86 @@ def retire_device(conn: sqlite3.Connection, device_id: int, reason: str) -> None
     )
 
 
+def device_by_id(conn: sqlite3.Connection, device_id: int) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM push_devices WHERE id=?",
+                        (device_id,)).fetchone()
+
+
+def touch_device(conn: sqlite3.Connection, device_id: int) -> None:
+    """The app was heard from: the device's 30-day purge clock restarts (see
+    housekeeping._prune_push_devices). At most one write per hour per device,
+    so a chatty app does not cost an fsync per API call."""
+    conn.execute(
+        "UPDATE push_devices SET last_seen_at=CURRENT_TIMESTAMP "
+        "WHERE id=? AND last_seen_at < datetime('now', '-1 hour')",
+        (device_id,),
+    )
+
+
+def update_device(conn: sqlite3.Connection, device_id: int, *,
+                  token: str | None = None, language: str | None = None) -> bool:
+    """A rotated push token or a changed language. Returns False when
+    another live row already holds that token on the same platform: that
+    is a registration this install made itself (a token names one
+    install), and the app re-registers rather than this call guessing
+    which row to keep."""
+    row = device_by_id(conn, device_id)
+    if row is None:
+        return False
+    new_token = token if token is not None else row["token"]
+    new_lang = language if language is not None else row["language"]
+    if new_token != row["token"]:
+        clash = conn.execute(
+            "SELECT id FROM push_devices WHERE platform=? AND token=? AND id!=?",
+            (row["platform"], new_token, device_id)).fetchone()
+        if clash is not None:
+            return False
+    conn.execute(
+        "UPDATE push_devices SET token=?, language=?, "
+        "dead_since=CASE WHEN token=? THEN dead_since ELSE NULL END, "
+        "last_seen_at=CURRENT_TIMESTAMP WHERE id=?",
+        (new_token, new_lang, new_token, device_id),
+    )
+    return True
+
+
+def delete_device(conn: sqlite3.Connection, device_id: int) -> None:
+    """"Delete my data" from the app: the device row and, by cascade, every
+    subscription it holds, seen_slots and digest_deliveries included."""
+    conn.execute("DELETE FROM push_devices WHERE id=?", (device_id,))
+
+
+def subscriptions_for_device(conn: sqlite3.Connection,
+                             device_id: int) -> list[Subscription]:
+    """Every live (not deleted) subscription of a device, expired ones
+    included: an expired one is paused and renewable, and the app shows it
+    as such."""
+    rows = conn.execute(
+        "SELECT * FROM subscriptions WHERE device_id=? AND deleted_at IS NULL "
+        "ORDER BY id", (device_id,)).fetchall()
+    return [_row_to_subscription(r) for r in rows]
+
+
+def live_subscription_count(conn: sqlite3.Connection, device_id: int) -> int:
+    return conn.execute(
+        "SELECT COUNT(*) FROM subscriptions WHERE device_id=? "
+        "AND deleted_at IS NULL", (device_id,)).fetchone()[0]
+
+
+def renew_subscription(conn: sqlite3.Connection, sub_id: int,
+                       ttl_days: int) -> bool:
+    """Start a new term from now. reminder_sent_at is the once-per-term latch
+    of the still-looking check-in; cleared here so the next term asks again
+    instead of expiring silently. Returns False when there is nothing to
+    renew (deleted or purged)."""
+    cur = conn.execute(
+        "UPDATE subscriptions SET expires_at=datetime('now', ?), "
+        "reminder_sent_at=NULL WHERE id=? AND deleted_at IS NULL",
+        (f"+{int(ttl_days)} days", sub_id),
+    )
+    return (cur.rowcount or 0) == 1
+
+
 def set_special_consent(conn: sqlite3.Connection, sub_id: int,
                         given: bool) -> None:
     """Record (or clear) the Art. 9 consent on an existing subscription.
@@ -160,6 +240,8 @@ def _row_to_subscription(row: sqlite3.Row) -> Subscription:
         consecutive_digests=(row["consecutive_digests"]
                              if "consecutive_digests" in row.keys() else 0) or 0,
         device_id=(row["device_id"] if "device_id" in row.keys() else None),
+        consent_special=("consent_special_at" in row.keys()
+                         and row["consent_special_at"] is not None),
     )
 
 def active_subscriptions(conn: sqlite3.Connection) -> list[Subscription]:

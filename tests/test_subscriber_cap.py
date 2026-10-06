@@ -221,3 +221,133 @@ def test_summary_is_silent_when_the_cap_is_off(db, monkeypatch):
     s = stats(db, load_config())
     assert s["subscriber_cap"] == 0 and s["capped_now"] == 0
     assert "Sub cap" not in render_summary_email(s, now=datetime.utcnow(), anomalies=[], base_url="https://x")
+
+
+# ---------------------------------------------------------------------------
+# The same cap on both channels, and the mail cap under pool pressure
+
+def _ec_pem():
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    return ec.generate_private_key(ec.SECP256R1()).private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption()).decode()
+
+
+@pytest.fixture
+def apns(monkeypatch):
+    monkeypatch.setenv("APNS_TEAM_ID", "TEAM123456")
+    monkeypatch.setenv("APNS_KEY_ID", "KEY1234567")
+    monkeypatch.setenv("APNS_KEY_P8", _ec_pem())
+    monkeypatch.setenv("APNS_TOPIC", "de.buergerwecker.app")
+    from app import push
+    push._apns_jwt.clear(); push._clients.clear()
+    yield
+    push._apns_jwt.clear(); push._clients.clear()
+
+
+class _Relay:
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self, platform, url, *, headers=None, json=None, data=None):
+        import httpx
+        self.calls += 1
+        return httpx.Response(200, json={})
+
+
+def _push_sub(db):
+    from app.repo import insert_push_subscription, register_device
+    dev = register_device(db, platform="apns", token="tok-1", secret_hash="h" * 64,
+                          language="de")
+    return insert_push_subscription(db, device_id=dev, city="leipzig", language="de",
+                                    filter_=_f(), ttl_days=90)
+
+
+def _cycle_both(db, slots, cycle_id, relay):
+    scraper = MagicMock()
+    scraper.poll.return_value = slots
+    with patch("app.cycle.get_scraper", return_value=scraper), \
+         patch("app.mail._call_mailjet_batch", return_value=200) as mb, \
+         patch("app.mail._call_brevo_batch", return_value=201), \
+         patch("app.push._post", relay):
+        run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15,
+                  cycle_id=cycle_id)
+    return mb.call_count
+
+
+def test_a_push_subscriber_is_capped_exactly_like_a_mail_subscriber(db, apns):
+    """Push is not a fast lane: the daily cap is the same on both channels."""
+    pid = _push_sub(db)
+    relay = _Relay()
+    _cycle_both(db, [_slot(1)], "c1", relay)
+    _age_last_notified(db, pid, 16)
+    _cycle_both(db, [_slot(2)], "c2", relay)
+    assert relay.calls == 2 and digests_in_window(db, pid) == 2
+    _age_last_notified(db, pid, 16)
+    _cycle_both(db, [_slot(3)], "c3", relay)
+    assert relay.calls == 2                 # held
+    assert _seen(db, pid) == 2
+    assert [h[1] for h in _holds(db)] == [pid]
+
+
+def test_subscriber_caps_tighten_mail_only_once_the_pool_is_under_pressure(db, monkeypatch):
+    from app.config import load_config
+    from app.cycle import subscriber_caps
+    monkeypatch.setenv("MAILJET_DAILY_QUOTA", "10")
+    monkeypatch.setenv("BREVO_DAILY_QUOTA", "10")
+    monkeypatch.setenv("MAIL_POOL_PRESSURE_PCT", "50")
+    cfg = load_config()
+    assert subscriber_caps(db, cfg) == (2, 2, False)
+    # 9 of 20 sent in the last 24h: 45%, below the line.
+    db.executemany("INSERT INTO sent_idempotency (idem_key, provider) VALUES (?, 'mailjet')",
+                   [(f"k{i}",) for i in range(9)])
+    assert subscriber_caps(db, cfg) == (2, 2, False)
+    db.execute("INSERT INTO sent_idempotency (idem_key, provider) VALUES ('k9', 'mailjet')")
+    assert subscriber_caps(db, cfg) == (2, 1, True)
+    # Yesterday's sends are outside the rolling window.
+    db.execute("UPDATE sent_idempotency SET sent_at=datetime('now','-25 hours') "
+               "WHERE idem_key='k9'")
+    assert subscriber_caps(db, cfg) == (2, 2, False)
+
+
+def test_tightening_is_off_with_zero_or_a_cap_no_lower_than_the_ordinary_one(db, monkeypatch):
+    from app.config import load_config
+    from app.cycle import subscriber_caps
+    monkeypatch.setenv("MAILJET_DAILY_QUOTA", "10")
+    monkeypatch.setenv("BREVO_DAILY_QUOTA", "10")
+    monkeypatch.setenv("MAIL_POOL_PRESSURE_PCT", "50")
+    db.executemany("INSERT INTO sent_idempotency (idem_key, provider) VALUES (?, 'mailjet')",
+                   [(f"k{i}",) for i in range(20)])
+    monkeypatch.setenv("MAIL_CAP_UNDER_PRESSURE", "0")
+    assert subscriber_caps(db, load_config()) == (2, 2, False)
+    monkeypatch.setenv("MAIL_CAP_UNDER_PRESSURE", "2")
+    assert subscriber_caps(db, load_config()) == (2, 2, False)
+    monkeypatch.setenv("MAIL_CAP_UNDER_PRESSURE", "1")
+    monkeypatch.setenv("MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY", "0")
+    # No ordinary cap at all: the pressure cap still applies to mail.
+    assert subscriber_caps(db, load_config()) == (0, 1, True)
+
+
+def test_under_pressure_mail_gets_one_digest_a_day_and_push_keeps_two(db, apns, monkeypatch):
+    monkeypatch.setenv("MAILJET_DAILY_QUOTA", "10")
+    monkeypatch.setenv("BREVO_DAILY_QUOTA", "10")
+    monkeypatch.setenv("MAIL_POOL_PRESSURE_PCT", "50")
+    db.executemany("INSERT INTO sent_idempotency (idem_key, provider) VALUES (?, 'mailjet')",
+                   [(f"k{i}",) for i in range(10)])
+    sid = _sub(db)
+    pid = _push_sub(db)
+    relay = _Relay()
+    _cycle_both(db, [_slot(1)], "c1", relay)
+    assert digests_in_window(db, sid) == 1 and digests_in_window(db, pid) == 1
+    for s in (sid, pid):
+        _age_last_notified(db, s, 16)
+    _cycle_both(db, [_slot(2)], "c2", relay)
+    assert digests_in_window(db, sid) == 1          # mail: held at the tightened cap
+    assert digests_in_window(db, pid) == 2          # push: the ordinary cap
+    assert [h[1] for h in _holds(db)] == [sid]
+    from app.config import load_config
+    s = stats(db, load_config())
+    assert s["mail_cap_tightened"] is True and s["mail_cap"] == 1
+    text = render_summary_email(s, now=datetime.utcnow(), anomalies=[], base_url="https://x")
+    assert "Mail pool under pressure: mail subscribers capped at 1/24h" in text

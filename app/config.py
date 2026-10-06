@@ -54,6 +54,14 @@ class Config:
     apns_sandbox: bool = False     # Xcode development builds only; TestFlight is production
     fcm_service_account_json: str = ""   # the service-account JSON, as text
     push_ttl_seconds: int = 1800
+    # The mail pool is the free provider chain (about 600/day). When its
+    # rolling-24h usage reaches `mail_pool_pressure_pct` of the summed caps,
+    # every mail subscriber's daily cap drops to `mail_cap_under_pressure`
+    # for as long as the pressure lasts, so the pool degrades for everyone a
+    # little before it defers anyone entirely. Push has no pool and keeps
+    # the ordinary cap. 0 for the tightened cap turns the rule off.
+    mail_pool_pressure_pct: int = 80
+    mail_cap_under_pressure: int = 1
 
 def _req(key: str) -> str:
     val = os.environ.get(key)
@@ -209,4 +217,7 @@ def load_config() -> Config:
         # How long a relay may hold a push for an offline phone. Slots vanish
         # in minutes; a notification delivered an hour late is noise.
         push_ttl_seconds=int(os.environ.get("PUSH_TTL_SECONDS", "1800")),
+        mail_pool_pressure_pct=int(os.environ.get("MAIL_POOL_PRESSURE_PCT", "80")),
+        mail_cap_under_pressure=int(
+            os.environ.get("MAIL_CAP_UNDER_PRESSURE", "1")),
     )

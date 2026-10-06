@@ -19,6 +19,7 @@ def run_once(conn: sqlite3.Connection) -> None:
     _clamp_expiry(conn, cfg)
     _soft_delete_expired(conn, cfg)
     _send_renewal_reminders(conn, cfg)
+    _send_push_checkins(conn, cfg)
     _send_heartbeats(conn, cfg, milestone_days=30, milestone_col="heartbeat_30d_at")
     _send_heartbeats(conn, cfg, milestone_days=60, milestone_col="heartbeat_60d_at",
                      not_right_after="heartbeat_30d_at")
@@ -89,8 +90,8 @@ def _send_renewal_reminders(conn, cfg):
     from app.catalog import city_display_name
     from app.db import transaction
     rows = conn.execute(
-        # App subscriptions have no address to write to; their term simply
-        # runs out, and the app re-subscribes (push check-in: a later PR).
+        # App subscriptions get the same question as a push, see
+        # _send_push_checkins.
         "SELECT id, email, language, city, expires_at FROM subscriptions "
         "WHERE deleted_at IS NULL AND confirmed_at IS NOT NULL "
         "AND device_id IS NULL "
@@ -126,6 +127,53 @@ def _send_renewal_reminders(conn, cfg):
         except Exception:
             # transaction rolled back; the row is eligible for retry next pass.
             pass
+
+def _send_push_checkins(conn, cfg):
+    """The still-looking check-in for app subscriptions: the same question
+    as the mail, as a push the app answers (keep looking renews over the
+    API, no deletes). Same window, same once-per-term latch, same
+    idempotency key shape. Only delivered pushes stamp reminder_sent_at: a
+    relay outage or a per-token throttle releases the item and the next
+    housekeeping run (a day later, with RENEWAL_REMINDER_DAYS_BEFORE days
+    of slack) asks again. A retired device gets nothing, and its
+    subscriptions are already ended."""
+    from app.catalog import city_display_name
+    from app.db import transaction
+    from app.push import render_checkin, send_push_batch
+    from dataclasses import replace
+    rows = conn.execute(
+        "SELECT s.id, s.device_id, s.language, s.city, s.expires_at "
+        "FROM subscriptions s JOIN push_devices d ON d.id = s.device_id "
+        "WHERE s.deleted_at IS NULL AND s.confirmed_at IS NOT NULL "
+        "AND s.reminder_sent_at IS NULL AND d.retired_at IS NULL "
+        "AND s.expires_at BETWEEN CURRENT_TIMESTAMP AND datetime('now', ?)",
+        (f"+{cfg.renewal_reminder_days_before} days",),
+    ).fetchall()
+    if not rows:
+        return
+    items, by_key = [], {}
+    for row in rows:
+        lang = "en" if row["language"] == "en" else "de"
+        item = render_checkin(lang, sub_id=row["id"],
+                              city_name=city_display_name(row["city"], lang),
+                              expires_at=row["expires_at"])
+        if item is None:
+            continue
+        item = replace(item, device_id=row["device_id"])
+        items.append(item)
+        by_key[item.idem_key] = row["id"]
+    try:
+        result = send_push_batch(conn, items, cfg)
+    except Exception as exc:
+        print(f"push: check-in batch failed: {exc!r}", flush=True)
+        return
+    delivered = [by_key[k] for k in result.delivered if k in by_key]
+    if delivered:
+        with transaction(conn):
+            conn.executemany(
+                "UPDATE subscriptions SET reminder_sent_at=CURRENT_TIMESTAMP "
+                "WHERE id=?", [(sid,) for sid in delivered])
+
 
 def _checkin_mail(lang: str, *, city: str | None, expires_at: str,
                   grace_days: int, renew_url: str, unsub_url: str,

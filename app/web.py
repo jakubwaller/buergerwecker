@@ -6,7 +6,7 @@ import os
 import re
 import time as time_mod
 from collections import Counter
-from datetime import datetime, time as time_cls
+from datetime import datetime
 from urllib.parse import urlencode
 from html import escape
 from pathlib import Path
@@ -17,6 +17,7 @@ from app.db import connect, transaction
 from app.catalog import (load_catalog, available_cities, booking_start_url,
                          city_display_name, CatalogError)
 from app.models import Filter
+from app.signup import FormError as _FormError, build_filter
 from app.repo import (insert_pending, active_subscriptions, confirm,
                       soft_delete, suppression_reason, clear_delivery_block)
 from app.ratelimit import GLOBAL_IP_LIMITER, email_rate_limit_ok
@@ -360,81 +361,21 @@ _OG_CITY_DESC = {
 }
 
 
-def _parse_hhmm(s: str) -> time_cls:
-    """'HH:MM' (a trailing ':SS' is tolerated) → time. Raises ValueError on
-    anything else, including out-of-range hours; the caller turns that into a
-    400 rather than letting it surface as a 500."""
-    parts = (s or "").strip().split(":")
-    if len(parts) not in (2, 3):
-        raise ValueError(f"not HH:MM: {s!r}")
-    return time_cls(int(parts[0]), int(parts[1]))
-
-
-class _FormError(Exception):
-    """A rejected sign-up/manage form; `key` names the result page."""
-    def __init__(self, key: str):
-        super().__init__(key)
-        self.key = key
-
-
 def _filter_from_form(form, catalog) -> tuple[Filter, bool]:
     """The Filter a sign-up or manage form asks for, validated against the
-    tenant's catalog. Returns (filter, is_sensitive); raises _FormError.
-
-    Every id has to be one the catalog offers. The form only ever posts those,
-    so a miss is a hand-built request — and it used to be stored anyway: an
-    unknown appointment_type became a PollPlan the poller sent upstream every
-    cycle, interpolated raw into the vendor's request, and each distinct junk
-    value counted toward MAX_PLANS_PER_CITY until real visitors were told the
-    wait-list was full.
-    """
-    atype = form.get("appointment_type", "").strip()
-    if not atype:
-        raise _FormError("missing_type")
-    if atype not in catalog.appointment_types.values():
-        raise _FormError("unknown_type")
-    # Special-category services (Art. 9 GDPR) need the separate explicit
-    # consent on top of the double opt-in. Enforced here rather than in the
-    # form because the box is hidden by script while an ordinary service is
-    # selected — and because a POST need never have rendered the page.
-    sensitive = catalog.is_sensitive(atype)
-    if sensitive and form.get("consent_special") != "1":
-        raise _FormError("consent_required")
-    all_locs = form.get("all_locations") == "1"
-    loc_list = form.getlist("locations")
-    if not all_locs and loc_list:
-        known = set(catalog.locations.values())
-        if any(loc not in known for loc in loc_list):
-            raise _FormError("unknown_location")
-    locations = "all" if all_locs or not loc_list else loc_list
-    weekdays = [int(d) for d in form.getlist("weekdays")
-                if d.isdigit() and 1 <= int(d) <= 7]
-    if not weekdays:
-        weekdays = [1, 2, 3, 4, 5, 6, 7]
-    try:
-        start = _parse_hhmm(form.get("time_start") or "00:00")
-        end = _parse_hhmm(form.get("time_end") or "23:59")
-    except ValueError:
-        raise _FormError("invalid_time") from None
-    if start > end:
-        # An empty window can never match; nobody means to ask for one.
-        raise _FormError("invalid_time")
-    return Filter(
-        appointment_types=[atype],
-        locations=locations,
-        weekdays=weekdays,
-        time_window_start=start,
-        time_window_end=end,
-        max_days_ahead=_parse_max_days(form.get("max_days_ahead")),
-    ), sensitive
-
-
-def _parse_max_days(raw: str | None) -> int | None:
-    """Form value for 'only slots within the next N days'; ''/invalid → no limit."""
-    raw = (raw or "").strip()
-    if raw.isdigit() and int(raw) > 0:
-        return int(raw)
-    return None
+    tenant's catalog (see `app.signup.build_filter`, which the app's JSON API
+    shares). Returns (filter, is_sensitive); raises _FormError."""
+    return build_filter(
+        catalog,
+        appointment_type=form.get("appointment_type", ""),
+        locations=form.getlist("locations"),
+        all_locations=form.get("all_locations") == "1",
+        weekdays=form.getlist("weekdays"),
+        time_start=form.get("time_start"),
+        time_end=form.get("time_end"),
+        max_days_ahead=form.get("max_days_ahead"),
+        consent_special=form.get("consent_special") == "1",
+    )
 
 
 def _send_confirmation_email(conn, sub_id: int, email: str, lang: str,
@@ -674,6 +615,10 @@ def create_app() -> Flask:
     # Load config ONCE at startup. Missing env vars surface here, not on
     # the first real request.
     app.config["TERMINE_CONFIG"] = load_config()
+    # The app's JSON API (app/api.py). Imported here, not at the top: it
+    # borrows the client-IP and message helpers from this module.
+    from app.api import api as api_blueprint
+    app.register_blueprint(api_blueprint)
 
     @app.after_request
     def _privacy_headers(resp):
@@ -1223,17 +1168,10 @@ def create_app() -> Flask:
             return _result_page("not_found", lang, status=404)
         # A special-category subscription renews for its own shorter term —
         # otherwise the renewal link would quietly promote it to the
-        # ordinary one.
-        ttl = ttl_days_for(cfg, row["consent_special_at"] is not None)
-        # reminder_sent_at is the once-per-term latch of the still-looking
-        # check-in. Without clearing it here a renewed subscription would
-        # never be asked again and would expire silently at the end of the
-        # next term.
-        conn.execute(
-            "UPDATE subscriptions SET expires_at=datetime('now', ?), "
-            "reminder_sent_at=NULL WHERE id=? AND deleted_at IS NULL",
-            (f"+{ttl} days", sid),
-        )
+        # ordinary one. The app's API renews through the same helper.
+        from app.repo import renew_subscription
+        renew_subscription(conn, sid,
+                           ttl_days_for(cfg, row["consent_special_at"] is not None))
         return _result_page("renewed", lang)
 
     @app.route("/go/sub/<token>")

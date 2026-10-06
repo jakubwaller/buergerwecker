@@ -135,6 +135,9 @@ class Subscription:
     # than mail; `email` is '' on those rows. None = an ordinary mail
     # subscription.
     device_id: int | None = None
+    # The separate Art. 9 consent, when the subscription is to a
+    # special-category service (consent_special_at in the row).
+    consent_special: bool = False
 
     @property
     def is_push(self) -> bool:

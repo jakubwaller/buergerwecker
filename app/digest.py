@@ -1,5 +1,6 @@
 from __future__ import annotations
 import sqlite3
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -287,6 +288,67 @@ def send_digest(*, conn: sqlite3.Connection, subscription: Subscription,
     else:
         sink.append(queued)
 
+def _database_path(conn: sqlite3.Connection) -> str | None:
+    """The file `conn` is on, so the push thread can open its own connection
+    to it: a sqlite3 connection is bound to the thread that created it, and
+    the two batches each open their own transactions. None for an in-memory
+    database, which a second connection cannot reach."""
+    for row in conn.execute("PRAGMA database_list").fetchall():
+        if row[1] == "main":
+            return row[2] or None
+    return None
+
+
+def _send_both(conn: sqlite3.Connection, mail_items: list,
+               push_items: list, cfg) -> tuple[BatchResult, set[str]]:
+    """Deliver the mail batch and the push batch of one cycle. Returns the
+    mail result and the idem_keys the push batch delivered.
+
+    Concurrently, when there is both: a mail provider answering slowly (one
+    HTTP call per recipient on Brevo and Sweego, 30 s timeouts) must not
+    hold the push batch for the length of the mail batch. Concurrent, not
+    ahead: both batches start in the same cycle, after the same polls, and
+    neither is scheduled before the other (push is not a fast lane; the
+    service's promise is fairness). The push module is imported only when
+    there is a push digest to send, so a deploy without app users never
+    loads the relay clients. A push batch that raises is logged and counted
+    as delivering nothing: its claims, if any are left pending, are taken
+    over after _STALE_CLAIM_MINUTES, and the mail bookkeeping must not be
+    lost to it.
+    """
+    if not push_items:
+        return (send_batch(conn, mail_items, cfg) if mail_items
+                else BatchResult()), set()
+    from app.push import send_push_batch
+    if not mail_items:
+        return BatchResult(), send_push_batch(conn, push_items, cfg).delivered
+    path = _database_path(conn)
+    if path is None:
+        result = send_batch(conn, mail_items, cfg)
+        return result, send_push_batch(conn, push_items, cfg).delivered
+    push_delivered: set[str] = set()
+
+    def _push():
+        from app.db import connect
+        try:
+            push_conn = connect(path)
+            try:
+                push_delivered.update(
+                    send_push_batch(push_conn, push_items, cfg).delivered)
+            finally:
+                push_conn.close()
+        except Exception as exc:
+            print(f"push: batch failed: {exc!r}", flush=True)
+
+    worker = threading.Thread(target=_push, name="push-batch")
+    worker.start()
+    try:
+        result = send_batch(conn, mail_items, cfg)
+    finally:
+        worker.join()
+    return result, push_delivered
+
+
 def flush_digests(conn: sqlite3.Connection, sink: list, cfg) -> None:
     """Deliver every staged digest in `sink` via quota-aware batches, then
     record seen_slots + last_notified for the ones that were actually sent.
@@ -300,6 +362,9 @@ def flush_digests(conn: sqlite3.Connection, sink: list, cfg) -> None:
     never stamps last_notified_at, so anyone passed over keeps their old (or
     absent) timestamp and leads the next cycle. Never-notified subscribers sort
     first, which is also the right answer on the merits.
+
+    Mail and push take different roads to the same bookkeeping, side by side
+    (see `_send_both`).
     """
     if not sink:
         return
@@ -307,16 +372,10 @@ def flush_digests(conn: sqlite3.Connection, sink: list, cfg) -> None:
     from app.repo import (record_digest_delivery, record_seen_slot,
                           set_last_notified)
     sink = sorted(sink, key=lambda q: str(q.subscription.last_notified_at or ""))
-    # Mail and push take different roads to the same bookkeeping. The push
-    # module is imported only when there is a push digest to send, so a deploy
-    # without app users never loads the relay clients.
     mail_items = [q.item for q in sink if isinstance(q.item, Outgoing)]
     push_items = [q.item for q in sink if not isinstance(q.item, Outgoing)]
-    result = send_batch(conn, mail_items, cfg) if mail_items else BatchResult()
-    delivered = set(result.delivered)
-    if push_items:
-        from app.push import send_push_batch
-        delivered |= send_push_batch(conn, push_items, cfg).delivered
+    result, push_delivered = _send_both(conn, mail_items, push_items, cfg)
+    delivered = set(result.delivered) | push_delivered
     for q in sink:
         if q.item.idem_key not in delivered:
             continue

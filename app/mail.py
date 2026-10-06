@@ -723,6 +723,14 @@ def _daily_usage(conn: sqlite3.Connection, cfg) -> list[tuple[str, int, int]]:
             usage.append((name, _window_used(conn, name, 86400), cap))
     return usage
 
+def pool_usage(conn: sqlite3.Connection, cfg) -> tuple[int, int]:
+    """(sends in the rolling 24h, summed daily cap) across every provider that
+    can actually send: the number that gates mail delivery. (0, 0) when no
+    provider has a daily cap configured."""
+    usage = _daily_usage(conn, cfg)
+    return sum(u[1] for u in usage), sum(u[2] for u in usage)
+
+
 def maybe_quota_alert(conn: sqlite3.Connection, cfg, *, deferred: int) -> None:
     """Email the developer when the COMBINED send capacity across providers is
     running out, or when notifications had to be deferred for lack of quota.

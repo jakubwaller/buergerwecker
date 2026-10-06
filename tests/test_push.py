@@ -170,7 +170,8 @@ def test_render_push_groups_by_office_soonest_first_and_counts_the_rest():
     assert lines[2] == "Bürgerbüro Süd: Sa 13.06. 14:00"
     assert lines[3] == "+2 weitere"
     assert len(lines) == 4
-    assert data == {"url": "https://x/go/leipzig", "sub": "7", "city": "leipzig"}
+    assert data == {"type": "slots", "url": "https://x/go/leipzig", "sub": "7",
+                    "city": "leipzig"}
 
 
 def test_render_push_english():
@@ -193,7 +194,7 @@ def test_render_push_for_a_sensitive_service_names_nothing():
     assert body == "2 neue passende Termine. Tippen, um zur Buchung zu gehen."
     for forbidden in ("Mitte", "Nord", "Reisepass", "svc-B", "leipzig", "10:30"):
         assert forbidden not in body and forbidden not in title
-    assert data == {"url": "https://x/go/sub/opaque", "sub": "7"}
+    assert data == {"type": "slots", "url": "https://x/go/sub/opaque", "sub": "7"}
 
 
 def test_render_push_without_catalog_falls_back_to_uuids():
@@ -624,6 +625,215 @@ def test_flush_with_only_mail_never_imports_the_push_path(db):
          patch("app.digest.maybe_quota_alert"):
         flush_digests(db, sink, _cfg())
     sp.assert_not_called()
+
+
+def test_flush_sends_mail_and_push_side_by_side(db):
+    """A slow mail provider must not hold the push batch: the push batch
+    starts while the mail batch is still on the wire. Neither is scheduled
+    ahead of the other (push is not a fast lane), they simply overlap. The
+    push batch gets its own connection, so a mock that writes is fine too."""
+    import threading
+    mail_id = insert_pending(db, email="m@example.com", city="leipzig",
+                             language="de", filter_=_filter(), ttl_days=30)
+    confirm(db, mail_id)
+    dev = _device(db)
+    push_id = _push_sub(db, dev)
+    slot = Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")
+    sink = [
+        QueuedDigest(item=Outgoing(to="m@example.com", subject="s", body="b",
+                                   idem_key="km"),
+                     subscription=SimpleNamespace(id=mail_id, last_notified_at=None),
+                     slots=[slot], match_count=1),
+        QueuedDigest(item=_item(dev, "kp"),
+                     subscription=SimpleNamespace(id=push_id, last_notified_at=None),
+                     slots=[slot], match_count=1),
+    ]
+    push_started = threading.Event()
+    seen = {}
+
+    def slow_mail(conn, items, cfg):
+        # Blocks until the push batch has started, or the test fails.
+        seen["push_ran_during_mail"] = push_started.wait(5)
+        return BatchResult(delivered={"km"})
+
+    def push(conn, items, cfg):
+        assert conn is not db          # its own connection
+        conn.execute("SELECT 1").fetchone()
+        push_started.set()
+        return PushResult(delivered={"kp"})
+
+    with patch("app.digest.send_batch", slow_mail), \
+         patch("app.push.send_push_batch", push), \
+         patch("app.digest.maybe_quota_alert"):
+        flush_digests(db, sink, _cfg())
+    assert seen["push_ran_during_mail"] is True
+    recorded = {r["subscription_id"] for r in db.execute("SELECT subscription_id FROM seen_slots")}
+    assert recorded == {mail_id, push_id}
+
+
+def test_a_failing_push_batch_does_not_lose_the_mail_bookkeeping(db):
+    mail_id = insert_pending(db, email="m@example.com", city="leipzig",
+                             language="de", filter_=_filter(), ttl_days=30)
+    confirm(db, mail_id)
+    dev = _device(db)
+    push_id = _push_sub(db, dev)
+    slot = Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")
+    sink = [
+        QueuedDigest(item=Outgoing(to="m@example.com", subject="s", body="b",
+                                   idem_key="km"),
+                     subscription=SimpleNamespace(id=mail_id, last_notified_at=None),
+                     slots=[slot], match_count=1),
+        QueuedDigest(item=_item(dev, "kp"),
+                     subscription=SimpleNamespace(id=push_id, last_notified_at=None),
+                     slots=[slot], match_count=1),
+    ]
+    with patch("app.digest.send_batch", return_value=BatchResult(delivered={"km"})), \
+         patch("app.push.send_push_batch", side_effect=RuntimeError("relay exploded")), \
+         patch("app.digest.maybe_quota_alert"):
+        flush_digests(db, sink, _cfg())
+    recorded = {r["subscription_id"] for r in db.execute("SELECT subscription_id FROM seen_slots")}
+    assert recorded == {mail_id}
+
+
+def test_flush_on_an_in_memory_database_runs_the_batches_in_turn():
+    """A second connection cannot reach an in-memory database, so the two
+    batches run one after the other on the one connection."""
+    from app.db import connect
+    conn = connect(":memory:")
+    from app.db import init_schema
+    init_schema(conn)
+    mail_id = insert_pending(conn, email="m@example.com", city="leipzig",
+                             language="de", filter_=_filter(), ttl_days=30)
+    confirm(conn, mail_id)
+    dev = _device(conn)
+    push_id = _push_sub(conn, dev)
+    slot = Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")
+    sink = [
+        QueuedDigest(item=Outgoing(to="m@example.com", subject="s", body="b",
+                                   idem_key="km"),
+                     subscription=SimpleNamespace(id=mail_id, last_notified_at=None),
+                     slots=[slot], match_count=1),
+        QueuedDigest(item=_item(dev, "kp"),
+                     subscription=SimpleNamespace(id=push_id, last_notified_at=None),
+                     slots=[slot], match_count=1),
+    ]
+    conns = []
+
+    def push(c, items, cfg):
+        conns.append(c)
+        return PushResult(delivered={"kp"})
+
+    with patch("app.digest.send_batch", return_value=BatchResult(delivered={"km"})), \
+         patch("app.push.send_push_batch", push), \
+         patch("app.digest.maybe_quota_alert"):
+        flush_digests(conn, sink, _cfg())
+    assert conns == [conn]
+    recorded = {r["subscription_id"] for r in conn.execute("SELECT subscription_id FROM seen_slots")}
+    assert recorded == {mail_id, push_id}
+
+
+# ---------------------------------------------------------------------------
+# The still-looking check-in as a push
+
+def test_render_checkin_names_the_city_and_the_date_only():
+    from app.push import render_checkin
+    item = render_checkin("de", sub_id=7, city_name="Leipzig",
+                          expires_at="2026-06-20 09:00:00")
+    assert item.title == "Suchst du noch einen Termin in Leipzig?"
+    assert item.body == ("Ohne Antwort stoppen die Benachrichtigungen am 20.06.2026. "
+                         "Tippen, um weiter zu suchen oder zu beenden.")
+    assert item.data == {"type": "checkin", "sub": "7"}
+    assert item.collapse_id == "checkin-7"
+    assert item.idem_key == _idem_key(7, [], "renewal-7-2026-06-20")
+    en = render_checkin("en", sub_id=7, city_name=None, expires_at="2026-06-20 09:00:00")
+    assert en.title == "Still looking for an appointment?"
+    assert "20 June 2026" in en.body
+    assert render_checkin("de", sub_id=7, city_name="X", expires_at="garbage") is None
+
+
+def _checkin_cfg(**over):
+    return _cfg(renewal_reminder_days_before=10, **over)
+
+
+def test_housekeeping_asks_app_subscriptions_by_push_and_latches_once(db):
+    from app.housekeeping import _send_push_checkins
+    dev = _device(db)
+    due = _push_sub(db, dev)
+    later = _push_sub(db, dev)
+    db.execute("UPDATE subscriptions SET expires_at=datetime('now','+5 days') WHERE id=?", (due,))
+    db.execute("UPDATE subscriptions SET expires_at=datetime('now','+40 days') WHERE id=?", (later,))
+    # A mail subscription in the same window is the mail path's business.
+    mail_id = insert_pending(db, email="m@example.com", city="leipzig",
+                             language="de", filter_=_filter(), ttl_days=5)
+    confirm(db, mail_id)
+    relay = FakeRelay([(200, {})])
+    with patch("app.push._post", relay):
+        _send_push_checkins(db, _checkin_cfg())
+    assert len(relay.calls) == 1
+    payload = relay.calls[0]["json"]
+    assert payload["aps"]["alert"]["title"] == "Suchst du noch einen Termin in Leipzig?"
+    assert payload["type"] == "checkin" and payload["sub"] == str(due)
+    assert relay.calls[0]["headers"]["apns-collapse-id"] == f"checkin-{due}"
+    stamped = {r["id"] for r in db.execute(
+        "SELECT id FROM subscriptions WHERE reminder_sent_at IS NOT NULL")}
+    assert stamped == {due}
+    # Once per term.
+    with patch("app.push._post", relay):
+        _send_push_checkins(db, _checkin_cfg())
+    assert len(relay.calls) == 1
+
+
+def test_a_deferred_checkin_push_is_asked_again_next_run(db):
+    from app.housekeeping import _send_push_checkins
+    dev = _device(db)
+    due = _push_sub(db, dev)
+    db.execute("UPDATE subscriptions SET expires_at=datetime('now','+5 days') WHERE id=?", (due,))
+    with patch("app.push._post", FakeRelay([(503, {"reason": "ServiceUnavailable"})])):
+        _send_push_checkins(db, _checkin_cfg())
+    assert db.execute("SELECT reminder_sent_at FROM subscriptions WHERE id=?",
+                      (due,)).fetchone()[0] is None
+    assert _claimed(db, _idem_key(due, [], f"renewal-{due}-" + db.execute(
+        "SELECT substr(expires_at,1,10) FROM subscriptions WHERE id=?", (due,)).fetchone()[0])) is None
+    relay = FakeRelay([(200, {})])
+    with patch("app.push._post", relay):
+        _send_push_checkins(db, _checkin_cfg())
+    assert len(relay.calls) == 1
+    assert db.execute("SELECT reminder_sent_at FROM subscriptions WHERE id=?",
+                      (due,)).fetchone()[0] is not None
+
+
+def test_a_retired_device_gets_no_checkin(db):
+    from app.housekeeping import _send_push_checkins
+    dev = _device(db)
+    due = _push_sub(db, dev)
+    db.execute("UPDATE subscriptions SET expires_at=datetime('now','+5 days') WHERE id=?", (due,))
+    retire_device(db, dev, "Unregistered")
+    relay = FakeRelay([])
+    with patch("app.push._post", relay):
+        _send_push_checkins(db, _checkin_cfg())
+    assert relay.calls == []
+
+
+def test_checkin_runs_inside_housekeeping(db, monkeypatch):
+    """run_once reaches _send_push_checkins, with the config it loaded."""
+    from app import housekeeping
+    called = []
+    monkeypatch.setattr(housekeeping, "_send_push_checkins",
+                        lambda conn, cfg: called.append(cfg.renewal_reminder_days_before))
+    for k, v in {"MAILJET_API_KEY": "m", "MAILJET_API_SECRET": "m",
+                 "MAILJET_FROM_EMAIL": "x@x", "MAILJET_FROM_NAME": "x",
+                 "MAILJET_DAILY_QUOTA": "6000", "TOKEN_SECRET_PRIMARY": "x" * 32,
+                 "ADMIN_TOKEN": "a" * 32, "PUBLIC_BASE_URL": "https://x",
+                 "DEDUP_WINDOW_HOURS": "24", "RATE_LIMIT_MINUTES": "15",
+                 "SUBSCRIPTION_TTL_DAYS": "90", "RENEWAL_REMINDER_DAYS_BEFORE": "7",
+                 "MAX_PLANS_PER_CITY": "10", "PARSER_CANARY_THRESHOLD_HOURS": "2",
+                 "SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR": "99",
+                 "SUBSCRIBE_RATELIMIT_PER_EMAIL_PER_DAY": "99",
+                 "DEVELOPER_EMAIL": "dev@example.com", "KOFI_URL": "https://k"}.items():
+        monkeypatch.setenv(k, v)
+    with patch("app.mail.send"):
+        housekeeping.run_once(db)
+    assert called == [7]
 
 
 # ---------------------------------------------------------------------------
