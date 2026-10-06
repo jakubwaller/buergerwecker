@@ -29,5 +29,7 @@
   "push.body_redacted": "{n} neue passende Termine. Tippen, um zur Buchung zu gehen.",
   "push.checkin_title": "Suchst du noch einen Termin?",
   "push.checkin_title_city": "Suchst du noch einen Termin in {city}?",
-  "push.checkin_body": "Ohne Antwort stoppen die Benachrichtigungen am {date}. Tippen, um weiter zu suchen oder zu beenden."
+  "push.checkin_body": "Ohne Antwort stoppen die Benachrichtigungen am {date}. Tippen, um weiter zu suchen oder zu beenden.",
+  "push.verify_title": "Bürgerwecker ist bereit",
+  "push.verify_body": "Benachrichtigungen funktionieren. Du kannst jetzt Termine beobachten."
 }

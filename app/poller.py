@@ -22,6 +22,7 @@ def main() -> None:
         cycle_id = datetime.utcnow().strftime("%Y%m%dT%H%M")
         try:
             _maybe_housekeeping(conn)
+            _sweep_verifications(conn, cfg)
             run_cycle(conn,
                       max_plans_per_city=cfg.max_plans_per_city,
                       rate_limit_minutes=cfg.rate_limit_minutes,
@@ -39,6 +40,15 @@ def main() -> None:
                   flush=True)
             if consecutive_failures >= 3:
                 _maybe_alert(conn, cfg, str(exc))
+
+def _sweep_verifications(conn, cfg) -> None:
+    """Send the verification pushes the web process could not (no credentials
+    there, relay down, or a resend request). Never breaks the cycle."""
+    try:
+        from app.push import send_verifications
+        send_verifications(conn, cfg)
+    except Exception as exc:
+        print(f"verification sweep failed: {exc!r}", flush=True)
 
 def _maybe_alert(conn, cfg, last_error: str) -> None:
     """Send a developer-alert email at most once per 24h."""

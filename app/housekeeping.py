@@ -147,6 +147,7 @@ def _send_push_checkins(conn, cfg):
         "FROM subscriptions s JOIN push_devices d ON d.id = s.device_id "
         "WHERE s.deleted_at IS NULL AND s.confirmed_at IS NOT NULL "
         "AND s.reminder_sent_at IS NULL AND d.retired_at IS NULL "
+        "AND d.verified_at IS NOT NULL "
         "AND s.expires_at BETWEEN CURRENT_TIMESTAMP AND datetime('now', ?)",
         (f"+{cfg.renewal_reminder_days_before} days",),
     ).fetchall()
@@ -383,10 +384,21 @@ def _prune_push_devices(conn):
     the device was not heard from since. The app re-registers on its next
     launch, so nothing is lost. ON DELETE CASCADE takes any soft-deleted
     subscriptions along. Depends on `_purge_hard` having run first in
-    `run_once`."""
+    `run_once`.
+
+    A device that is unverified, was created over a day ago and has had no
+    verification request for a day (a verification in progress, e.g. after a
+    token change, keeps its row) goes if it has no subscription row at all (deleted or not: a device that ever held one
+    keeps the rules above). Its verification code expired with that day, and
+    the app registers afresh on its next launch."""
     conn.execute(
         "DELETE FROM push_devices WHERE "
-        "  (retired_at IS NOT NULL AND retired_at < datetime('now','-30 days')) "
+        "  (verified_at IS NULL AND created_at < datetime('now','-1 day') "
+        "   AND (verify_requested_at IS NULL "
+        "        OR verify_requested_at < datetime('now','-1 day')) "
+        "   AND NOT EXISTS (SELECT 1 FROM subscriptions s "
+        "                   WHERE s.device_id = push_devices.id)) "
+        "  OR (retired_at IS NOT NULL AND retired_at < datetime('now','-30 days')) "
         "  OR (last_seen_at < datetime('now','-30 days') AND NOT EXISTS ("
         "        SELECT 1 FROM subscriptions s "
         "        WHERE s.device_id = push_devices.id "

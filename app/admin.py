@@ -532,6 +532,8 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         "SELECT city, COUNT(*) AS n FROM subscriptions "
         "WHERE deleted_at IS NULL AND confirmed_at IS NOT NULL "
         "AND expires_at > CURRENT_TIMESTAMP "
+        "AND (device_id IS NULL OR device_id IN "
+        "(SELECT id FROM push_devices WHERE verified_at IS NOT NULL)) "
         "GROUP BY city"
     ).fetchall()
     for r in rows:
@@ -696,13 +698,17 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
     return {
         "active_subscriptions":
             scalar("SELECT COUNT(*) FROM subscriptions WHERE deleted_at IS NULL "
-                   "AND confirmed_at IS NOT NULL AND expires_at > CURRENT_TIMESTAMP"),
+                   "AND confirmed_at IS NOT NULL AND expires_at > CURRENT_TIMESTAMP "
+                   "AND (device_id IS NULL OR device_id IN "
+                   "(SELECT id FROM push_devices WHERE verified_at IS NOT NULL))"),
         # People, not rows: one address may hold several subscriptions. lower()
         # folds rows that predate the subscribe form's lowercasing.
         "active_subscribers":
             scalar("SELECT COUNT(DISTINCT COALESCE('d'||device_id, lower(email))) FROM subscriptions "
                    "WHERE deleted_at IS NULL AND confirmed_at IS NOT NULL "
-                   "AND expires_at > CURRENT_TIMESTAMP"),
+                   "AND expires_at > CURRENT_TIMESTAMP "
+                   "AND (device_id IS NULL OR device_id IN "
+                   "(SELECT id FROM push_devices WHERE verified_at IS NOT NULL))"),
         "active_subscriptions_by_city": by_city_subs,
         "cities": cities,
         "current_plan_count_by_city": by_city_plans,

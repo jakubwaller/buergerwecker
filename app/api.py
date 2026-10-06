@@ -20,10 +20,24 @@ subscribe-form limit per IP (soft, per process, see `IPRateLimiter`); a
 device may hold MAX_SUBSCRIPTIONS_PER_DEVICE live subscriptions (hard, in
 the database).
 
+A device is not trusted until it has proven it receives our pushes. Registering
+(or registering the same token again) triggers a push
+carrying a one-time code; the app posts the code to `/device/verify`. The code
+is stored hashed, lives 24 hours and is replaced by a resend.
+
+Who may call what. The device's main credential (its `secret_hash`) may always
+call `GET /device`, `PUT /device`, `DELETE /device` and the two verify routes,
+verified or not, so a device waiting for its code can still report a rotated
+token or delete its data (`device_owner`); every subscription route also
+needs it to be verified (`authenticated`, the default; else 403
+`device_unverified`). A pending credential (a re-registration of a verified
+token, see repo.register_device) may call only `GET /device` and the two
+verify routes (`any_credential`).
+
 The whole blueprint, public catalog routes included, answers 404 until
 APP_API_ENABLED=1. An open registration endpoint lets anyone create
 subscriptions without a confirmation step, so it stays closed until the app
-ships and device verification exists.
+ships; device verification (above) is what the open endpoint rests on.
 """
 from __future__ import annotations
 import hashlib
@@ -43,8 +57,11 @@ from app.ratelimit import GLOBAL_IP_LIMITER
 from app.repo import (active_subscriptions, delete_device, device_by_id,
                       insert_push_subscription, live_subscription_count,
                       register_device, renew_subscription,
+                      pending_secret_fresh, request_verification,
+                      verify_push_wait,
                       set_special_consent, soft_delete,
-                      subscriptions_for_device, touch_device, update_device)
+                      subscriptions_for_device, touch_device, update_device,
+                      verify_device)
 from app.signup import FormError, build_filter
 
 api = Blueprint("api", __name__, url_prefix="/api/v1")
@@ -58,6 +75,19 @@ MAX_SUBSCRIPTIONS_PER_DEVICE = 10
 # longer is not one.
 _TOKEN_MAX = 4096
 _LANGS = ("de", "en")
+
+# Sentences for the errors only the API has (the website's come from
+# app.web._RESULT_MESSAGES), keyed like them: {key: {lang: sentence}}.
+_API_MESSAGES = {
+    "device_unverified": {
+        "de": "Dieses Gerät ist noch nicht bestätigt. Warte auf die Test-Benachrichtigung.",
+        "en": "This device is not verified yet. Wait for the test notification.",
+    },
+    "invalid_code": {
+        "de": "Der Code ist ungültig oder abgelaufen.",
+        "en": "The code is invalid or has expired.",
+    },
+}
 
 
 def _cfg():
@@ -88,6 +118,8 @@ def _error(key: str, status: int, lang: str = "de", **extra):
     spec = _RESULT_MESSAGES.get(key)
     if spec:
         body["message"] = spec[_lang(lang)][2]
+    elif key in _API_MESSAGES:
+        body["message"] = _API_MESSAGES[key][_lang(lang)]
     return jsonify(body), status
 
 
@@ -111,32 +143,85 @@ def _json() -> dict:
     return body if isinstance(body, dict) else {}
 
 
+def _resolve_device():
+    """The device behind the Authorization header, put on `g`, or an error
+    response (401, or 410 for a retired device). Returns None on success."""
+    header = request.headers.get("Authorization", "")
+    bearer = header.removeprefix("Bearer ").strip() if header.startswith("Bearer ") else ""
+    dev_id, _, secret = bearer.partition(".")
+    # ASCII digits only and short: str.isdigit() takes "²", int() then
+    # raises, and a 30-digit id overflows SQLite; both would be an
+    # unauthenticated 500.
+    if (not secret or not dev_id.isascii() or not dev_id.isdigit()
+            or len(dev_id) > 12):
+        return _error("unauthorized", 401)
+    conn = connect(_cfg().db_path)
+    row = device_by_id(conn, int(dev_id))
+    if row is None:
+        return _error("unauthorized", 401)
+    digest = _hash(secret)
+    # The device's own credential is verified iff the row is. The pending one
+    # (a re-registration of a verified token, see repo.register_device) works
+    # for 24 hours and is never verified.
+    g.credential_pending = False
+    g.pending_hash = None
+    if hmac.compare_digest(row["secret_hash"], digest):
+        g.credential_verified = row["verified_at"] is not None
+    elif (row["pending_secret_hash"]
+          and hmac.compare_digest(row["pending_secret_hash"], digest)
+          and pending_secret_fresh(conn, row["id"])):
+        g.credential_verified = False
+        g.credential_pending = True
+        # The verify transaction promotes exactly this secret, not whatever
+        # is pending by then.
+        g.pending_hash = row["pending_secret_hash"]
+    else:
+        return _error("unauthorized", 401)
+    if row["retired_at"] is not None:
+        return _error("device_retired", 410, row["language"])
+    if g.credential_verified:
+        # An unverified row is on the 24-hour purge clock; touching it would
+        # restart the 30-day one.
+        touch_device(conn, row["id"])
+    g.device = row
+    g.conn = conn
+    return None
+
+
 def authenticated(view):
     """Resolve `Authorization: Bearer <device_id>.<secret>` to a live device
     on `g.device`, or answer 401. A retired device (the relay said its token
     is dead, see push.send_push_batch) answers 410 with `device_retired`,
     which tells the app to register afresh; its subscriptions ended with the
-    retirement, so there is nothing to carry over."""
+    retirement, so there is nothing to carry over. This is the locked
+    default: only the main credential of a verified device passes, anything
+    else answers 403 `device_unverified`. See `device_owner` and
+    `any_credential` for the routes that are open to more."""
+    return _guard(view, owner_only=False, verified=True)
+
+
+def device_owner(view):
+    """The main credential in any state, verified or not, never a pending
+    one: `PUT /device` and `DELETE /device`. A device waiting for its code
+    can still report a second token rotation or delete its data."""
+    return _guard(view, owner_only=True, verified=False)
+
+
+def any_credential(view):
+    """Main or pending credential, verified or not: `GET /device` and the
+    two verify routes, the only ones a pending credential may call."""
+    return _guard(view, owner_only=False, verified=False)
+
+
+def _guard(view, *, owner_only: bool, verified: bool):
     @wraps(view)
     def wrapper(*args, **kwargs):
-        header = request.headers.get("Authorization", "")
-        bearer = header.removeprefix("Bearer ").strip() if header.startswith("Bearer ") else ""
-        dev_id, _, secret = bearer.partition(".")
-        # ASCII digits only and short: str.isdigit() takes "²", int() then
-        # raises, and a 30-digit id overflows SQLite; both would be an
-        # unauthenticated 500.
-        if (not secret or not dev_id.isascii() or not dev_id.isdigit()
-                or len(dev_id) > 12):
-            return _error("unauthorized", 401)
-        conn = connect(_cfg().db_path)
-        row = device_by_id(conn, int(dev_id))
-        if row is None or not hmac.compare_digest(row["secret_hash"], _hash(secret)):
-            return _error("unauthorized", 401)
-        if row["retired_at"] is not None:
-            return _error("device_retired", 410, row["language"])
-        touch_device(conn, row["id"])
-        g.device = row
-        g.conn = conn
+        failure = _resolve_device()
+        if failure is not None:
+            return failure
+        if ((verified and not g.credential_verified)
+                or (owner_only and g.credential_pending)):
+            return _error("device_unverified", 403, g.device["language"])
         return view(*args, **kwargs)
     return wrapper
 
@@ -146,13 +231,18 @@ def authenticated(view):
 
 @api.route("/devices", methods=["POST"])
 def register():
-    """`{platform, token, language}` → `{device_id, secret, language}`.
+    """`{platform, token, language}` → `{device_id, secret, language,
+    verified}`; `verified` is always false here, the verification push goes
+    out right after.
 
     The same token registering again (a reinstall, a first launch re-run) is
-    the same device: it takes a new secret, keeps its subscriptions and loses
-    any retirement (see repo.register_device). The old secret stops working
-    at once, which is the right answer for a phone that changed hands: the
-    new install owns the token now."""
+    the same device and keeps its subscriptions, and it never breaks the
+    install that already works: on a verified device the old secret keeps
+    full access and the new one is only a pending secret with the three
+    unverified routes, until its holder posts the code pushed to the token;
+    then it replaces the old secret, which dies at that moment (the right
+    answer for a phone that changed hands). On a never-verified device the
+    secret is simply rotated. See repo.register_device."""
     if _rate_limited():
         return _error("rate_limited", 429)
     body = _json()
@@ -169,18 +259,32 @@ def register():
     with transaction(conn):
         device_id = register_device(conn, platform=platform, token=token,
                                     secret_hash=_hash(secret), language=lang)
+    _send_verification(conn, device_id)
     return jsonify({"device_id": device_id, "secret": secret,
-                    "language": lang}), 201
+                    "language": lang, "verified": False}), 201
+
+
+def _send_verification(conn, device_id: int) -> None:
+    """Best effort, in the request: the web container has the push
+    credentials too, so this normally delivers at once. Without them (or on a
+    relay failure) nothing is stamped and the poller's sweep sends it within
+    a minute. Never fails the request."""
+    try:
+        from app.push import send_verifications
+        send_verifications(conn, _cfg(), device_ids=[device_id])
+    except Exception as exc:
+        print(f"api: verification push for device {device_id} failed: {exc!r}",
+              flush=True)
 
 
 @api.route("/device", methods=["GET"])
-@authenticated
+@any_credential
 def device_status():
-    return jsonify(_device_json(g.device))
+    return jsonify(_device_json(g.device, g.credential_verified))
 
 
 @api.route("/device", methods=["PUT"])
-@authenticated
+@device_owner
 def device_update():
     """A rotated push token (the platforms do that) or a new language."""
     if _rate_limited():
@@ -198,11 +302,15 @@ def device_update():
         ok = update_device(g.conn, g.device["id"], token=token, language=language)
     if not ok:
         return _error("token_in_use", 409, g.device["language"])
-    return jsonify(_device_json(device_by_id(g.conn, g.device["id"])))
+    row = device_by_id(g.conn, g.device["id"])
+    if token is not None and token != g.device["token"]:
+        _send_verification(g.conn, row["id"])
+        row = device_by_id(g.conn, row["id"])
+    return jsonify(_device_json(row, row["verified_at"] is not None))
 
 
 @api.route("/device", methods=["DELETE"])
-@authenticated
+@device_owner
 def device_delete():
     """Delete my data. The row goes, the subscriptions cascade, and the
     secret in the request stops working with this response."""
@@ -211,11 +319,56 @@ def device_delete():
     return "", 204
 
 
-def _device_json(row) -> dict:
+@api.route("/device/verify", methods=["POST"])
+@any_credential
+def device_verify():
+    """`{code}` → `{verified: true}`: the code from the verification push.
+    Posting it again once verified is still 200. A missing, wrong or expired
+    code is 400 `invalid_code`."""
+    lang = g.device["language"]
+    if g.credential_verified:
+        return jsonify({"verified": True})
+    if _rate_limited():
+        return _error("rate_limited", 429, lang)
+    code = _json().get("code")
+    with transaction(g.conn):
+        ok = isinstance(code, str) and verify_device(
+            g.conn, g.device["id"], code.strip(), pending_hash=g.pending_hash)
+    if not ok:
+        return _error("invalid_code", 400, lang)
+    return jsonify({"verified": True})
+
+
+@api.route("/device/verify/resend", methods=["POST"])
+@any_credential
+def device_verify_resend():
+    """Ask for a new verification push, at most one a minute and
+    MAX_VERIFY_PUSHES_PER_DAY a day, both measured from actual deliveries in
+    the database (so they hold across workers). The old code stops working."""
+    lang = g.device["language"]
+    if g.credential_verified:
+        return jsonify({"verified": True})
+    if _rate_limited():
+        return _error("rate_limited", 429, lang)
+    wait = verify_push_wait(g.conn, g.device["id"])
+    if wait > 0:
+        return _error("rate_limited", 429, lang, retry_after=wait)
+    with transaction(g.conn):
+        request_verification(g.conn, g.device["id"], code="drop_if_stale")
+    _send_verification(g.conn, g.device["id"])
+    return jsonify({"verified": False}), 202
+
+
+def _device_json(row, verified: bool) -> dict:
+    """`verified` is the caller's credential, not the row alone. An unverified holder gets no subscriptions: whoever re-registers a
+    known token must not read the real user's filters before proving they
+    receive its pushes. The key stays so the shape does not change."""
     return {"device_id": row["id"], "platform": row["platform"],
             "language": row["language"], "created_at": row["created_at"],
+            "verified": verified,
             "subscriptions": [_sub_json(s) for s in
-                              subscriptions_for_device(g.conn, row["id"])]}
+                              subscriptions_for_device(g.conn, row["id"])]
+                             if verified else []}
 
 
 # ---------------------------------------------------------------------------

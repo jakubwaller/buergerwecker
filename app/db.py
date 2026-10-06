@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 # SQLite's own timestamp shape, the one CURRENT_TIMESTAMP and datetime('now')
 # produce. Queries compare stored timestamps against those as plain text, so a
@@ -80,7 +80,22 @@ CREATE TABLE IF NOT EXISTS push_devices (
   -- First dead-token answer the relay gave for this token, cleared by any
   -- delivery. A device is retired only once the platform has delivered to
   -- someone after this moment (see push.send_push_batch).
-  dead_since    TIMESTAMP
+  dead_since    TIMESTAMP,
+  -- Verification by push (see app/api.py): a device may not manage
+  -- subscriptions until it has posted back the code we pushed to its token.
+  -- Only the SHA-256 of the code is stored, written when the push is sent.
+  verified_at          TIMESTAMP,
+  verify_code_hash     TEXT,
+  verify_requested_at  TIMESTAMP,
+  verify_sent_at       TIMESTAMP,
+  -- Secret of a re-registration of a verified token, usable only until the
+  -- new install verifies (see repo.register_device).
+  pending_secret_hash  TEXT,
+  -- When the pending secret was stored, and when the current code was made:
+  -- the 24-hour lives of both run from these, not from verify_requested_at,
+  -- which every resend and re-registration re-stamps.
+  pending_since        TIMESTAMP,
+  verify_code_at       TIMESTAMP
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_push_devices_token
   ON push_devices(platform, token);
@@ -347,6 +362,17 @@ def init_schema(conn: sqlite3.Connection) -> None:
         # ADD COLUMN may carry a REFERENCES clause as long as the default is
         # NULL, which it is.
         "device_id": "INTEGER REFERENCES push_devices(id) ON DELETE CASCADE",
+    })
+    # Schema 15: device verification. A device row that predates the columns
+    # reads as unverified and is asked to verify on its next call.
+    _add_missing_columns(conn, "push_devices", {
+        "verified_at": "TIMESTAMP",
+        "verify_code_hash": "TEXT",
+        "verify_requested_at": "TIMESTAMP",
+        "verify_sent_at": "TIMESTAMP",
+        "pending_secret_hash": "TEXT",
+        "pending_since": "TIMESTAMP",
+        "verify_code_at": "TIMESTAMP",
     })
     # best_time: the earliest time told under a day key. Existing day-key rows
     # get NULL, which has_seen_slot reads as "told at an unknown time" and

@@ -43,6 +43,12 @@ MAX_TIMES_PER_LINE = 3
 
 PLATFORMS = ("apns", "fcm")
 
+# The poller's sweep leaves a verification request alone for this long, so the
+# web request that made it always has its turn first: otherwise both could
+# deliver a code, the phone would get two (only the last hash is valid) and
+# two of the five daily pushes would be gone.
+SWEEP_GRACE_SECONDS = 30
+
 
 class PushAuthError(Exception):
     """Our credentials were refused, not the device's token."""
@@ -150,6 +156,72 @@ def render_checkin(lang: str, *, sub_id: int, city_name: str | None,
         idem_key=_idem_key(sub_id, [], f"renewal-{sub_id}-{expires_at[:10]}"),
         data={"type": "checkin", "sub": str(sub_id)},
         collapse_id=f"checkin-{sub_id}")
+
+
+def _verify_minute() -> str:
+    """The UTC minute of this attempt, the last part of the idempotency key."""
+    return datetime.utcnow().strftime("%Y%m%d%H%M")
+
+
+def send_verifications(conn: sqlite3.Connection, cfg, *,
+                       device_ids: list[int] | None = None) -> int:
+    """Push a one-time code to every device awaiting verification (or just
+    `device_ids`), and return how many were delivered. The proof a device
+    gives is posting the code back (`POST /device/verify`).
+
+    The code is made here, at send time, so only its hash is ever stored; it
+    travels in the push payload and nowhere else. The idempotency key is
+    `verify|<device_id>|<UTC minute>`, a second guard: the real claim is the
+    conditional write of the code's hash (`set_verify_code`), so only the
+    sender that stored the code sends it, one per device per minute, and
+    nothing but the hash of a code is in the database. The five-a-day count (`verify_push_wait`) is a read
+    before the send: under concurrency it is approximate, bounded by the
+    one-a-minute claim. `verify_sent_at` is stamped only for delivered pushes, so a
+    device whose push could not go out (no credentials, relay down) is picked
+    up again by the poller's sweep, for as long as the request is under 24
+    hours old, and never more than MAX_VERIFY_PUSHES_PER_DAY a device a day.
+    Two callers: the web process right after a registration or a
+    resend, and the poller once per cycle."""
+    import secrets
+    from app.api import _hash
+    from app.db import transaction
+    from app.repo import (devices_awaiting_verification, mark_verification_sent,
+                          set_verify_code, verify_push_wait)
+    rows = [r for r in devices_awaiting_verification(
+                conn, device_ids=device_ids,
+                min_age_seconds=0 if device_ids else SWEEP_GRACE_SECONDS)
+            if verify_push_wait(conn, r["id"]) == 0]
+    if not rows:
+        return 0
+    items: list[OutgoingPush] = []
+    by_key: dict[str, int] = {}
+    for row in rows:
+        lang = "en" if row["language"] == "en" else "de"
+        code = secrets.token_urlsafe(16)
+        # Storing the hash is the claim (see set_verify_code): only the sender
+        # that stored the code sends it.
+        if not set_verify_code(conn, row["id"], _hash(code)):
+            continue
+        key = f"verify|{row['id']}|{_verify_minute()}"
+        # No subscription is involved, and OutgoingPush has no sub_id
+        # field: the `sub` key of a slots or check-in push is simply
+        # absent from this payload.
+        items.append(OutgoingPush(
+            device_id=row["id"], title=t(lang, "push.verify_title"),
+            body=t(lang, "push.verify_body"), idem_key=key,
+            data={"type": "verify", "code": code},
+            collapse_id=f"verify-{row['id']}"))
+        by_key[key] = row["id"]
+    try:
+        result = send_push_batch(conn, items, cfg)
+    except Exception as exc:
+        print(f"push: verification batch failed: {exc!r}", flush=True)
+        return 0
+    delivered = [by_key[k] for k in result.delivered if k in by_key]
+    if delivered:
+        with transaction(conn):
+            mark_verification_sent(conn, delivered)
+    return len(delivered)
 
 
 # ---------------------------------------------------------------------------
