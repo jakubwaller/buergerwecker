@@ -475,6 +475,12 @@ token once (`POST /api/v1/devices`, `{platform, token, language}`) and gets a
   cascade, every subscription it holds).
 - `GET /api/v1/cities`, `GET /api/v1/cities/<slug>`: the catalog the sign-up
   form shows, public.
+- `GET /api/v1/cities/<slug>/slots`: what the last polls found free, per
+  watched service, soonest first, with the earliest slot for the widget.
+  Read from `slot_snapshots`, which the poller writes after every successful
+  poll (`app/snapshots.py`), so the overview adds no upstream request: the
+  one GET per watched Anliegen per cycle stays what the cities see. A
+  service nobody watches has no entry. Rows are pruned after a day.
 - `GET/POST /api/v1/subscriptions`, `GET/PUT/DELETE
   /api/v1/subscriptions/<id>`, `POST /api/v1/subscriptions/<id>/renew`: the
   website's rules over JSON. Same validation against the catalog, same

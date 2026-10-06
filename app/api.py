@@ -264,6 +264,45 @@ def city(slug):
     })
 
 
+@api.route("/cities/<slug>/slots", methods=["GET"])
+def city_slots(slug):
+    """What the last polls found free in this city, per watched service:
+    the app's live overview, and the widget's earliest slot. Read from the
+    poller's snapshot (app/snapshots.py), never from the city's site, so the
+    overview adds no upstream request. A service nobody watches is absent;
+    the catalog endpoint lists every service, so the app can say "nobody is
+    watching this one yet" for the difference. `?service=<id>` narrows the
+    answer to one service."""
+    from app.snapshots import city_slots as snapshot_slots
+    lang = _lang(request.args.get("lang"))
+    try:
+        cat = load_catalog(slug)
+    except CatalogError:
+        return _error("unknown_city", 404, lang)
+    only = request.args.get("service")
+    conn = connect(_cfg().db_path)
+    services = []
+    newest = None
+    for entry in snapshot_slots(conn, slug):
+        if only and entry["service_uuid"] != only:
+            continue
+        slots = [{"date": d, "time": t, "location": loc,
+                  "location_name": cat.location_label(loc, lang)}
+                 for d, t, loc in entry["slots"]]
+        services.append({
+            "id": entry["service_uuid"],
+            "name": cat.appointment_type_label(entry["service_uuid"], lang),
+            "polled_at": entry["polled_at"],
+            "n_total": entry["n_total"],
+            "earliest": slots[0] if slots else None,
+            "slots": slots,
+        })
+        if newest is None or entry["polled_at"] > newest:
+            newest = entry["polled_at"]
+    services.sort(key=lambda e: e["name"].casefold())
+    return jsonify({"slug": slug, "polled_at": newest, "services": services})
+
+
 def _office_label(cat, city_name: str, lang: str, fallback: str) -> str:
     from app.web import _office_label as web_office_label
     return web_office_label(cat, city_name, lang, fallback)
