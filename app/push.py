@@ -19,6 +19,7 @@ import json
 import sqlite3
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 
 import httpx
 import jwt
@@ -53,8 +54,9 @@ class OutgoingPush:
     title: str
     body: str
     idem_key: str
-    # Custom keys the app reads: `url` (booking page), `sub` (subscription id)
-    # and, for an ordinary subscription, `city`.
+    # Custom keys the app reads: `type` ("slots" or "checkin"), `sub`
+    # (subscription id), for a slots push `url` (booking page) and, for an
+    # ordinary subscription, `city`.
     data: dict[str, str] = field(default_factory=dict)
     # Relay-side collapse: a newer digest for the same subscription replaces
     # the one still sitting unread on the lock screen.
@@ -90,7 +92,7 @@ def render_push(sub: Subscription, slots: list[Slot], *, catalog,
     lang = sub.language
     redacted = catalog is not None and any(
         catalog.is_sensitive(u) for u in sub.sub_filter.appointment_types)
-    data = {"url": booking_url, "sub": str(sub.id)}
+    data = {"type": "slots", "url": booking_url, "sub": str(sub.id)}
     if redacted:
         return (t(lang, "push.title"),
                 t(lang, "push.body_redacted", n=len(slots)), data)
@@ -125,6 +127,29 @@ def render_push(sub: Subscription, slots: list[Slot], *, catalog,
     if omitted > 0:
         lines.append(t(lang, "push.more", n=omitted))
     return title, "\n".join(lines), data
+
+
+def render_checkin(lang: str, *, sub_id: int, city_name: str | None,
+                   expires_at: str) -> OutgoingPush | None:
+    """The still-looking check-in as a push: "Suchst du noch einen Termin in
+    X?", answered in the app (keep looking renews, no ends it). Names the
+    city only, never the Amt: the city_name of a special-category tenant is
+    the bare city by catalog rule, and this payload transits a relay.
+    `device_id` is filled in by the caller."""
+    from app.i18n import format_date
+    from app.mail import _idem_key
+    try:
+        stop = datetime.fromisoformat(expires_at[:19]).date()
+    except ValueError:
+        return None
+    title = (t(lang, "push.checkin_title_city", city=city_name) if city_name
+             else t(lang, "push.checkin_title"))
+    body = t(lang, "push.checkin_body", date=format_date(stop, lang))
+    return OutgoingPush(
+        device_id=0, title=title, body=body,
+        idem_key=_idem_key(sub_id, [], f"renewal-{sub_id}-{expires_at[:10]}"),
+        data={"type": "checkin", "sub": str(sub_id)},
+        collapse_id=f"checkin-{sub_id}")
 
 
 # ---------------------------------------------------------------------------

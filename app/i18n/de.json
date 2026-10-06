@@ -26,5 +26,8 @@
   "push.title": "Neue Termine verfügbar",
   "push.title_city": "Neue Termine in {city}",
   "push.more": "+{n} weitere",
-  "push.body_redacted": "{n} neue passende Termine. Tippen, um zur Buchung zu gehen."
+  "push.body_redacted": "{n} neue passende Termine. Tippen, um zur Buchung zu gehen.",
+  "push.checkin_title": "Suchst du noch einen Termin?",
+  "push.checkin_title_city": "Suchst du noch einen Termin in {city}?",
+  "push.checkin_body": "Ohne Antwort stoppen die Benachrichtigungen am {date}. Tippen, um weiter zu suchen oder zu beenden."
 }

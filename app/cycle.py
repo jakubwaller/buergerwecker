@@ -159,6 +159,28 @@ def _due_cities(conn: sqlite3.Connection, cities: set[str]) -> set[str]:
     return due
 
 
+def subscriber_caps(conn: sqlite3.Connection, cfg) -> tuple[int, int, bool]:
+    """(cap for push subscribers, cap for mail subscribers, tightened?) for
+    this cycle. Both start at MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY: the same
+    daily cap on both channels is a fairness rule, not a coincidence. The
+    mail cap alone drops to MAIL_CAP_UNDER_PRESSURE while the free provider
+    pool's rolling-24h usage is at MAIL_POOL_PRESSURE_PCT or above, so the
+    pool thins everyone's mail a little before it defers anyone's entirely.
+    Push has no pool to run out of. 0 for the ordinary cap means no cap at
+    all, pressure or not: an operator who turned the cap off must not find
+    a hidden one; 0 for the pressure cap means never tighten."""
+    from app.mail import pool_usage
+    cap = getattr(cfg, "max_digests_per_subscriber_per_day", 0) or 0
+    tight = getattr(cfg, "mail_cap_under_pressure", 0) or 0
+    pct = getattr(cfg, "mail_pool_pressure_pct", 0) or 0
+    if not cap or not tight or not pct or tight >= cap:
+        return cap, cap, False
+    used, pool = pool_usage(conn, cfg)
+    if pool and used * 100 >= pool * pct:
+        return cap, tight, True
+    return cap, cap, False
+
+
 def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
               rate_limit_minutes: int, cycle_id: str,
               cfg=None,
@@ -283,6 +305,10 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
     outbox: list = []
     # Per-cycle memo so a tenant's catalog is resolved once, not per subscriber.
     seen_key_fns: dict = {}
+    push_cap, mail_cap, tightened = subscriber_caps(conn, cfg)
+    if tightened:
+        print(f"cycle {cycle_id}: mail pool under pressure, mail subscribers "
+              f"capped at {mail_cap}/day this cycle", flush=True)
     for sub in sorted(subs, key=lambda s: s.last_notified_at or datetime.min):
         # Each subscriber's floor is their own: scarce filters keep the base
         # interval, filters swimming in slots wait longer. Cheap to evaluate
@@ -353,7 +379,7 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
         # recorded as seen and last_notified_at is not stamped: the first
         # cycle after the rolling window frees re-evaluates the live slots
         # and sends whatever is still open — never a queued, stale digest.
-        cap = getattr(cfg, "max_digests_per_subscriber_per_day", 0)
+        cap = push_cap if sub.is_push else mail_cap
         if cap and digests_in_window(conn, sub.id) >= cap:
             record_cap_hold(conn, sub.id)
             continue

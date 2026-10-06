@@ -214,6 +214,20 @@ failing:
   the cap exists to move; the ops summary carries the same line. Deliveries
   are counted in `digest_deliveries` (7-day prune), seeded once at migration
   from `seen_slots` so the cap binds from the first cycle.
+- **Under pressure the mail cap tightens for everyone before anyone is
+  deferred** (`MAIL_POOL_PRESSURE_PCT`, default 80, and
+  `MAIL_CAP_UNDER_PRESSURE`, default 1; `0` turns it off, and so does
+  turning the ordinary cap off). The pool is the
+  free provider chain and there is no paid capacity behind it, so when the
+  combined rolling-24h usage reaches the percentage, every mail subscriber's
+  daily cap drops to the tightened value for as long as the pressure lasts.
+  A thinner day for everyone is the fair degradation; a deferral is one
+  person not told at all. App (push) subscribers have no pool and keep
+  `MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY`: the same cap on both channels is the
+  rule, and the app is what relieves the mail pool, since every subscriber
+  who moves to it frees their mails for those who stay. The poller logs
+  `mail pool under pressure` on each cycle it applies, and `/admin` and the
+  ops summary show the tightened cap while it is on.
 - **The deferred tail rotates.** Batches are filled in list order, so without
   care the same subscribers land at the back of every saturated cycle.
   `flush_digests` sorts by `last_notified_at` (never-notified first), and a
@@ -447,11 +461,54 @@ retirement rule below keeps that from retiring anyone.
 - Any other `400`: our payload. Dropped and logged (`push: … refused payload`);
   retrying cannot help.
 
+### The app's API
+
+The app talks to the web container under `/api/v1` (`app/api.py`); nothing
+else uses it, and the website is unchanged. A device registers its push
+token once (`POST /api/v1/devices`, `{platform, token, language}`) and gets a
+`device_id` and a `secret` shown once; every later call carries
+`Authorization: Bearer <device_id>.<secret>`. The secret is stored hashed
+(`push_devices.secret_hash`). There is no account and no address.
+
+- `GET/PUT/DELETE /api/v1/device`: status with the subscription list; a
+  rotated token or a new language; delete my data (the device row and, by
+  cascade, every subscription it holds).
+- `GET /api/v1/cities`, `GET /api/v1/cities/<slug>`: the catalog the sign-up
+  form shows, public.
+- `GET/POST /api/v1/subscriptions`, `GET/PUT/DELETE
+  /api/v1/subscriptions/<id>`, `POST /api/v1/subscriptions/<id>/renew`: the
+  website's rules over JSON. Same validation against the catalog, same
+  per-city plan cap, same Art. 9 consent for a special-category service,
+  same term, same renewal. No double opt-in: the OS permission prompt is the
+  opt-in, so a push subscription is live at once.
+- A retired device (the relay reported its token dead) gets `410
+  device_retired` on every authenticated call, and the app registers afresh.
+- Rate limits: registration and every write count against
+  `SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR` (per process, like the form); a device
+  holds at most 10 live subscriptions (`api.MAX_SUBSCRIPTIONS_PER_DEVICE`).
+- The still-looking check-in reaches app subscriptions as a push
+  (`push.checkin_*` in the i18n bundles) in the same window as the mail,
+  `RENEWAL_REMINDER_DAYS_BEFORE` days before the term ends; the app answers
+  with `/renew` or `DELETE`. Only a delivered push stamps
+  `reminder_sent_at`, so a relay outage asks again at the next housekeeping
+  run.
+- Every authenticated call restarts the device's 30-day purge clock
+  (`push_devices.last_seen_at`, at most one write per hour).
+
+Mail and push digests of one cycle are sent side by side, in two threads on
+two connections (`digest._send_both`): a slow mail provider does not hold
+the push batch, and neither channel is scheduled ahead of the other. Push is
+not a fast lane.
+
 ### Verifying after deploy
 
 ```
 ssh vps 'cd ~/buergerwecker && docker compose logs --since 1h poller | grep "push:"'
+curl -s -X POST https://buergerwecker.de/api/v1/devices -H 'content-type: application/json' -d '{}'
 ```
+
+The second line answers `400 {"error": "unknown_platform"}` when the API is
+up.
 
 Silence is the healthy state. Retention: a retired device is purged 30 days
 after retirement; a live one once 30 days have passed since both its last
