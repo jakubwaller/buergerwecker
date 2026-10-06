@@ -44,6 +44,13 @@ proxy, a Flask web app for subscriptions, a Python poller that checks the
 cities' booking sites every one to three minutes (depending on the city),
 and a backup container that snapshots the SQLite database daily.
 
+`client/` is the iPhone and Android app: a Capacitor shell around a small
+bundled web app that talks to the same server through its JSON API
+(`/api/v1`) and delivers alerts as push notifications instead of mail. It
+never books either; a tap opens the city's own booking page in the system
+browser. Building, signing and the store checklist are in
+[`client/README.md`](client/README.md).
+
 ## Not affiliated with any city
 
 This is an independent service. We only inform about available appointments.

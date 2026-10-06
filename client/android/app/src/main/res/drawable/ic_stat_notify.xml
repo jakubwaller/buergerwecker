@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The site's alarm-clock glyph as a status-bar silhouette. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="1.9"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"
+        android:pathData="M17.6,13.4a5.6,5.6 0,1 1,-11.2 0a5.6,5.6 0,1 1,11.2 0z M12,10.6v3l2,1.2 M7.4,7.2L5.4,5.4 M16.6,7.2L18.6,5.4" />
+</vector>

@@ -1,0 +1,22 @@
+{
+  "name": "buergerwecker-app",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Bürgerwecker, the store app: free slots at the cities' offices as a push",
+  "type": "module",
+  "scripts": {
+    "build": "node check-www.js",
+    "sync": "npm run build && npx cap sync",
+    "test": "TZ=Europe/Berlin node --test"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/browser": "^8.0.5",
+    "@capacitor/cli": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/ios": "^8.5.2",
+    "@capacitor/preferences": "^8.0.1",
+    "@capacitor/push-notifications": "^8.1.3"
+  }
+}
