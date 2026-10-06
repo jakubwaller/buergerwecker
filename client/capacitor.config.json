@@ -1,0 +1,30 @@
+{
+  "appId": "de.buergerwecker.app",
+  "appName": "Bürgerwecker",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "never",
+    "scheme": "Buergerwecker"
+  },
+  "android": {
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "CapacitorCookies": {
+      "enabled": false
+    },
+    "CapacitorHttp": {
+      "enabled": true
+    },
+    "PushNotifications": {
+      "presentationOptions": []
+    }
+  },
+  "experimental": {
+    "ios": {
+      "spm": {
+        "swiftToolsVersion": "6.0"
+      }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+node_modules/
+ios/App/App/public/
+ios/App/App/capacitor.config.json
+ios/App/App/config.xml
+ios/App/CapApp-SPM/symlinks/
+ios/App/App.xcodeproj/xcuserdata/
+ios/App/App.xcodeproj/project.xcworkspace/xcuserdata/
+ios/App/build/
+ios/DerivedData/
+ios/xcodebuild.log
+ios/export.log
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+android/.gradle/
+android/build/
+android/app/build/
+android/capacitor-cordova-android-plugins/
+android/local.properties
+# Firebase config for FCM: written by CI from the FCM_GOOGLE_SERVICES_JSON
+# secret, never committed.
+android/app/google-services.json
+ios/App/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
