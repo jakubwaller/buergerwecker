@@ -29,5 +29,7 @@
   "push.body_redacted": "{n} new matching appointments. Tap to open the booking page.",
   "push.checkin_title": "Still looking for an appointment?",
   "push.checkin_title_city": "Still looking for an appointment in {city}?",
-  "push.checkin_body": "If you do nothing, the notifications stop on {date}. Tap to keep looking or to stop."
+  "push.checkin_body": "If you do nothing, the notifications stop on {date}. Tap to keep looking or to stop.",
+  "push.verify_title": "Bürgerwecker is ready",
+  "push.verify_body": "Notifications work. You can now watch for appointments."
 }

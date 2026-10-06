@@ -466,8 +466,8 @@ retirement rule below keeps that from retiring anyone.
 The API answers `404 {"error": "not_available"}` to everything, the public
 catalog routes included, while `APP_API_ENABLED` is unset or `0`. It is
 switched on (`APP_API_ENABLED=1`) together with the `APNS_*`/`FCM_*`
-credentials for the TestFlight build: registration has no confirmation step,
-so it stays closed until device verification exists.
+credentials for the TestFlight build. Registration has no confirmation step of
+its own, so a device is verified by push before it may subscribe (below).
 
 The app talks to the web container under `/api/v1` (`app/api.py`); nothing
 else uses it, and the website is unchanged. A device registers its push
@@ -475,6 +475,23 @@ token once (`POST /api/v1/devices`, `{platform, token, language}`) and gets a
 `device_id` and a `secret` shown once; every later call carries
 `Authorization: Bearer <device_id>.<secret>`. The secret is stored hashed
 (`push_devices.secret_hash`). There is no account and no address.
+
+**Verification.** A device starts unverified. Registering (the same token
+again included) makes the server push a one-time code to the token
+(`data.type == "verify"`, `data.code`); the app reads it and posts it to
+`POST /api/v1/device/verify` (`{code}`). Until then only `GET /device`,
+`POST /device/verify` and `POST /device/verify/resend` work; everything else
+answers `403 {"error": "device_unverified"}`. The app shows "waiting for the
+test notification" meanwhile, and may ask for a new push with
+`POST /device/verify/resend` (once a minute; the old code stops working). A code
+is valid 24 hours and stored only as a hash. The web container sends the push
+itself inside the register request when it has the `APNS_*`/`FCM_*`
+credentials; otherwise (or when the relay is down) the poller sweeps once a
+minute and sends it, for up to 24 hours. A device that never verified and
+holds no subscription is purged after a day (housekeeping). An app that shows
+"waiting for the test notification" forever therefore means `APNS_*`/`FCM_*`
+are missing or wrong on the VPS: check `docker compose logs poller | grep
+"push:"`.
 
 - `GET/PUT/DELETE /api/v1/device`: status with the subscription list; a
   rotated token or a new language; delete my data (the device row and, by
@@ -524,8 +541,11 @@ curl -s -X POST https://buergerwecker.de/api/v1/devices -H 'content-type: applic
 The second line answers `404 {"error": "not_available"}` while the gate is
 closed (`APP_API_ENABLED` unset or `0`) and `400 {"error": "unknown_platform"}`
 once it is open.
+A real registration answers `201` with `"verified": false`; a device whose
+push arrived then posts its code and `GET /device` says `"verified": true`.
 
-Silence is the healthy state. Retention: a retired device is purged 30 days
+Silence is the healthy state. Retention: an unverified device without any
+subscription is purged after a day; a retired device is purged 30 days
 after retirement; a live one once 30 days have passed since both its last
 registration and the end of its last subscription (housekeeping, same clock as
 an address).

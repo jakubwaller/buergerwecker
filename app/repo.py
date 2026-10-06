@@ -47,18 +47,98 @@ def register_device(conn: sqlite3.Connection, *, platform: str, token: str,
     """Create or revive the row for a push token. The same token coming back
     (reinstall, a re-run of the app's first launch) is the same device: it
     takes the new secret, loses any retirement and any remembered dead
-    answer (the evidence clock starts over), and keeps its subscriptions."""
+    answer (the evidence clock starts over), and keeps its subscriptions.
+
+    Every registration, the first or a repeat, leaves the device unverified
+    and asks for a fresh verification push: whoever holds the new secret has
+    to prove they are the phone that receives pushes for this token (a
+    reinstall, or a phone that changed hands). Its existing subscriptions
+    keep running, the phone still gets its pushes; only managing them is
+    locked until the new code is posted back."""
     row = conn.execute(
-        "INSERT INTO push_devices (platform, token, secret_hash, language) "
-        "VALUES (?,?,?,?) "
+        "INSERT INTO push_devices (platform, token, secret_hash, language, "
+        "verify_requested_at) VALUES (?,?,?,?,CURRENT_TIMESTAMP) "
         "ON CONFLICT (platform, token) DO UPDATE SET "
         "secret_hash=excluded.secret_hash, language=excluded.language, "
         "retired_at=NULL, retire_reason=NULL, dead_since=NULL, "
-        "last_seen_at=CURRENT_TIMESTAMP "
+        "last_seen_at=CURRENT_TIMESTAMP, verified_at=NULL, "
+        "verify_requested_at=CURRENT_TIMESTAMP, verify_sent_at=NULL, "
+        "verify_code_hash=NULL "
         "RETURNING id",
         (platform, token, secret_hash, language),
     ).fetchone()
     return row[0]
+
+
+# A verification code is valid this long after it was requested.
+VERIFY_WINDOW = "-1 day"
+
+
+def devices_awaiting_verification(conn: sqlite3.Connection, *,
+                                  device_ids: list[int] | None = None
+                                  ) -> list[sqlite3.Row]:
+    """Devices whose verification push was requested in the last 24 hours and
+    has not been delivered yet (`id`, `language`)."""
+    sql = ("SELECT id, language FROM push_devices WHERE verified_at IS NULL "
+           "AND retired_at IS NULL AND verify_sent_at IS NULL "
+           "AND verify_requested_at > datetime('now', ?)")
+    params: list = [VERIFY_WINDOW]
+    if device_ids is not None:
+        if not device_ids:
+            return []
+        sql += f" AND id IN ({','.join('?' * len(device_ids))})"
+        params += list(device_ids)
+    return conn.execute(sql + " ORDER BY id", params).fetchall()
+
+
+def set_verify_code(conn: sqlite3.Connection, device_id: int,
+                    code_hash: str) -> None:
+    conn.execute("UPDATE push_devices SET verify_code_hash=? WHERE id=?",
+                 (code_hash, device_id))
+
+
+def mark_verification_sent(conn: sqlite3.Connection,
+                           device_ids: list[int]) -> None:
+    conn.executemany(
+        "UPDATE push_devices SET verify_sent_at=CURRENT_TIMESTAMP WHERE id=?",
+        [(d,) for d in device_ids])
+
+
+def request_verification(conn: sqlite3.Connection, device_id: int) -> None:
+    """A resend: the old code stops working at once, the next sender pass
+    makes a new one."""
+    conn.execute(
+        "UPDATE push_devices SET verify_requested_at=CURRENT_TIMESTAMP, "
+        "verify_sent_at=NULL, verify_code_hash=NULL WHERE id=?", (device_id,))
+
+
+def resend_wait_seconds(conn: sqlite3.Connection, device_id: int) -> int:
+    """Seconds until a verification resend is allowed again (0 = now): one a
+    minute per device, read from the database so it holds across workers."""
+    row = conn.execute(
+        "SELECT 60 - (strftime('%s','now') - strftime('%s', "
+        "verify_requested_at)) AS wait FROM push_devices WHERE id=?",
+        (device_id,)).fetchone()
+    return max(0, int(row["wait"])) if row and row["wait"] is not None else 0
+
+
+def verify_device(conn: sqlite3.Connection, device_id: int, code: str) -> bool:
+    """True and the device is verified when `code` is the one last pushed to
+    it and was requested within 24 hours; False otherwise. The code is
+    compared by hash, in constant time, and cleared once used."""
+    import hmac
+    from app.api import _hash
+    row = conn.execute(
+        "SELECT verify_code_hash, verify_requested_at > datetime('now', ?) "
+        "AS fresh FROM push_devices WHERE id=?",
+        (VERIFY_WINDOW, device_id)).fetchone()
+    if row is None or not row["verify_code_hash"] or not row["fresh"]:
+        return False
+    if not hmac.compare_digest(row["verify_code_hash"], _hash(code)):
+        return False
+    conn.execute("UPDATE push_devices SET verified_at=CURRENT_TIMESTAMP, "
+                 "verify_code_hash=NULL WHERE id=?", (device_id,))
+    return True
 
 
 def live_devices(conn: sqlite3.Connection,

@@ -57,8 +57,10 @@ def record_snapshots(conn: sqlite3.Connection, plans: list, polled_cities: set,
             incomplete.add(svc)
     now_ts = sql_ts(now or datetime.utcnow())
     rows = []
+    kept: dict[str, int] = {}
     for (city, service), slots in by_service.items():
         if (city, service) in incomplete:
+            kept[city] = kept.get(city, 0) + 1
             continue
         seen: set[tuple[str, str, str]] = set()
         compact: list[tuple[str, str, str]] = []
@@ -70,6 +72,9 @@ def record_snapshots(conn: sqlite3.Connection, plans: list, polled_cities: set,
             compact.append(key)
         rows.append((city, service, json.dumps(compact[:MAX_SNAPSHOT_SLOTS]),
                      len(compact), now_ts))
+    for city, n in sorted(kept.items()):
+        print(f"snapshots: {city}: kept the previous snapshot for {n} "
+              f"service(s) with a failed plan", flush=True)
     if not rows:
         return
     try:

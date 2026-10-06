@@ -1,6 +1,7 @@
 """The app's JSON API (app/api.py): registration and the per-device secret,
 the catalog, and subscriptions under the website's rules. No network, no
-relay: nothing here sends a push."""
+relay: nothing here sends a push (the devices are verified straight in the
+database; see tests/test_verification.py)."""
 import hashlib
 import json
 from datetime import datetime, timedelta
@@ -53,11 +54,19 @@ def _db():
     return connect(os.environ["DB_PATH"])
 
 
-def _register(client, platform="apns", token="tok-1", language="de"):
+def _register(client, platform="apns", token="tok-1", language="de",
+              verified=True):
+    """Register a device. Verified by default (straight in the database, as
+    if the code had been posted back) so the tests of everything else need
+    no push; tests/test_verification.py covers the verification itself."""
     r = client.post("/api/v1/devices", json={"platform": platform,
                                              "token": token, "language": language})
     assert r.status_code == 201, r.data
     body = r.get_json()
+    if verified:
+        conn = _db()
+        conn.execute("UPDATE push_devices SET verified_at=CURRENT_TIMESTAMP "
+                     "WHERE id=?", (body["device_id"],))
     return body["device_id"], body["secret"]
 
 
@@ -85,7 +94,8 @@ def test_register_stores_the_hashed_secret_and_shows_it_once(client):
     r = client.get("/api/v1/device", headers=_auth(dev, secret))
     assert r.status_code == 200
     assert r.get_json() == {"device_id": dev, "platform": "apns", "language": "de",
-                            "created_at": row["created_at"], "subscriptions": []}
+                            "created_at": row["created_at"], "verified": True,
+                            "subscriptions": []}
 
 
 def test_the_same_token_registering_again_is_the_same_device_with_a_new_secret(client):

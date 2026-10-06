@@ -152,6 +152,58 @@ def render_checkin(lang: str, *, sub_id: int, city_name: str | None,
         collapse_id=f"checkin-{sub_id}")
 
 
+def send_verifications(conn: sqlite3.Connection, cfg, *,
+                       device_ids: list[int] | None = None) -> int:
+    """Push a one-time code to every device awaiting verification (or just
+    `device_ids`), and return how many were delivered. The proof a device
+    gives is posting the code back (`POST /device/verify`).
+
+    The code is made here, at send time, so only its hash is ever stored; it
+    travels in the push payload and nowhere else. The idempotency key carries
+    the first 16 hex of that hash: unique per attempt, no plaintext in the
+    database. `verify_sent_at` is stamped only for delivered pushes, so a
+    device whose push could not go out (no credentials, relay down) is picked
+    up again by the poller's sweep, for as long as the request is under 24
+    hours old. Two callers: the web process right after a registration or a
+    resend, and the poller once per cycle."""
+    import secrets
+    from app.api import _hash
+    from app.db import transaction
+    from app.repo import (devices_awaiting_verification, mark_verification_sent,
+                          set_verify_code)
+    rows = devices_awaiting_verification(conn, device_ids=device_ids)
+    if not rows:
+        return 0
+    items: list[OutgoingPush] = []
+    by_key: dict[str, int] = {}
+    with transaction(conn):
+        for row in rows:
+            lang = "en" if row["language"] == "en" else "de"
+            code = secrets.token_urlsafe(16)
+            code_hash = _hash(code)
+            set_verify_code(conn, row["id"], code_hash)
+            key = f"verify|{row['id']}|{code_hash[:16]}"
+            # No subscription is involved, and OutgoingPush has no sub_id
+            # field: the `sub` key of a slots or check-in push is simply
+            # absent from this payload.
+            items.append(OutgoingPush(
+                device_id=row["id"], title=t(lang, "push.verify_title"),
+                body=t(lang, "push.verify_body"), idem_key=key,
+                data={"type": "verify", "code": code},
+                collapse_id=f"verify-{row['id']}"))
+            by_key[key] = row["id"]
+    try:
+        result = send_push_batch(conn, items, cfg)
+    except Exception as exc:
+        print(f"push: verification batch failed: {exc!r}", flush=True)
+        return 0
+    delivered = [by_key[k] for k in result.delivered if k in by_key]
+    if delivered:
+        with transaction(conn):
+            mark_verification_sent(conn, delivered)
+    return len(delivered)
+
+
 # ---------------------------------------------------------------------------
 # Credentials and transport
 
