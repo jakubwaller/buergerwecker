@@ -171,10 +171,10 @@ def send_verifications(conn: sqlite3.Connection, cfg, *,
 
     The code is made here, at send time, so only its hash is ever stored; it
     travels in the push payload and nowhere else. The idempotency key is
-    `verify|<device_id>|<UTC minute>`: `send_push_batch` claims it atomically,
-    so two senders in the same minute (two web workers, or the web request and
-    the poller) cannot both deliver, and nothing but the hash of a code
-    is in the database. The five-a-day count (`verify_push_wait`) is a read
+    `verify|<device_id>|<UTC minute>`, a second guard: the real claim is the
+    conditional write of the code's hash (`set_verify_code`), so only the
+    sender that stored the code sends it, one per device per minute, and
+    nothing but the hash of a code is in the database. The five-a-day count (`verify_push_wait`) is a read
     before the send: under concurrency it is approximate, bounded by the
     one-a-minute claim. `verify_sent_at` is stamped only for delivered pushes, so a
     device whose push could not go out (no credentials, relay down) is picked
@@ -195,24 +195,23 @@ def send_verifications(conn: sqlite3.Connection, cfg, *,
         return 0
     items: list[OutgoingPush] = []
     by_key: dict[str, int] = {}
-    with transaction(conn):
-        for row in rows:
-            lang = "en" if row["language"] == "en" else "de"
-            key = f"verify|{row['id']}|{_verify_minute()}"
-            if conn.execute("SELECT 1 FROM sent_idempotency WHERE idem_key=?",
-                            (key,)).fetchone():
-                continue    # another sender holds this minute's claim
-            code = secrets.token_urlsafe(16)
-            set_verify_code(conn, row["id"], _hash(code))
-            # No subscription is involved, and OutgoingPush has no sub_id
-            # field: the `sub` key of a slots or check-in push is simply
-            # absent from this payload.
-            items.append(OutgoingPush(
-                device_id=row["id"], title=t(lang, "push.verify_title"),
-                body=t(lang, "push.verify_body"), idem_key=key,
-                data={"type": "verify", "code": code},
-                collapse_id=f"verify-{row['id']}"))
-            by_key[key] = row["id"]
+    for row in rows:
+        lang = "en" if row["language"] == "en" else "de"
+        code = secrets.token_urlsafe(16)
+        # Storing the hash is the claim (see set_verify_code): only the sender
+        # that stored the code sends it.
+        if not set_verify_code(conn, row["id"], _hash(code)):
+            continue
+        key = f"verify|{row['id']}|{_verify_minute()}"
+        # No subscription is involved, and OutgoingPush has no sub_id
+        # field: the `sub` key of a slots or check-in push is simply
+        # absent from this payload.
+        items.append(OutgoingPush(
+            device_id=row["id"], title=t(lang, "push.verify_title"),
+            body=t(lang, "push.verify_body"), idem_key=key,
+            data={"type": "verify", "code": code},
+            collapse_id=f"verify-{row['id']}"))
+        by_key[key] = row["id"]
     try:
         result = send_push_batch(conn, items, cfg)
     except Exception as exc:

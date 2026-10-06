@@ -62,11 +62,18 @@ def _age_deliveries(dev, minutes=2):
     _db().execute("UPDATE sent_idempotency SET sent_at=datetime(sent_at, ?), "
                   "idem_key=idem_key || '-' || abs(random()) WHERE idem_key LIKE ?",
                   (f"-{minutes} minutes", f"verify|{dev}|%"))
+    _db().execute("UPDATE push_devices SET verify_code_at="
+                  "datetime(verify_code_at, ?) WHERE id=?", (f"-{minutes} minutes", dev))
 
 
 def _backdate(dev, column, modifier):
     _db().execute(f"UPDATE push_devices SET {column}=datetime('now', ?) WHERE id=?",
                   (modifier, dev))
+    if column == "verify_requested_at":
+        # The stored code is a claim for a minute (set_verify_code): a request
+        # that old has an old code stamp too.
+        _db().execute("UPDATE push_devices SET verify_code_at=datetime('now', ?) "
+                      "WHERE id=? AND verify_code_at IS NOT NULL", (modifier, dev))
 
 
 @pytest.fixture
@@ -343,6 +350,7 @@ def test_the_minute_claim_stops_a_second_sender(client, monkeypatch):
             assert send_verifications(conn, load_config()) == 0
         assert r.calls == []
         conn.execute("DELETE FROM sent_idempotency")
+        _backdate(dev, "verify_code_at", "-61 seconds")
         with patch("app.push._post", Relay()) as r:
             assert send_verifications(conn, load_config()) == 1
         assert len(r.calls) == 1
@@ -479,9 +487,42 @@ def test_a_deferring_relay_leaves_the_device_waiting(client, monkeypatch):
     assert row["verify_sent_at"] is None
     # The claim was released, so the next pass can try again.
     assert conn.execute("SELECT COUNT(*) FROM sent_idempotency").fetchone()[0] == 0
+    # The stored code holds the claim for a minute; then a new one goes out.
+    _backdate(dev, "verify_code_at", "-61 seconds")
     with patch("app.push._post", Relay()) as ok:
         assert send_verifications(conn, load_config()) == 1
     assert len(ok.calls) == 1
+
+
+def test_the_stored_code_is_the_claim_one_sender_per_device_per_minute(client, monkeypatch):
+    dev, _ = _register(client, verified=False)
+    _backdate(dev, "verify_requested_at", "-1 minutes")
+    _enable_push(monkeypatch)
+    conn = _db()
+    with patch("app.push._post", Relay(status=503)):
+        assert send_verifications(conn, load_config()) == 0      # stores a code
+    first = _row(dev)["verify_code_hash"]
+    with patch("app.push._post", Relay()) as second:
+        assert send_verifications(conn, load_config()) == 0      # claim held
+    assert second.calls == [] and _row(dev)["verify_code_hash"] == first
+    _db().execute("UPDATE push_devices SET verify_code_at=datetime('now','-61 seconds') "
+                  "WHERE id=?", (dev,))
+    with patch("app.push._post", Relay()) as third:
+        assert send_verifications(conn, load_config()) == 1
+    assert len(third.calls) == 1 and _row(dev)["verify_code_hash"] != first
+
+
+def test_a_resend_clears_the_code_stamp_and_sends_at_once(relay):
+    client, r = relay
+    dev, secret = _register(client, verified=False)
+    _age_deliveries(dev)
+    assert client.post("/api/v1/device/verify/resend",
+                       headers=_auth(dev, secret)).status_code == 202
+    assert len(r.calls) == 2
+    # Cleared by the request, stored again by the send that followed.
+    from app.repo import request_verification
+    request_verification(_db(), dev)
+    assert _row(dev)["verify_code_at"] is None
 
 
 def test_a_request_older_than_a_day_is_no_longer_swept(client, monkeypatch):
@@ -570,6 +611,7 @@ def test_the_sweep_gives_the_web_request_its_turn_first(client, monkeypatch):
         assert send_verifications(conn, load_config()) == 1      # sweep: due now
     assert len(r.calls) == 1
     other, _ = _register(client, token="t-2", verified=False)    # requested just now
+    _backdate(other, "verify_code_at", "-61 seconds")            # no credentials: never sent
     with patch("app.push._post", Relay()) as r2:
         assert send_verifications(conn, load_config(), device_ids=[other]) == 1
     assert len(r2.calls) == 1                                    # in-request: no wait

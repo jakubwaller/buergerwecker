@@ -139,10 +139,19 @@ def devices_awaiting_verification(conn: sqlite3.Connection, *,
 
 
 def set_verify_code(conn: sqlite3.Connection, device_id: int,
-                    code_hash: str) -> None:
-    conn.execute("UPDATE push_devices SET verify_code_hash=?, "
-                 "verify_code_at=CURRENT_TIMESTAMP WHERE id=?",
-                 (code_hash, device_id))
+                    code_hash: str) -> bool:
+    """Store the hash of a freshly made code, and say whether this sender
+    owns it. The write is the claim: it succeeds only while the push is
+    undelivered and the stored code is at least 60 seconds old (or absent), so
+    of any number of senders (workers, the web request and the poller) exactly
+    one per device per minute stores a code and sends it. False means another
+    sender holds the current code, or the push was delivered meanwhile: skip
+    the device and touch nothing."""
+    return conn.execute(
+        "UPDATE push_devices SET verify_code_hash=?, "
+        "verify_code_at=CURRENT_TIMESTAMP WHERE id=? AND verify_sent_at IS NULL "
+        "AND (verify_code_at IS NULL OR verify_code_at <= datetime('now','-60 seconds'))",
+        (code_hash, device_id)).rowcount == 1
 
 
 def mark_verification_sent(conn: sqlite3.Connection,
@@ -158,12 +167,15 @@ def request_verification(conn: sqlite3.Connection, device_id: int, *,
     the poller's sweep grace always covers the web request's own send) and
     `verify_sent_at` clears, whatever the sender's rules then decide. A
     resend or a token change also drops the old code, so it stops working at
-    once; a re-registration keeps it (`keep_code`), it was delivered to the
-    same token and stays valid until a new one replaces it."""
+    once, and its stamp goes with it so the next send is not held back; a
+    re-registration keeps both (`keep_code`): the code was delivered to the
+    same token and stays valid until a new one replaces it, and the next send
+    waits until it is a minute old, as the one-a-minute rule wants."""
     conn.execute(
         "UPDATE push_devices SET verify_requested_at=CURRENT_TIMESTAMP, "
         "verify_sent_at=NULL, "
-        f"verify_code_hash={'verify_code_hash' if keep_code else 'NULL'} "
+        f"verify_code_hash={'verify_code_hash' if keep_code else 'NULL'}, "
+        f"verify_code_at={'verify_code_at' if keep_code else 'NULL'} "
         "WHERE id=?", (device_id,))
 
 
