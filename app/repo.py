@@ -58,15 +58,15 @@ def register_device(conn: sqlite3.Connection, *, platform: str, token: str,
     was never verified the secret is simply rotated: the old one is
     worthless.
 
-    A repeat registration also asks for a fresh verification push, but only
-    when the last request is NULL or over 60 seconds old and the device is
-    under MAX_VERIFY_PUSHES_PER_DAY; otherwise the pending request stands
-    untouched, the new secret is still stored and nothing new is sent (the
-    app can press Resend after the minute). The same token can therefore
-    trigger at most one verification push a minute, and five a day, whoever
+    A repeat registration never refuses: it stamps a new verification request
+    and the sender's rules decide whether a push goes out now, within a
+    minute by the poller's sweep, or later. Those rules (see
+    `verify_push_wait`) are one delivery a minute and MAX_VERIFY_PUSHES_PER_DAY
+    a day per device, counted from actual deliveries in the database, so the
+    same token can trigger at most one push a minute and five a day, whoever
     is asking: knowing a phone's token must not be enough to make it buzz on
-    demand, nor to lock the real app out. Both limits are counted in the
-    database, not per worker."""
+    demand, nor to lock the real app out. A code already delivered stays
+    valid until a new one replaces it."""
     existing = conn.execute(
         "SELECT id, verified_at FROM push_devices WHERE platform=? AND token=?",
         (platform, token)).fetchone()
@@ -86,21 +86,8 @@ def register_device(conn: sqlite3.Connection, *, platform: str, token: str,
             "language=?, retired_at=NULL, retire_reason=NULL, dead_since=NULL, "
             "last_seen_at=CURRENT_TIMESTAMP WHERE id=?",
             (secret_hash, language, existing["id"]))
-    request_if_allowed(conn, existing["id"])
+    request_verification(conn, existing["id"], keep_code=True)
     return existing["id"]
-
-
-def request_if_allowed(conn: sqlite3.Connection, device_id: int) -> bool:
-    """Ask for a verification push unless one was requested in the last 60
-    seconds or the device is at MAX_VERIFY_PUSHES_PER_DAY."""
-    row = conn.execute(
-        "SELECT verify_requested_at IS NULL OR verify_requested_at < "
-        "datetime('now','-60 seconds') AS due FROM push_devices WHERE id=?",
-        (device_id,)).fetchone()
-    if row is None or not row["due"] or verify_push_wait(conn, device_id) > 0:
-        return False
-    request_verification(conn, device_id)
-    return True
 
 
 # A verification code is valid this long after it was requested.
@@ -110,20 +97,24 @@ MAX_VERIFY_PUSHES_PER_DAY = 5
 
 
 def verify_push_wait(conn: sqlite3.Connection, device_id: int) -> int:
-    """Seconds until the device may be sent another verification push under
-    MAX_VERIFY_PUSHES_PER_DAY (0 = now). Counted from the delivered
-    idempotency rows `verify|<device_id>|...`, so it holds across workers and
-    the poller."""
-    rows = conn.execute(
+    """Seconds until the device may be sent another verification push (0 =
+    now): at least 60 s after the last delivery and at most
+    MAX_VERIFY_PUSHES_PER_DAY per rolling day. Both are counted from the
+    delivered idempotency rows `verify|<device_id>|...`, so they hold across
+    workers and the poller."""
+    ages = [r["age"] for r in conn.execute(
         "SELECT CAST(strftime('%s','now') - strftime('%s', sent_at) AS INTEGER) "
         "AS age FROM sent_idempotency WHERE idem_key LIKE ? "
         "AND provider != 'pending' AND sent_at > datetime('now','-1 day') "
-        "ORDER BY sent_at", (f"verify|{int(device_id)}|%",)).fetchall()
-    if len(rows) < MAX_VERIFY_PUSHES_PER_DAY:
-        return 0
-    # The window frees when the push that makes the count reach the cap ages out.
-    oldest = rows[len(rows) - MAX_VERIFY_PUSHES_PER_DAY]["age"]
-    return max(1, 86400 - oldest)
+        "ORDER BY sent_at DESC", (f"verify|{int(device_id)}|%",)).fetchall()]
+    wait = 0
+    if ages:
+        wait = max(wait, 60 - ages[0])
+    if len(ages) >= MAX_VERIFY_PUSHES_PER_DAY:
+        # The window frees when the push that makes the count reach the cap
+        # ages out.
+        wait = max(wait, 1, 86400 - ages[MAX_VERIFY_PUSHES_PER_DAY - 1])
+    return max(0, wait)
 
 
 def devices_awaiting_verification(conn: sqlite3.Connection, *,
@@ -162,22 +153,19 @@ def mark_verification_sent(conn: sqlite3.Connection,
         [(d,) for d in device_ids])
 
 
-def request_verification(conn: sqlite3.Connection, device_id: int) -> None:
-    """A resend: the old code stops working at once, the next sender pass
-    makes a new one."""
+def request_verification(conn: sqlite3.Connection, device_id: int, *,
+                         keep_code: bool = False) -> None:
+    """Stamp a new verification request: `verify_requested_at` restarts (so
+    the poller's sweep grace always covers the web request's own send) and
+    `verify_sent_at` clears, whatever the sender's rules then decide. A
+    resend or a token change also drops the old code, so it stops working at
+    once; a re-registration keeps it (`keep_code`), it was delivered to the
+    same token and stays valid until a new one replaces it."""
     conn.execute(
         "UPDATE push_devices SET verify_requested_at=CURRENT_TIMESTAMP, "
-        "verify_sent_at=NULL, verify_code_hash=NULL WHERE id=?", (device_id,))
-
-
-def resend_wait_seconds(conn: sqlite3.Connection, device_id: int) -> int:
-    """Seconds until a verification resend is allowed again (0 = now): one a
-    minute per device, read from the database so it holds across workers."""
-    row = conn.execute(
-        "SELECT 60 - (strftime('%s','now') - strftime('%s', "
-        "verify_requested_at)) AS wait FROM push_devices WHERE id=?",
-        (device_id,)).fetchone()
-    return max(0, int(row["wait"])) if row and row["wait"] is not None else 0
+        "verify_sent_at=NULL, "
+        f"verify_code_hash={'verify_code_hash' if keep_code else 'NULL'} "
+        "WHERE id=?", (device_id,))
 
 
 def pending_secret_fresh(conn: sqlite3.Connection, device_id: int) -> bool:
@@ -190,11 +178,15 @@ def pending_secret_fresh(conn: sqlite3.Connection, device_id: int) -> bool:
 
 
 def verify_device(conn: sqlite3.Connection, device_id: int, code: str, *,
-                  pending: bool = False) -> bool:
+                  pending_hash: str | None = None) -> bool:
     """True when `code` is the one last pushed to the device and was
     requested within 24 hours; False otherwise. The code is compared by hash,
     in constant time, and cleared once used. A caller holding the pending
-    credential promotes it (it becomes the secret, the old one dies); a
+    credential passes the hash it authenticated with as `pending_hash`, and
+    exactly that secret is promoted (it becomes the secret, the old one dies);
+    if a re-registration replaced it in the meantime nothing is promoted and
+    the answer is False, so the real phone's code never promotes a stranger's
+    secret. A
     caller holding the main credential of a never-verified row just verifies
     it. A caller on the old, already verified credential never gets here
     (the route answers 200 first) and so cannot verify for the new install."""
@@ -208,13 +200,14 @@ def verify_device(conn: sqlite3.Connection, device_id: int, code: str, *,
         return False
     if not hmac.compare_digest(row["verify_code_hash"], _hash(code)):
         return False
-    if pending:
-        if not row["pending_secret_hash"]:
-            return False
-        conn.execute(
+    if pending_hash is not None:
+        cur = conn.execute(
             "UPDATE push_devices SET secret_hash=pending_secret_hash, "
             "pending_secret_hash=NULL, verified_at=CURRENT_TIMESTAMP, "
-            "verify_code_hash=NULL WHERE id=?", (device_id,))
+            "verify_code_hash=NULL WHERE id=? AND pending_secret_hash=?",
+            (device_id, pending_hash))
+        if cur.rowcount == 0:
+            return False
     else:
         conn.execute("UPDATE push_devices SET verified_at=CURRENT_TIMESTAMP, "
                      "verify_code_hash=NULL WHERE id=?", (device_id,))
@@ -302,7 +295,7 @@ def update_device(conn: sqlite3.Connection, device_id: int, *,
         conn.execute(
             "UPDATE push_devices SET verified_at=NULL, pending_secret_hash=NULL, "
             "verify_code_hash=NULL, verify_sent_at=NULL WHERE id=?", (device_id,))
-        request_if_allowed(conn, device_id)
+        request_verification(conn, device_id)
     return True
 
 

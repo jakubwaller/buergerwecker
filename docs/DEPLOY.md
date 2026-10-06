@@ -489,13 +489,18 @@ itself inside the register request when it has the `APNS_*`/`FCM_*`
 credentials; otherwise (or when the relay is down) the poller sweeps once a
 minute and sends it, for up to 24 hours. Registering a verified token again
 never breaks the install that works: the old secret keeps full access, the new
-one is pending (the three unverified routes only, usable 24 hours) and replaces
-the old secret the moment its holder posts the code. Changing the push token
+one is pending (`GET /device` and the two verify routes only, usable 24 hours)
+and replaces the old secret the moment its holder posts the code (exactly the
+secret that authenticated that call). A device's main secret may always call
+`GET/PUT/DELETE /device` and the verify routes, verified or not, so a device
+waiting for its code can still report a rotated token or delete its data. Changing the push token
 (`PUT /device`) un-verifies the device the same way (`"verified": false`, the
 code goes to the new token) and pauses its subscriptions, which neither poll
 nor count toward a city's plan cap until it verifies again. The same token can trigger at most one
-verification push a minute (register or resend) and five a day, counted in the
-database. `GET /device` shows an unverified device no subscriptions. A device that never verified and
+verification push a minute and five a day, both measured from delivered pushes
+in the database; register and token change never refuse, they stamp the
+request and the sender decides when it goes out (resend answers 429 with
+`retry_after`). The operator dashboard counts only subscriptions that run. `GET /device` shows an unverified device no subscriptions. A device that never verified and
 holds no subscription is purged after a day (housekeeping). An app that shows
 "waiting for the test notification" forever therefore means `APNS_*`/`FCM_*`
 are missing or wrong on the VPS: check `docker compose logs poller | grep
