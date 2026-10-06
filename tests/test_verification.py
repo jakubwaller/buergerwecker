@@ -189,17 +189,69 @@ def test_registering_the_same_token_again_locks_management_until_verified(relay)
     dev2, new_secret = _register(client, verified=False)
     assert dev2 == dev
     auth = _auth(dev, new_secret)
+    old = _auth(dev, secret)
     seen = client.get("/api/v1/device", headers=auth).get_json()
     assert seen["verified"] is False
     assert seen["subscriptions"] == []                 # not for an unverified holder
     assert len(active_subscriptions(_db())) == 1       # still running
+    # The old install keeps full access; the new secret is locked.
+    assert len(client.get("/api/v1/device", headers=old).get_json()["subscriptions"]) == 1
+    assert _subscribe(client, old).status_code == 201
+    assert _subscribe(client, auth).status_code == 403
     put = client.put(f"/api/v1/subscriptions/{sub}", json={}, headers=auth)
     assert put.status_code == 403 and put.get_json()["error"] == "device_unverified"
     assert len(r.calls) == 2
-    assert _post_code(client, auth, r.codes()[1]).status_code == 200
+    code = r.codes()[1]
+    # The old install cannot verify on behalf of the new one.
+    assert _post_code(client, old, code).status_code == 200
+    assert _row(dev)["pending_secret_hash"] is not None
+    assert client.get("/api/v1/device", headers=auth).get_json()["verified"] is False
+    assert _post_code(client, auth, code).status_code == 200
     assert client.get(f"/api/v1/subscriptions/{sub}", headers=auth).status_code == 200
     back = client.get("/api/v1/device", headers=auth).get_json()
-    assert [x["id"] for x in back["subscriptions"]] == [sub]
+    assert sub in [x["id"] for x in back["subscriptions"]]
+    assert client.get("/api/v1/device", headers=old).status_code == 401   # promoted
+
+
+def test_a_pending_secret_older_than_a_day_is_unauthorized(relay):
+    client, r = relay
+    dev, secret = _register(client, verified=True)
+    _, new = _register(client, verified=False)
+    assert client.get("/api/v1/device", headers=_auth(dev, new)).status_code == 200
+    _backdate(dev, "verify_requested_at", "-25 hours")
+    assert client.get("/api/v1/device", headers=_auth(dev, new)).status_code == 401
+    assert client.get("/api/v1/device", headers=_auth(dev, secret)).status_code == 200
+
+
+def test_a_token_change_unverifies_and_pauses_subscriptions_until_the_new_token_verifies(relay):
+    client, r = relay
+    dev, secret = _register(client)
+    auth = _auth(dev, secret)
+    sub = _subscribe(client, auth).get_json()["id"]
+    assert [s.id for s in active_subscriptions(_db())] == [sub]
+    assert client.put("/api/v1/device", json={"language": "en"},
+                      headers=auth).get_json()["verified"] is True   # language only
+    put = client.put("/api/v1/device", json={"token": "tok-new"}, headers=auth)
+    assert put.status_code == 200 and put.get_json()["verified"] is False
+    assert put.get_json()["subscriptions"] == []
+    assert active_subscriptions(_db()) == []           # paused: not polled, not counted
+    assert len(r.calls) == 2 and r.calls[1]["url"].endswith("/tok-new")
+    assert client.get("/api/v1/subscriptions", headers=auth).status_code == 403
+    assert _post_code(client, auth, r.codes()[1]).status_code == 200
+    assert [s.id for s in active_subscriptions(_db())] == [sub]
+
+
+def test_swapping_the_token_for_junk_does_not_mint_verified_devices(relay):
+    client, r = relay
+    dev, secret = _register(client, token="T")
+    auth = _auth(dev, secret)
+    _subscribe(client, auth)
+    client.put("/api/v1/device", json={"token": "junk"}, headers=auth)
+    assert active_subscriptions(_db()) == []
+    dev2, secret2 = _register(client, token="T", verified=False)
+    assert dev2 != dev
+    assert _subscribe(client, _auth(dev2, secret2)).status_code == 403
+    assert active_subscriptions(_db()) == []           # nothing counts toward a cap
 
 
 def test_registering_again_inside_a_minute_sends_nothing_but_locks_and_rotates(relay):
@@ -210,6 +262,7 @@ def test_registering_again_inside_a_minute_sends_nothing_but_locks_and_rotates(r
     _, new_secret = _register(client, verified=False)
     after = _row(dev)
     assert len(r.calls) == 1 and new_secret != secret
+    assert after["secret_hash"] != before["secret_hash"]   # never verified: rotated
     assert after["verify_requested_at"] == before["verify_requested_at"]
     assert after["verify_code_hash"] == before["verify_code_hash"]
     assert after["verify_sent_at"] == before["verify_sent_at"]
@@ -249,6 +302,7 @@ def test_without_credentials_nothing_is_sent_and_the_poller_sweep_delivers(clien
     with patch("app.push._post", Relay()) as none:
         dev, secret = _register(client, verified=False)
     assert none.calls == [] and _row(dev)["verify_sent_at"] is None
+    _backdate(dev, "verify_requested_at", "-1 minutes")
     _enable_push(monkeypatch)
     cfg = load_config()
     conn = _db()
@@ -263,6 +317,7 @@ def test_without_credentials_nothing_is_sent_and_the_poller_sweep_delivers(clien
 
 def test_a_deferring_relay_leaves_the_device_waiting(client, monkeypatch):
     dev, _ = _register(client, verified=False)
+    _backdate(dev, "verify_requested_at", "-1 minutes")
     _enable_push(monkeypatch)
     conn = _db()
     with patch("app.push._post", Relay(status=503)):
@@ -304,11 +359,15 @@ def test_housekeeping_purges_unverified_devices_without_subscriptions_after_a_da
 
     def add(token, *, verified, age):
         dev, _ = _register(client, token=token, verified=verified)
-        conn.execute("UPDATE push_devices SET created_at=datetime('now', ?) "
-                     "WHERE id=?", (age, dev))
+        conn.execute("UPDATE push_devices SET created_at=datetime('now', ?), "
+                     "verify_requested_at=datetime('now', ?) WHERE id=?",
+                     (age, age, dev))
         return dev
 
     stale = add("stale", verified=False, age="-2 days")
+    in_progress = add("progress", verified=False, age="-2 days")
+    conn.execute("UPDATE push_devices SET verify_requested_at=datetime('now') "
+                 "WHERE id=?", (in_progress,))
     young = add("young", verified=False, age="-1 hours")
     verified = add("verified", verified=True, age="-2 days")
     held = add("held", verified=False, age="-2 days")
@@ -320,7 +379,7 @@ def test_housekeeping_purges_unverified_devices_without_subscriptions_after_a_da
     soft_delete(conn, sub)
     _prune_push_devices(conn)
     left = {r[0] for r in conn.execute("SELECT id FROM push_devices")}
-    assert left == {young, verified, held} and stale not in left
+    assert left == {young, verified, held, in_progress} and stale not in left
 
 
 def test_a_failed_plan_is_logged_once_per_city(tmp_path, capsys):
@@ -345,3 +404,19 @@ def test_the_poller_sweep_swallows_a_failure(capsys):
     with patch("app.push.send_verifications", side_effect=RuntimeError("boom")):
         _sweep_verifications(None, None)
     assert "verification sweep failed" in capsys.readouterr().out
+
+
+def test_the_sweep_gives_the_web_request_its_turn_first(client, monkeypatch):
+    dev, _ = _register(client, verified=False)
+    _backdate(dev, "verify_requested_at", "-5 seconds")
+    _enable_push(monkeypatch)
+    conn = _db()
+    with patch("app.push._post", Relay()) as r:
+        assert send_verifications(conn, load_config()) == 0      # sweep: too fresh
+        _backdate(dev, "verify_requested_at", "-1 minutes")
+        assert send_verifications(conn, load_config()) == 1      # sweep: due now
+    assert len(r.calls) == 1
+    other, _ = _register(client, token="t-2", verified=False)    # requested just now
+    with patch("app.push._post", Relay()) as r2:
+        assert send_verifications(conn, load_config(), device_ids=[other]) == 1
+    assert len(r2.calls) == 1                                    # in-request: no wait

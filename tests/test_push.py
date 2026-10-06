@@ -101,8 +101,12 @@ def _filter(types=("svc-A",)):
 
 
 def _device(db, platform="apns", token="tok-1", language="de"):
-    return register_device(db, platform=platform, token=token,
-                           secret_hash="h" * 64, language=language)
+    dev = register_device(db, platform=platform, token=token,
+                          secret_hash="h" * 64, language=language)
+    # Verified: an unverified device's subscriptions do not run.
+    db.execute("UPDATE push_devices SET verified_at=CURRENT_TIMESTAMP WHERE id=?",
+               (dev,))
+    return dev
 
 
 def _push_sub(db, device_id, city="leipzig", **kw):
@@ -891,8 +895,9 @@ def test_register_device_revives_the_same_token_and_keeps_its_subscriptions(db):
                             secret_hash="n" * 64, language="en")
     assert again == dev
     row = db.execute("SELECT * FROM push_devices WHERE id=?", (dev,)).fetchone()
-    assert row["retired_at"] is None and row["secret_hash"] == "n" * 64
-    assert row["language"] == "en"
+    # The device was verified, so the new secret is only pending.
+    assert row["retired_at"] is None and row["secret_hash"] == "h" * 64
+    assert row["pending_secret_hash"] == "n" * 64
     assert row["dead_since"] is None   # the evidence clock starts over
     # The retirement soft-deleted the subscription; a revived device starts
     # clean and the app re-subscribes. The row itself is still there for the

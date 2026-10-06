@@ -487,7 +487,13 @@ test notification" meanwhile, and may ask for a new push with
 is valid 24 hours and stored only as a hash. The web container sends the push
 itself inside the register request when it has the `APNS_*`/`FCM_*`
 credentials; otherwise (or when the relay is down) the poller sweeps once a
-minute and sends it, for up to 24 hours. The same token can trigger at most one
+minute and sends it, for up to 24 hours. Registering a verified token again
+never breaks the install that works: the old secret keeps full access, the new
+one is pending (the three unverified routes only, usable 24 hours) and replaces
+the old secret the moment its holder posts the code. Changing the push token
+(`PUT /device`) un-verifies the device the same way (`"verified": false`, the
+code goes to the new token) and pauses its subscriptions, which neither poll
+nor count toward a city's plan cap until it verifies again. The same token can trigger at most one
 verification push a minute (register or resend) and five a day, counted in the
 database. `GET /device` shows an unverified device no subscriptions. A device that never verified and
 holds no subscription is purged after a day (housekeeping). An app that shows

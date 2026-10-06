@@ -98,15 +98,16 @@ def test_register_stores_the_hashed_secret_and_shows_it_once(client):
                             "subscriptions": []}
 
 
-def test_the_same_token_registering_again_is_the_same_device_with_a_new_secret(client):
+def test_the_same_token_registering_again_is_the_same_device_with_a_pending_secret(client):
     dev, old = _register(client)
     assert _subscribe(client, _auth(dev, old)).status_code == 201
     dev2, new = _register(client)
     assert dev2 == dev and new != old
-    assert client.get("/api/v1/device", headers=_auth(dev, old)).status_code == 401
+    # The install that works is not broken; the new one waits for its code.
+    r = client.get("/api/v1/device", headers=_auth(dev, old))
+    assert r.status_code == 200 and len(r.get_json()["subscriptions"]) == 1
     r = client.get("/api/v1/device", headers=_auth(dev, new))
-    assert r.status_code == 200
-    assert len(r.get_json()["subscriptions"]) == 1   # kept across the re-registration
+    assert r.status_code == 200 and r.get_json()["verified"] is False
 
 
 @pytest.mark.parametrize("body, error", [
@@ -147,10 +148,11 @@ def test_a_retired_device_is_told_to_register_afresh(client):
     retire_device(_db(), dev, "Unregistered")
     r = client.get("/api/v1/subscriptions", headers=_auth(dev, secret))
     assert r.status_code == 410 and r.get_json()["error"] == "device_retired"
-    # Registering again revives it, and the new secret works.
+    # Registering again revives it; the verified old secret works again.
     dev2, new = _register(client)
     assert dev2 == dev
-    assert client.get("/api/v1/subscriptions", headers=_auth(dev, new)).status_code == 200
+    assert client.get("/api/v1/subscriptions", headers=_auth(dev, secret)).status_code == 200
+    assert client.get("/api/v1/device", headers=_auth(dev, new)).status_code == 200
 
 
 def test_every_authenticated_call_restarts_the_purge_clock(client):
@@ -184,16 +186,17 @@ def test_device_update_rotates_the_token_and_changes_the_language(client):
     dev, secret = _register(client)
     db = _db()
     db.execute("UPDATE push_devices SET dead_since=CURRENT_TIMESTAMP WHERE id=?", (dev,))
-    r = client.put("/api/v1/device", json={"token": "tok-2", "language": "en"},
-                   headers=_auth(dev, secret))
-    assert r.status_code == 200 and r.get_json()["language"] == "en"
-    row = db.execute("SELECT * FROM push_devices WHERE id=?", (dev,)).fetchone()
-    assert row["token"] == "tok-2" and row["language"] == "en"
-    assert row["dead_since"] is None     # a new token: the evidence clock starts over
     assert client.put("/api/v1/device", json={"language": "fr"},
                       headers=_auth(dev, secret)).status_code == 400
     assert client.put("/api/v1/device", json={"token": ""},
                       headers=_auth(dev, secret)).status_code == 400
+    r = client.put("/api/v1/device", json={"token": "tok-2", "language": "en"},
+                   headers=_auth(dev, secret))
+    assert r.status_code == 200 and r.get_json()["language"] == "en"
+    assert r.get_json()["verified"] is False       # a new token must verify again
+    row = db.execute("SELECT * FROM push_devices WHERE id=?", (dev,)).fetchone()
+    assert row["token"] == "tok-2" and row["language"] == "en"
+    assert row["dead_since"] is None     # a new token: the evidence clock starts over
 
 
 def test_device_update_refuses_a_token_another_row_holds(client):

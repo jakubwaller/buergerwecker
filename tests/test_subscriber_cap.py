@@ -260,6 +260,8 @@ def _push_sub(db):
     from app.repo import insert_push_subscription, register_device
     dev = register_device(db, platform="apns", token="tok-1", secret_hash="h" * 64,
                           language="de")
+    db.execute("UPDATE push_devices SET verified_at=CURRENT_TIMESTAMP WHERE id=?",
+               (dev,))
     return insert_push_subscription(db, device_id=dev, city="leipzig", language="de",
                                     filter_=_f(), ttl_days=90)
 

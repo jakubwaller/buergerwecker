@@ -87,7 +87,10 @@ CREATE TABLE IF NOT EXISTS push_devices (
   verified_at          TIMESTAMP,
   verify_code_hash     TEXT,
   verify_requested_at  TIMESTAMP,
-  verify_sent_at       TIMESTAMP
+  verify_sent_at       TIMESTAMP,
+  -- Secret of a re-registration of a verified token, usable only until the
+  -- new install verifies (see repo.register_device).
+  pending_secret_hash  TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_push_devices_token
   ON push_devices(platform, token);
@@ -362,6 +365,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
         "verify_code_hash": "TEXT",
         "verify_requested_at": "TIMESTAMP",
         "verify_sent_at": "TIMESTAMP",
+        "pending_secret_hash": "TEXT",
     })
     # best_time: the earliest time told under a day key. Existing day-key rows
     # get NULL, which has_seen_slot reads as "told at an unknown time" and

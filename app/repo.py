@@ -44,45 +44,63 @@ def insert_push_subscription(conn: sqlite3.Connection, *, device_id: int,
 
 def register_device(conn: sqlite3.Connection, *, platform: str, token: str,
                     secret_hash: str, language: str) -> int:
-    """Create or revive the row for a push token. The same token coming back
-    (reinstall, a re-run of the app's first launch) is the same device: it
-    takes the new secret, loses any retirement and any remembered dead
-    answer (the evidence clock starts over), and keeps its subscriptions.
+    """Create or revive the row for a push token, keeping its subscriptions.
+    It loses any retirement and any remembered dead answer (the evidence
+    clock starts over).
 
-    Every registration, the first or a repeat, leaves the device unverified:
-    whoever holds the new secret has to prove they are the phone that
-    receives pushes for this token (a reinstall, or a phone that changed
-    hands). Its existing subscriptions keep running, the phone still gets its
-    pushes; only managing them is locked until the new code is posted back.
+    The same token registering again (reinstall, a phone that changed hands)
+    never breaks the install that already works. On a verified row the new
+    secret is stored as `pending_secret_hash` and the old secret keeps full
+    access (secret, verification, language untouched); the new one has only
+    the three unverified routes, and when its holder posts the code pushed to
+    the token it replaces the old secret, which dies at that moment. Whoever
+    holds the new secret must prove possession of the phone. On a row that
+    was never verified the secret is simply rotated: the old one is
+    worthless.
 
     A repeat registration also asks for a fresh verification push, but only
     when the last request is NULL or over 60 seconds old and the device is
     under MAX_VERIFY_PUSHES_PER_DAY; otherwise the pending request stands
-    untouched and nothing new is sent (the app can press Resend after the
-    minute). The same token can therefore trigger at most one verification
-    push a minute, and five a day, whoever is asking: knowing a phone's token
-    must not be enough to make it buzz on demand. Both limits are counted in
-    the database, not per worker."""
+    untouched, the new secret is still stored and nothing new is sent (the
+    app can press Resend after the minute). The same token can therefore
+    trigger at most one verification push a minute, and five a day, whoever
+    is asking: knowing a phone's token must not be enough to make it buzz on
+    demand, nor to lock the real app out. Both limits are counted in the
+    database, not per worker."""
     existing = conn.execute(
-        "SELECT id, verify_requested_at IS NULL OR verify_requested_at < "
-        "datetime('now','-60 seconds') AS due FROM push_devices "
-        "WHERE platform=? AND token=?", (platform, token)).fetchone()
-    reset = (existing is None or (
-        existing["due"] and verify_push_wait(conn, existing["id"]) == 0))
-    request_cols = ("verify_requested_at=CURRENT_TIMESTAMP, verify_sent_at=NULL, "
-                    "verify_code_hash=NULL, " if reset else "")
+        "SELECT id, verified_at FROM push_devices WHERE platform=? AND token=?",
+        (platform, token)).fetchone()
+    if existing is None:
+        return conn.execute(
+            "INSERT INTO push_devices (platform, token, secret_hash, language, "
+            "verify_requested_at) VALUES (?,?,?,?,CURRENT_TIMESTAMP) "
+            "RETURNING id", (platform, token, secret_hash, language)).fetchone()[0]
+    if existing["verified_at"] is not None:
+        conn.execute(
+            "UPDATE push_devices SET pending_secret_hash=?, retired_at=NULL, "
+            "retire_reason=NULL, dead_since=NULL WHERE id=?",
+            (secret_hash, existing["id"]))
+    else:
+        conn.execute(
+            "UPDATE push_devices SET secret_hash=?, pending_secret_hash=NULL, "
+            "language=?, retired_at=NULL, retire_reason=NULL, dead_since=NULL, "
+            "last_seen_at=CURRENT_TIMESTAMP WHERE id=?",
+            (secret_hash, language, existing["id"]))
+    request_if_allowed(conn, existing["id"])
+    return existing["id"]
+
+
+def request_if_allowed(conn: sqlite3.Connection, device_id: int) -> bool:
+    """Ask for a verification push unless one was requested in the last 60
+    seconds or the device is at MAX_VERIFY_PUSHES_PER_DAY."""
     row = conn.execute(
-        "INSERT INTO push_devices (platform, token, secret_hash, language, "
-        "verify_requested_at) VALUES (?,?,?,?,CURRENT_TIMESTAMP) "
-        "ON CONFLICT (platform, token) DO UPDATE SET "
-        "secret_hash=excluded.secret_hash, language=excluded.language, "
-        "retired_at=NULL, retire_reason=NULL, dead_since=NULL, "
-        f"{request_cols}"
-        "last_seen_at=CURRENT_TIMESTAMP, verified_at=NULL "
-        "RETURNING id",
-        (platform, token, secret_hash, language),
-    ).fetchone()
-    return row[0]
+        "SELECT verify_requested_at IS NULL OR verify_requested_at < "
+        "datetime('now','-60 seconds') AS due FROM push_devices WHERE id=?",
+        (device_id,)).fetchone()
+    if row is None or not row["due"] or verify_push_wait(conn, device_id) > 0:
+        return False
+    request_verification(conn, device_id)
+    return True
 
 
 # A verification code is valid this long after it was requested.
@@ -109,14 +127,20 @@ def verify_push_wait(conn: sqlite3.Connection, device_id: int) -> int:
 
 
 def devices_awaiting_verification(conn: sqlite3.Connection, *,
-                                  device_ids: list[int] | None = None
+                                  device_ids: list[int] | None = None,
+                                  min_age_seconds: int = 0
                                   ) -> list[sqlite3.Row]:
-    """Devices whose verification push was requested in the last 24 hours and
-    has not been delivered yet (`id`, `language`)."""
-    sql = ("SELECT id, language FROM push_devices WHERE verified_at IS NULL "
-           "AND retired_at IS NULL AND verify_sent_at IS NULL "
+    """Devices (never verified, or a verified one with a pending secret to
+    prove) whose verification push was requested in the last 24 hours (and
+    at least `min_age_seconds` ago) and has not been delivered yet (`id`,
+    `language`)."""
+    sql = ("SELECT id, language FROM push_devices WHERE (verified_at IS NULL "
+           "OR pending_secret_hash IS NOT NULL) AND retired_at IS NULL AND verify_sent_at IS NULL "
            "AND verify_requested_at > datetime('now', ?)")
     params: list = [VERIFY_WINDOW]
+    if min_age_seconds:
+        sql += " AND verify_requested_at <= datetime('now', ?)"
+        params.append(f"-{int(min_age_seconds)} seconds")
     if device_ids is not None:
         if not device_ids:
             return []
@@ -156,22 +180,44 @@ def resend_wait_seconds(conn: sqlite3.Connection, device_id: int) -> int:
     return max(0, int(row["wait"])) if row and row["wait"] is not None else 0
 
 
-def verify_device(conn: sqlite3.Connection, device_id: int, code: str) -> bool:
-    """True and the device is verified when `code` is the one last pushed to
-    it and was requested within 24 hours; False otherwise. The code is
-    compared by hash, in constant time, and cleared once used."""
+def pending_secret_fresh(conn: sqlite3.Connection, device_id: int) -> bool:
+    """A pending secret is usable for 24 hours after the request that
+    created it."""
+    row = conn.execute(
+        "SELECT verify_requested_at > datetime('now', ?) AS fresh "
+        "FROM push_devices WHERE id=?", (VERIFY_WINDOW, device_id)).fetchone()
+    return bool(row and row["fresh"])
+
+
+def verify_device(conn: sqlite3.Connection, device_id: int, code: str, *,
+                  pending: bool = False) -> bool:
+    """True when `code` is the one last pushed to the device and was
+    requested within 24 hours; False otherwise. The code is compared by hash,
+    in constant time, and cleared once used. A caller holding the pending
+    credential promotes it (it becomes the secret, the old one dies); a
+    caller holding the main credential of a never-verified row just verifies
+    it. A caller on the old, already verified credential never gets here
+    (the route answers 200 first) and so cannot verify for the new install."""
     import hmac
     from app.api import _hash
     row = conn.execute(
-        "SELECT verify_code_hash, verify_requested_at > datetime('now', ?) "
-        "AS fresh FROM push_devices WHERE id=?",
-        (VERIFY_WINDOW, device_id)).fetchone()
+        "SELECT verify_code_hash, pending_secret_hash, "
+        "verify_requested_at > datetime('now', ?) AS fresh "
+        "FROM push_devices WHERE id=?", (VERIFY_WINDOW, device_id)).fetchone()
     if row is None or not row["verify_code_hash"] or not row["fresh"]:
         return False
     if not hmac.compare_digest(row["verify_code_hash"], _hash(code)):
         return False
-    conn.execute("UPDATE push_devices SET verified_at=CURRENT_TIMESTAMP, "
-                 "verify_code_hash=NULL WHERE id=?", (device_id,))
+    if pending:
+        if not row["pending_secret_hash"]:
+            return False
+        conn.execute(
+            "UPDATE push_devices SET secret_hash=pending_secret_hash, "
+            "pending_secret_hash=NULL, verified_at=CURRENT_TIMESTAMP, "
+            "verify_code_hash=NULL WHERE id=?", (device_id,))
+    else:
+        conn.execute("UPDATE push_devices SET verified_at=CURRENT_TIMESTAMP, "
+                     "verify_code_hash=NULL WHERE id=?", (device_id,))
     return True
 
 
@@ -223,7 +269,14 @@ def touch_device(conn: sqlite3.Connection, device_id: int) -> None:
 
 def update_device(conn: sqlite3.Connection, device_id: int, *,
                   token: str | None = None, language: str | None = None) -> bool:
-    """A rotated push token or a changed language. Returns False when
+    """A rotated push token or a changed language. A new token un-verifies
+    the device (the secret stays): it has to prove it receives pushes on the
+    new token, by the same 60 s / 5-a-day rules as a registration, and until
+    then its subscriptions are paused (`active_subscriptions`). Without it a
+    verified device could swap its token for junk, freeing the real one to
+    register and verify again, and mint verified devices at will. A code
+    already pushed to the old token is invalidated. A language-only change
+    leaves verification alone. Returns False when
     another live row already holds that token on the same platform: that
     is a registration this install made itself (a token names one
     install), and the app re-registers rather than this call guessing
@@ -245,6 +298,11 @@ def update_device(conn: sqlite3.Connection, device_id: int, *,
         "last_seen_at=CURRENT_TIMESTAMP WHERE id=?",
         (new_token, new_lang, new_token, device_id),
     )
+    if new_token != row["token"]:
+        conn.execute(
+            "UPDATE push_devices SET verified_at=NULL, pending_secret_hash=NULL, "
+            "verify_code_hash=NULL, verify_sent_at=NULL WHERE id=?", (device_id,))
+        request_if_allowed(conn, device_id)
     return True
 
 
@@ -359,12 +417,19 @@ def _row_to_subscription(row: sqlite3.Row) -> Subscription:
     )
 
 def active_subscriptions(conn: sqlite3.Connection) -> list[Subscription]:
+    """What the poll cycle serves and the plan cap counts. A push
+    subscription of a device that has not proven its token (never verified,
+    or changed its token and not yet verified again) is not running: it
+    neither polls nor takes a plan slot. A legitimate token rotation pauses
+    its subscriptions for the seconds until the new token verifies."""
     rows = conn.execute(
-        "SELECT * FROM subscriptions "
-        "WHERE confirmed_at IS NOT NULL "
-        "AND deleted_at IS NULL "
-        "AND expires_at > CURRENT_TIMESTAMP "
-        "ORDER BY id"
+        "SELECT s.* FROM subscriptions s "
+        "LEFT JOIN push_devices d ON d.id = s.device_id "
+        "WHERE s.confirmed_at IS NOT NULL "
+        "AND s.deleted_at IS NULL "
+        "AND s.expires_at > CURRENT_TIMESTAMP "
+        "AND (s.device_id IS NULL OR d.verified_at IS NOT NULL) "
+        "ORDER BY s.id"
     ).fetchall()
     return [_row_to_subscription(r) for r in rows]
 

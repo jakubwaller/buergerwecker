@@ -43,6 +43,12 @@ MAX_TIMES_PER_LINE = 3
 
 PLATFORMS = ("apns", "fcm")
 
+# The poller's sweep leaves a verification request alone for this long, so the
+# web request that made it always has its turn first: otherwise both could
+# deliver a code, the phone would get two (only the last hash is valid) and
+# two of the five daily pushes would be gone.
+SWEEP_GRACE_SECONDS = 30
+
 
 class PushAuthError(Exception):
     """Our credentials were refused, not the device's token."""
@@ -172,7 +178,9 @@ def send_verifications(conn: sqlite3.Connection, cfg, *,
     from app.db import transaction
     from app.repo import (devices_awaiting_verification, mark_verification_sent,
                           set_verify_code, verify_push_wait)
-    rows = [r for r in devices_awaiting_verification(conn, device_ids=device_ids)
+    rows = [r for r in devices_awaiting_verification(
+                conn, device_ids=device_ids,
+                min_age_seconds=0 if device_ids else SWEEP_GRACE_SECONDS)
             if verify_push_wait(conn, r["id"]) == 0]
     if not rows:
         return 0
