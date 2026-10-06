@@ -83,10 +83,11 @@ client/
 Bundle id and applicationId `de.buergerwecker.app` on both platforms — the server's
 `APNS_TOPIC` is this bundle id. URL scheme `buergerwecker://`.
 
-**CapacitorHttp is enabled**, which routes the page's `fetch` through native HTTP. The API sends
-no CORS headers and the page's origin is `capacitor://localhost` (iOS) / `https://localhost`
-(Android), so a plain WebView fetch would be refused. If the server ever answers CORS for those
-origins, the setting can go.
+**CapacitorHttp is enabled**, which routes the page's `fetch` through native HTTP. It was needed
+because the API sent no CORS headers; the server now answers CORS for the page's origins,
+`capacitor://localhost` (iOS) and `https://localhost` (Android) (`CORS_ORIGINS` in `app/api.py`),
+so the setting could go. Unrouted errors under `/api/v1` (an unknown path's 404, a wrong method's
+405) still carry no CORS headers, so a plain fetch would see those as network errors.
 
 ## Build
 

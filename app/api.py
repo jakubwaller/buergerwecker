@@ -38,6 +38,16 @@ The whole blueprint, public catalog routes included, answers 404 until
 APP_API_ENABLED=1. An open registration endpoint lets anyone create
 subscriptions without a confirmation step, so it stays closed until the app
 ships; device verification (above) is what the open endpoint rests on.
+
+CORS. The app's WebView calls this API cross-origin, so the blueprint answers
+CORS for exactly the Capacitor origins in `CORS_ORIGINS` and nobody else: the
+origin is echoed only on an exact match (never `*`, never reflected), no
+credentials flag (auth is a Bearer header, not a cookie), `Vary: Origin`
+always. An OPTIONS preflight is answered 204 before the gate, so it succeeds
+whether or not APP_API_ENABLED is set: a browser fails the real request
+outright when its preflight is not 2xx, and the app must see the gated
+`404 not_available` (which carries the CORS headers too) to show its "not
+released yet" screen. The preflight reveals nothing the gate protects.
 """
 from __future__ import annotations
 import hashlib
@@ -92,6 +102,43 @@ _API_MESSAGES = {
 
 def _cfg():
     return current_app.config["TERMINE_CONFIG"]
+
+
+# The WebView origins of the Capacitor app: Android https://localhost and iOS
+# capacitor://localhost, the defaults, because server.androidScheme and
+# server.iosScheme are unset in client/capacitor.config.json (`ios.scheme`
+# there is the Xcode scheme name, not the WebView URL scheme). If either is
+# ever set, this list must follow.
+CORS_ORIGINS = frozenset({
+    "https://localhost",
+    "capacitor://localhost",
+})
+_CORS_METHODS = "GET, POST, PUT, DELETE, OPTIONS"
+_CORS_HEADERS = "Authorization, Content-Type"
+_CORS_MAX_AGE = "86400"
+
+
+@api.before_request
+def _preflight():
+    """Answer a CORS preflight for every /api/v1 route, ahead of the gate and
+    of authentication (a preflight carries no credentials). A disallowed
+    origin gets a bare 204 without CORS headers, which the browser rejects."""
+    if request.method == "OPTIONS" and "Access-Control-Request-Method" in request.headers:
+        return current_app.response_class(status=204)
+    return None
+
+
+@api.after_request
+def _cors(resp):
+    resp.vary.add("Origin")
+    origin = request.headers.get("Origin")
+    if origin in CORS_ORIGINS:
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        if request.method == "OPTIONS" and "Access-Control-Request-Method" in request.headers:
+            resp.headers["Access-Control-Allow-Methods"] = _CORS_METHODS
+            resp.headers["Access-Control-Allow-Headers"] = _CORS_HEADERS
+            resp.headers["Access-Control-Max-Age"] = _CORS_MAX_AGE
+    return resp
 
 
 @api.before_request
