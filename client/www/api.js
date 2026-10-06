@@ -4,8 +4,9 @@
 // /go/<slug> redirect).
 //
 // Requests run through Capacitor's native HTTP (CapacitorHttp in
-// capacitor.config.json patches fetch), because the API sends no CORS headers
-// and the page's origin is capacitor://localhost / https://localhost.
+// capacitor.config.json patches fetch). The page's origin is
+// capacitor://localhost / https://localhost; the API now answers CORS for
+// both, so a plain WebView fetch would also work (see client/README.md).
 //
 // Errors are plain objects, { status, error, message }: `error` is the
 // server's key ("waitlist_full", "token_in_use" …) or one of ours
