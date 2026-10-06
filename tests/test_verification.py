@@ -512,13 +512,19 @@ def test_the_stored_code_is_the_claim_one_sender_per_device_per_minute(client, m
     assert len(third.calls) == 1 and _row(dev)["verify_code_hash"] != first
 
 
-def test_a_resend_leaves_an_in_flight_code_alone(client):
+def test_a_resend_leaves_an_in_flight_code_alone(client, monkeypatch):
     dev, secret = _register(client, verified=False)       # no credentials: stored, unsent
     before = _row(dev)
     assert before["verify_code_hash"] and before["verify_code_at"]
+    # Now the web process has credentials: a relay WOULD be called if the
+    # resend cleared the in-flight code and stored a new one.
+    _enable_push(monkeypatch)
+    from app.web import create_app
+    app = create_app()
+    app.config["TESTING"] = True
     with patch("app.push._post", Relay()) as r:
-        assert client.post("/api/v1/device/verify/resend",
-                           headers=_auth(dev, secret)).status_code == 202
+        assert app.test_client().post("/api/v1/device/verify/resend",
+                                      headers=_auth(dev, secret)).status_code == 202
     after = _row(dev)
     assert r.calls == []                                   # the claim is held
     assert after["verify_code_hash"] == before["verify_code_hash"]
@@ -539,6 +545,24 @@ def test_a_resend_clears_a_stale_code_and_sends_a_new_one(relay):
     assert _row(dev)["verify_code_hash"] not in (None, old)
     assert _post_code(client, _auth(dev, secret), r.codes()[0]).status_code == 400
     assert _post_code(client, _auth(dev, secret), r.codes()[1]).status_code == 200
+
+
+def test_a_resend_drops_a_stale_code_even_when_the_following_send_stores_nothing(relay):
+    # set_verify_code overwrites a stale code anyway, so only a send that never
+    # gets that far shows request_verification("drop_if_stale") clearing it.
+    client, r = relay
+    dev, secret = _register(client, verified=False)
+    old_code = r.codes()[0]
+    _db().execute("UPDATE sent_idempotency SET sent_at=datetime(sent_at,'-2 minutes'), "
+                  "idem_key=idem_key || '-old' WHERE idem_key LIKE ?", (f"verify|{dev}|%",))
+    _backdate(dev, "verify_code_at", "-61 seconds")
+    with patch("app.push.send_verifications", side_effect=RuntimeError("boom")):
+        assert client.post("/api/v1/device/verify/resend",
+                           headers=_auth(dev, secret)).status_code == 202
+    row = _row(dev)
+    assert row["verify_code_hash"] is None and row["verify_code_at"] is None
+    assert _post_code(client, _auth(dev, secret), old_code).status_code == 400
+    assert len(r.calls) == 1
 
 
 def test_a_request_older_than_a_day_is_no_longer_swept(client, monkeypatch):
