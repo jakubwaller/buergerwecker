@@ -29,7 +29,7 @@ _ENV = {
     "DEDUP_WINDOW_HOURS": "24", "RATE_LIMIT_MINUTES": "15",
     "RENEWAL_REMINDER_DAYS_BEFORE": "10", "MAX_PLANS_PER_CITY": "10",
     "PARSER_CANARY_THRESHOLD_HOURS": "2", "DEVELOPER_EMAIL": "dev@x",
-    "KOFI_URL": "https://k",
+    "KOFI_URL": "https://k", "APP_API_ENABLED": "1",
 }
 
 
@@ -522,3 +522,23 @@ def test_the_website_renew_link_shares_the_helper(client):
                      (sid,)).fetchone()
     assert row["reminder_sent_at"] is None
     assert datetime.fromisoformat(row["expires_at"]) > datetime.utcnow() + timedelta(days=89)
+
+
+def test_api_closed_when_gate_unset(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "t.db")
+    monkeypatch.setenv("DB_PATH", db_path)
+    for k, v in _ENV.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("APP_API_ENABLED", raising=False)
+    init_schema(connect(db_path))
+    GLOBAL_IP_LIMITER._events.clear()
+    app = create_app()
+    app.config["TESTING"] = True
+    c = app.test_client()
+    for r in (c.post("/api/v1/devices", json={"platform": "ios", "token": "t"}),
+              c.get("/api/v1/cities"),
+              c.get("/api/v1/subscriptions")):
+        assert r.status_code == 404
+        assert r.get_json() == {"error": "not_available"}
+    assert c.get("/healthz").status_code == 200
+    assert c.get("/leipzig").status_code == 200

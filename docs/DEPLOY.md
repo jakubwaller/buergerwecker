@@ -463,6 +463,12 @@ retirement rule below keeps that from retiring anyone.
 
 ### The app's API
 
+The API answers `404 {"error": "not_available"}` to everything, the public
+catalog routes included, while `APP_API_ENABLED` is unset or `0`. It is
+switched on (`APP_API_ENABLED=1`) together with the `APNS_*`/`FCM_*`
+credentials for the TestFlight build: registration has no confirmation step,
+so it stays closed until device verification exists.
+
 The app talks to the web container under `/api/v1` (`app/api.py`); nothing
 else uses it, and the website is unchanged. A device registers its push
 token once (`POST /api/v1/devices`, `{platform, token, language}`) and gets a
@@ -515,8 +521,9 @@ ssh vps 'cd ~/buergerwecker && docker compose logs --since 1h poller | grep "pus
 curl -s -X POST https://buergerwecker.de/api/v1/devices -H 'content-type: application/json' -d '{}'
 ```
 
-The second line answers `400 {"error": "unknown_platform"}` when the API is
-up.
+The second line answers `404 {"error": "not_available"}` while the gate is
+closed (`APP_API_ENABLED` unset or `0`) and `400 {"error": "unknown_platform"}`
+once it is open.
 
 Silence is the healthy state. Retention: a retired device is purged 30 days
 after retirement; a live one once 30 days have passed since both its last

@@ -19,6 +19,11 @@ Rate limits: registration and every write are counted against the
 subscribe-form limit per IP (soft, per process, see `IPRateLimiter`); a
 device may hold MAX_SUBSCRIPTIONS_PER_DEVICE live subscriptions (hard, in
 the database).
+
+The whole blueprint, public catalog routes included, answers 404 until
+APP_API_ENABLED=1. An open registration endpoint lets anyone create
+subscriptions without a confirmation step, so it stays closed until the app
+ships and device verification exists.
 """
 from __future__ import annotations
 import hashlib
@@ -57,6 +62,13 @@ _LANGS = ("de", "en")
 
 def _cfg():
     return current_app.config["TERMINE_CONFIG"]
+
+
+@api.before_request
+def _gate():
+    if not _cfg().app_api_enabled:
+        return jsonify({"error": "not_available"}), 404
+    return None
 
 
 def _hash(secret: str) -> str:
