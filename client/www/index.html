@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <!-- The page talks to buergerwecker.de only (api.js); nothing else loads. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' capacitor: https://localhost; connect-src 'self' https://buergerwecker.de; img-src 'self' data:; style-src 'self'; script-src 'self'">
+  <title>Bürgerwecker</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="banner" class="banner" role="status" hidden></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
