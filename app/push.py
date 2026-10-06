@@ -164,14 +164,16 @@ def send_verifications(conn: sqlite3.Connection, cfg, *,
     database. `verify_sent_at` is stamped only for delivered pushes, so a
     device whose push could not go out (no credentials, relay down) is picked
     up again by the poller's sweep, for as long as the request is under 24
-    hours old. Two callers: the web process right after a registration or a
+    hours old, and never more than MAX_VERIFY_PUSHES_PER_DAY a device a day.
+    Two callers: the web process right after a registration or a
     resend, and the poller once per cycle."""
     import secrets
     from app.api import _hash
     from app.db import transaction
     from app.repo import (devices_awaiting_verification, mark_verification_sent,
-                          set_verify_code)
-    rows = devices_awaiting_verification(conn, device_ids=device_ids)
+                          set_verify_code, verify_push_wait)
+    rows = [r for r in devices_awaiting_verification(conn, device_ids=device_ids)
+            if verify_push_wait(conn, r["id"]) == 0]
     if not rows:
         return 0
     items: list[OutgoingPush] = []

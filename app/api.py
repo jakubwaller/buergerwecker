@@ -51,6 +51,7 @@ from app.repo import (active_subscriptions, delete_device, device_by_id,
                       insert_push_subscription, live_subscription_count,
                       register_device, renew_subscription,
                       request_verification, resend_wait_seconds,
+                      verify_push_wait,
                       set_special_consent, soft_delete,
                       subscriptions_for_device, touch_device, update_device,
                       verify_device)
@@ -153,7 +154,10 @@ def _resolve_device():
         return _error("unauthorized", 401)
     if row["retired_at"] is not None:
         return _error("device_retired", 410, row["language"])
-    touch_device(conn, row["id"])
+    if row["verified_at"] is not None:
+        # An unverified row is on the 24-hour purge clock; touching it would
+        # restart the 30-day one.
+        touch_device(conn, row["id"])
     g.device = row
     g.conn = conn
     return None
@@ -303,14 +307,16 @@ def device_verify():
 @api.route("/device/verify/resend", methods=["POST"])
 @authenticated_unverified
 def device_verify_resend():
-    """Ask for a new verification push, at most one a minute (counted in the
-    database, so it holds across workers). The old code stops working."""
+    """Ask for a new verification push, at most one a minute and
+    MAX_VERIFY_PUSHES_PER_DAY a day (counted in the database, so it holds
+    across workers). The old code stops working."""
     lang = g.device["language"]
     if g.device["verified_at"] is not None:
         return jsonify({"verified": True})
     if _rate_limited():
         return _error("rate_limited", 429, lang)
-    wait = resend_wait_seconds(g.conn, g.device["id"])
+    wait = max(resend_wait_seconds(g.conn, g.device["id"]),
+               verify_push_wait(g.conn, g.device["id"]))
     if wait > 0:
         return _error("rate_limited", 429, lang, retry_after=wait)
     with transaction(g.conn):
@@ -320,11 +326,16 @@ def device_verify_resend():
 
 
 def _device_json(row) -> dict:
+    """An unverified holder gets no subscriptions: whoever re-registers a
+    known token must not read the real user's filters before proving they
+    receive its pushes. The key stays so the shape does not change."""
+    verified = row["verified_at"] is not None
     return {"device_id": row["id"], "platform": row["platform"],
             "language": row["language"], "created_at": row["created_at"],
-            "verified": row["verified_at"] is not None,
+            "verified": verified,
             "subscriptions": [_sub_json(s) for s in
-                              subscriptions_for_device(g.conn, row["id"])]}
+                              subscriptions_for_device(g.conn, row["id"])]
+                             if verified else []}
 
 
 # ---------------------------------------------------------------------------

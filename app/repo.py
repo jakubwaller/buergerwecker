@@ -49,21 +49,36 @@ def register_device(conn: sqlite3.Connection, *, platform: str, token: str,
     takes the new secret, loses any retirement and any remembered dead
     answer (the evidence clock starts over), and keeps its subscriptions.
 
-    Every registration, the first or a repeat, leaves the device unverified
-    and asks for a fresh verification push: whoever holds the new secret has
-    to prove they are the phone that receives pushes for this token (a
-    reinstall, or a phone that changed hands). Its existing subscriptions
-    keep running, the phone still gets its pushes; only managing them is
-    locked until the new code is posted back."""
+    Every registration, the first or a repeat, leaves the device unverified:
+    whoever holds the new secret has to prove they are the phone that
+    receives pushes for this token (a reinstall, or a phone that changed
+    hands). Its existing subscriptions keep running, the phone still gets its
+    pushes; only managing them is locked until the new code is posted back.
+
+    A repeat registration also asks for a fresh verification push, but only
+    when the last request is NULL or over 60 seconds old and the device is
+    under MAX_VERIFY_PUSHES_PER_DAY; otherwise the pending request stands
+    untouched and nothing new is sent (the app can press Resend after the
+    minute). The same token can therefore trigger at most one verification
+    push a minute, and five a day, whoever is asking: knowing a phone's token
+    must not be enough to make it buzz on demand. Both limits are counted in
+    the database, not per worker."""
+    existing = conn.execute(
+        "SELECT id, verify_requested_at IS NULL OR verify_requested_at < "
+        "datetime('now','-60 seconds') AS due FROM push_devices "
+        "WHERE platform=? AND token=?", (platform, token)).fetchone()
+    reset = (existing is None or (
+        existing["due"] and verify_push_wait(conn, existing["id"]) == 0))
+    request_cols = ("verify_requested_at=CURRENT_TIMESTAMP, verify_sent_at=NULL, "
+                    "verify_code_hash=NULL, " if reset else "")
     row = conn.execute(
         "INSERT INTO push_devices (platform, token, secret_hash, language, "
         "verify_requested_at) VALUES (?,?,?,?,CURRENT_TIMESTAMP) "
         "ON CONFLICT (platform, token) DO UPDATE SET "
         "secret_hash=excluded.secret_hash, language=excluded.language, "
         "retired_at=NULL, retire_reason=NULL, dead_since=NULL, "
-        "last_seen_at=CURRENT_TIMESTAMP, verified_at=NULL, "
-        "verify_requested_at=CURRENT_TIMESTAMP, verify_sent_at=NULL, "
-        "verify_code_hash=NULL "
+        f"{request_cols}"
+        "last_seen_at=CURRENT_TIMESTAMP, verified_at=NULL "
         "RETURNING id",
         (platform, token, secret_hash, language),
     ).fetchone()
@@ -72,6 +87,25 @@ def register_device(conn: sqlite3.Connection, *, platform: str, token: str,
 
 # A verification code is valid this long after it was requested.
 VERIFY_WINDOW = "-1 day"
+# Verification pushes one device is sent per rolling 24 hours, whoever asks.
+MAX_VERIFY_PUSHES_PER_DAY = 5
+
+
+def verify_push_wait(conn: sqlite3.Connection, device_id: int) -> int:
+    """Seconds until the device may be sent another verification push under
+    MAX_VERIFY_PUSHES_PER_DAY (0 = now). Counted from the delivered
+    idempotency rows `verify|<device_id>|...`, so it holds across workers and
+    the poller."""
+    rows = conn.execute(
+        "SELECT CAST(strftime('%s','now') - strftime('%s', sent_at) AS INTEGER) "
+        "AS age FROM sent_idempotency WHERE idem_key LIKE ? "
+        "AND provider != 'pending' AND sent_at > datetime('now','-1 day') "
+        "ORDER BY sent_at", (f"verify|{int(device_id)}|%",)).fetchall()
+    if len(rows) < MAX_VERIFY_PUSHES_PER_DAY:
+        return 0
+    # The window frees when the push that makes the count reach the cap ages out.
+    oldest = rows[len(rows) - MAX_VERIFY_PUSHES_PER_DAY]["age"]
+    return max(1, 86400 - oldest)
 
 
 def devices_awaiting_verification(conn: sqlite3.Connection, *,

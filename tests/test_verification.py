@@ -15,7 +15,7 @@ from app.db import connect, init_schema
 from app.housekeeping import _prune_push_devices
 from app.models import Filter, PollPlan, Slot
 from app.push import send_verifications
-from app.repo import active_subscriptions, insert_push_subscription, soft_delete
+from app.repo import verify_push_wait, active_subscriptions, insert_push_subscription, soft_delete
 from app.snapshots import record_snapshots
 from test_api import (LEIPZIG_SVC, LEIPZIG_SVC_2, LEIPZIG_LOC, _auth, _db,
                       _register, _subscribe, client)  # noqa: F401  (fixtures)
@@ -185,16 +185,61 @@ def test_registering_the_same_token_again_locks_management_until_verified(relay)
     dev, secret = _register(client, verified=False)
     assert _post_code(client, _auth(dev, secret), r.codes()[0]).status_code == 200
     sub = _subscribe(client, _auth(dev, secret)).get_json()["id"]
+    _backdate(dev, "verify_requested_at", "-2 minutes")
     dev2, new_secret = _register(client, verified=False)
     assert dev2 == dev
     auth = _auth(dev, new_secret)
-    assert client.get("/api/v1/device", headers=auth).get_json()["verified"] is False
+    seen = client.get("/api/v1/device", headers=auth).get_json()
+    assert seen["verified"] is False
+    assert seen["subscriptions"] == []                 # not for an unverified holder
     assert len(active_subscriptions(_db())) == 1       # still running
     put = client.put(f"/api/v1/subscriptions/{sub}", json={}, headers=auth)
     assert put.status_code == 403 and put.get_json()["error"] == "device_unverified"
     assert len(r.calls) == 2
     assert _post_code(client, auth, r.codes()[1]).status_code == 200
     assert client.get(f"/api/v1/subscriptions/{sub}", headers=auth).status_code == 200
+    back = client.get("/api/v1/device", headers=auth).get_json()
+    assert [x["id"] for x in back["subscriptions"]] == [sub]
+
+
+def test_registering_again_inside_a_minute_sends_nothing_but_locks_and_rotates(relay):
+    client, r = relay
+    dev, secret = _register(client, verified=False)
+    code = r.codes()[0]
+    before = _row(dev)
+    _, new_secret = _register(client, verified=False)
+    after = _row(dev)
+    assert len(r.calls) == 1 and new_secret != secret
+    assert after["verify_requested_at"] == before["verify_requested_at"]
+    assert after["verify_code_hash"] == before["verify_code_hash"]
+    assert after["verify_sent_at"] == before["verify_sent_at"]
+    # The pending code, delivered to the phone, still works for the new holder.
+    assert _post_code(client, _auth(dev, new_secret), code).status_code == 200
+    _backdate(dev, "verify_requested_at", "-2 minutes")
+    _register(client, verified=False)
+    assert len(r.calls) == 2
+
+
+def test_a_sixth_verification_push_in_a_day_is_refused_everywhere(relay):
+    client, r = relay
+    dev, secret = _register(client, verified=False)
+    auth = _auth(dev, secret)
+    for _ in range(4):
+        _backdate(dev, "verify_requested_at", "-2 minutes")
+        assert client.post("/api/v1/device/verify/resend",
+                           headers=auth).status_code == 202
+    assert len(r.calls) == 5
+    _backdate(dev, "verify_requested_at", "-2 minutes")
+    over = client.post("/api/v1/device/verify/resend", headers=auth)
+    assert over.status_code == 429 and over.get_json()["retry_after"] > 0
+    _register(client, verified=False)                  # normal answer, no push
+    cfg = load_config()
+    assert send_verifications(_db(), cfg) == 0         # the sweep respects it too
+    assert len(r.calls) == 5
+    # The window frees once the oldest push is over a day old.
+    _db().execute("UPDATE sent_idempotency SET sent_at=datetime('now','-25 hours') "
+                  "WHERE idem_key LIKE ?", (f"verify|{dev}|%",))
+    assert verify_push_wait(_db(), dev) == 0
 
 
 # ---------------------------------------------------------------------------
