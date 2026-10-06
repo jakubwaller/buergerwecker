@@ -10,6 +10,7 @@ from app.scrapers import get_scraper, UnsupportedCity
 from app.http_session import CountingSession
 from app.models import SeenKey, Slot, per_slot_key
 from app.analytics import record_availability
+from app.snapshots import record_snapshots
 
 # Imported here so tests can monkey-patch it.
 from app.digest import send_digest, flush_digests  # noqa: E402
@@ -206,6 +207,7 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
     # candidates this cycle.
     due = _due_cities(conn, {p.city for p in plans})
     polled_ok: dict[str, set[str]] = {}
+    plans_ok: list = []
     for p in plans:
         if p.city not in due:
             continue
@@ -219,6 +221,7 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
             # Only a poll that didn't raise proves the service was looked at —
             # the availability series must not read a failed scrape as "empty".
             polled_ok.setdefault(p.city, set()).add(p.appointment_type)
+            plans_ok.append(p)
             if slots_by_plan[p.key()]:
                 cities_with_any_slot.add(p.city)
         except UnsupportedCity as exc:
@@ -294,6 +297,11 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
             seen_hashes[p.city].add(h)
             slots_by_city[p.city].append(slot)
     record_availability(conn, slots_by_city, polled_ok)
+    # The app's overview reads the last poll from here rather than polling
+    # the city itself. One row per service, written only when every plan of
+    # the service succeeded this cycle: a failed poll keeps the previous
+    # snapshot, with its older polled_at.
+    record_snapshots(conn, plans, cities_polled, plans_ok, slots_by_plan)
 
     now = datetime.utcnow()
     max_multiplier = getattr(cfg, "adaptive_rate_limit_max_multiplier",

@@ -33,6 +33,7 @@ def run_once(conn: sqlite3.Connection) -> None:
     _prune_push_devices(conn)
     _prune_slots_cache(conn)
     _prune_availability(conn)
+    _prune_slot_snapshots(conn)
     _check_parser_canary(conn, cfg)
     _check_backup_health(conn, cfg)
     _start_catalog_sync(cfg)
@@ -395,6 +396,12 @@ def _prune_push_devices(conn):
 def _prune_slots_cache(conn):
     # Slots are short-lived in the upstream system; 14 days is generous.
     conn.execute("DELETE FROM slots_cache WHERE cached_at < datetime('now','-14 days')")
+
+def _prune_slot_snapshots(conn):
+    # A plan nobody subscribes to any more is no longer polled; its snapshot
+    # must not keep describing inventory from a day ago.
+    from app.snapshots import prune_snapshots
+    prune_snapshots(conn)
 
 def _prune_availability(conn):
     # Analytics history; the admin page only ever looks back a few weeks.

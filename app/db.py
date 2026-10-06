@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 # SQLite's own timestamp shape, the one CURRENT_TIMESTAMP and datetime('now')
 # produce. Queries compare stored timestamps against those as plain text, so a
@@ -207,6 +207,24 @@ CREATE TABLE IF NOT EXISTS email_suppressions (
 );
 CREATE INDEX IF NOT EXISTS idx_suppressed
   ON email_suppressions(reason) WHERE reason IS NOT NULL;
+
+-- The last successful poll of each watched service, for the app's live
+-- overview and widget (app/snapshots.py): the soonest slots as compact
+-- JSON, the count before the cap, and when. One row per (city, service),
+-- the union of the plans that cover it, replaced every cycle all of them
+-- succeed; a failed poll leaves the previous row. Keyed by service rather
+-- than by plan because a plan's key names its office set and changes with
+-- every edit. Pruned after a day, so a service nobody watches any more does
+-- not outlive the inventory it described. Read by
+-- GET /api/v1/cities/<slug>/slots, never by the notification path.
+CREATE TABLE IF NOT EXISTS slot_snapshots (
+  city         TEXT NOT NULL,
+  service_uuid TEXT NOT NULL,
+  slots_json   TEXT NOT NULL,
+  n_total      INTEGER NOT NULL,
+  polled_at    TIMESTAMP NOT NULL,
+  PRIMARY KEY (city, service_uuid)
+);
 
 CREATE TABLE IF NOT EXISTS meta (
   key        TEXT PRIMARY KEY,

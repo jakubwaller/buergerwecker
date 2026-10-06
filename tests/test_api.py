@@ -235,6 +235,42 @@ def test_city_returns_the_form_the_website_shows(client):
     assert {s["id"]: s for s in sbgg["services"]}[SBGG_SVC]["sensitive"] is True
 
 
+def test_city_slots_is_the_last_poll_per_watched_service(client):
+    from app.models import PollPlan
+    from app.snapshots import record_snapshots
+    from app.models import Slot
+    from datetime import datetime as dt
+    db = _db()
+    plan = PollPlan(city="leipzig", appointment_type=LEIPZIG_SVC, locations="all")
+    other = PollPlan(city="leipzig", appointment_type=LEIPZIG_SVC_2, locations="all")
+    record_snapshots(db, [plan, other], {"leipzig"}, [plan, other], {
+        plan.key(): [Slot("2026-06-10", "10:30", LEIPZIG_LOC, LEIPZIG_SVC, "t"),
+                     Slot("2026-06-09", "08:00", "loc-unknown", LEIPZIG_SVC, "t")],
+        other.key(): []}, now=dt(2026, 6, 8, 12, 0))
+    body = client.get("/api/v1/cities/leipzig/slots").get_json()
+    assert body["slug"] == "leipzig" and body["polled_at"] == "2026-06-08T12:00:00Z"
+    assert [s["name"] for s in body["services"]] == ["Abholung Ausweisdokumente",
+                                                     "Abmeldung Wohnsitz"]
+    first = body["services"][0]
+    assert first["id"] == LEIPZIG_SVC and first["n_total"] == 2
+    assert first["polled_at"] == "2026-06-08T12:00:00Z"
+    assert first["earliest"] == {"date": "2026-06-09", "time": "08:00",
+                                 "location": "loc-unknown",
+                                 "location_name": "loc-unknown"}
+    assert first["slots"][1] == {"date": "2026-06-10", "time": "10:30",
+                                 "location": LEIPZIG_LOC,
+                                 "location_name": "Bürgerbüro Leutzsch"}
+    second = body["services"][1]
+    assert second["slots"] == [] and second["earliest"] is None and second["n_total"] == 0
+    # One service only, and English labels.
+    body = client.get(f"/api/v1/cities/leipzig/slots?service={LEIPZIG_SVC_2}&lang=en").get_json()
+    assert [s["id"] for s in body["services"]] == [LEIPZIG_SVC_2]
+    # A city nobody watches has nothing to show, and says so.
+    assert client.get("/api/v1/cities/bonn/slots").get_json() == {
+        "slug": "bonn", "polled_at": None, "services": []}
+    assert client.get("/api/v1/cities/atlantis/slots").status_code == 404
+
+
 def test_unknown_city_is_not_found(client):
     for slug in ("atlantis", "..", "Leipzig"):
         r = client.get(f"/api/v1/cities/{slug}")
