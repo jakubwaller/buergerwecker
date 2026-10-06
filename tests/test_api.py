@@ -118,6 +118,7 @@ def test_register_accepts_a_body_that_is_not_json_as_empty(client):
 
 @pytest.mark.parametrize("header", [
     None, "Bearer", "Bearer 1", "Bearer x.y", "Bearer 1.", "Basic 1.abc",
+    "Bearer ².x", "Bearer 999999999999999999999999.x",
 ])
 def test_authenticated_routes_reject_a_missing_or_malformed_bearer(client, header):
     headers = {"Authorization": header} if header else {}
@@ -161,6 +162,9 @@ def test_registration_is_rate_limited_per_ip(client, monkeypatch):
     assert r.status_code == 429 and r.get_json()["error"] == "rate_limited"
     # Reads are not counted: the app lists its subscriptions on every launch.
     assert c.get("/api/v1/cities").status_code == 200
+    # One budget per address across the form and the API.
+    assert c.post("/subscribe", data={"email": "a@example.com", "city": "leipzig",
+                                      "appointment_type": LEIPZIG_SVC}).status_code == 429
 
 
 # ---------------------------------------------------------------------------

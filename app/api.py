@@ -86,9 +86,10 @@ def _client_ip() -> str:
 
 def _rate_limited() -> bool:
     """Registration and every write share the subscribe form's per-IP
-    budget. Reads are not counted: the app polls its subscription list on
-    every launch and a rate limit on that is a self-inflicted outage."""
-    return not GLOBAL_IP_LIMITER.hit(f"api:{_client_ip()}",
+    budget, the same bucket, so one address has one budget across the form
+    and the API. Reads are not counted: the app polls its subscription list
+    on every launch and a rate limit on that is a self-inflicted outage."""
+    return not GLOBAL_IP_LIMITER.hit(f"ip:{_client_ip()}",
                                      _cfg().subscribe_ratelimit_per_ip_per_hour,
                                      3600)
 
@@ -109,7 +110,11 @@ def authenticated(view):
         header = request.headers.get("Authorization", "")
         bearer = header.removeprefix("Bearer ").strip() if header.startswith("Bearer ") else ""
         dev_id, _, secret = bearer.partition(".")
-        if not dev_id.isdigit() or not secret:
+        # ASCII digits only and short: str.isdigit() takes "²", int() then
+        # raises, and a 30-digit id overflows SQLite; both would be an
+        # unauthenticated 500.
+        if (not secret or not dev_id.isascii() or not dev_id.isdigit()
+                or len(dev_id) > 12):
             return _error("unauthorized", 401)
         conn = connect(_cfg().db_path)
         row = device_by_id(conn, int(dev_id))
@@ -162,7 +167,7 @@ def device_status():
     return jsonify(_device_json(g.device))
 
 
-@api.route("/device", methods=["PUT", "PATCH"])
+@api.route("/device", methods=["PUT"])
 @authenticated
 def device_update():
     """A rotated push token (the platforms do that) or a new language."""
@@ -321,12 +326,13 @@ def get_subscription(sub_id):
     return jsonify(_sub_json(sub))
 
 
-@api.route("/subscriptions/<int:sub_id>", methods=["PUT", "PATCH"])
+@api.route("/subscriptions/<int:sub_id>", methods=["PUT"])
 @authenticated
 def update_subscription(sub_id):
-    """Edit the filter: the same validation, consent gate and plan-cap check
-    as the website's manage form, and the same reset of the cadence state,
-    which was measured against the old filter."""
+    """Replace the filter (a full PUT, every field as on a sign-up): the same
+    validation, consent gate and plan-cap check as the website's manage
+    form, and the same reset of the cadence state, which was measured
+    against the old filter."""
     lang = g.device["language"]
     if _rate_limited():
         return _error("rate_limited", 429, lang)

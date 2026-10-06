@@ -166,13 +166,14 @@ def subscriber_caps(conn: sqlite3.Connection, cfg) -> tuple[int, int, bool]:
     mail cap alone drops to MAIL_CAP_UNDER_PRESSURE while the free provider
     pool's rolling-24h usage is at MAIL_POOL_PRESSURE_PCT or above, so the
     pool thins everyone's mail a little before it defers anyone's entirely.
-    Push has no pool to run out of. 0 anywhere means "no cap" (the ordinary
-    cap) or "never tighten" (the pressure cap), as the env vars say."""
+    Push has no pool to run out of. 0 for the ordinary cap means no cap at
+    all, pressure or not: an operator who turned the cap off must not find
+    a hidden one; 0 for the pressure cap means never tighten."""
     from app.mail import pool_usage
     cap = getattr(cfg, "max_digests_per_subscriber_per_day", 0) or 0
     tight = getattr(cfg, "mail_cap_under_pressure", 0) or 0
     pct = getattr(cfg, "mail_pool_pressure_pct", 0) or 0
-    if not tight or not pct or (cap and tight >= cap):
+    if not cap or not tight or not pct or tight >= cap:
         return cap, cap, False
     used, pool = pool_usage(conn, cfg)
     if pool and used * 100 >= pool * pct:

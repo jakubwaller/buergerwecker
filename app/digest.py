@@ -299,10 +299,13 @@ def _database_path(conn: sqlite3.Connection) -> str | None:
     return None
 
 
-def _send_both(conn: sqlite3.Connection, mail_items: list,
-               push_items: list, cfg) -> tuple[BatchResult, set[str]]:
+def _send_both(conn: sqlite3.Connection, mail_items: list, push_items: list,
+               cfg) -> tuple[BatchResult, set[str], BaseException | None]:
     """Deliver the mail batch and the push batch of one cycle. Returns the
-    mail result and the idem_keys the push batch delivered.
+    mail result, the idem_keys the push batch delivered, and the exception
+    the mail batch raised, if any: the caller records the push deliveries
+    first and raises it after, because a push that went out and is not
+    recorded goes out again next cycle under a fresh key, outside the cap.
 
     Concurrently, when there is both: a mail provider answering slowly (one
     HTTP call per recipient on Brevo and Sweego, 30 s timeouts) must not
@@ -318,14 +321,14 @@ def _send_both(conn: sqlite3.Connection, mail_items: list,
     """
     if not push_items:
         return (send_batch(conn, mail_items, cfg) if mail_items
-                else BatchResult()), set()
+                else BatchResult()), set(), None
     from app.push import send_push_batch
     if not mail_items:
-        return BatchResult(), send_push_batch(conn, push_items, cfg).delivered
+        return BatchResult(), send_push_batch(conn, push_items, cfg).delivered, None
     path = _database_path(conn)
     if path is None:
         result = send_batch(conn, mail_items, cfg)
-        return result, send_push_batch(conn, push_items, cfg).delivered
+        return result, send_push_batch(conn, push_items, cfg).delivered, None
     push_delivered: set[str] = set()
 
     def _push():
@@ -342,11 +345,14 @@ def _send_both(conn: sqlite3.Connection, mail_items: list,
 
     worker = threading.Thread(target=_push, name="push-batch")
     worker.start()
+    result, mail_error = BatchResult(), None
     try:
         result = send_batch(conn, mail_items, cfg)
+    except Exception as exc:
+        mail_error = exc
     finally:
         worker.join()
-    return result, push_delivered
+    return result, push_delivered, mail_error
 
 
 def flush_digests(conn: sqlite3.Connection, sink: list, cfg) -> None:
@@ -374,7 +380,8 @@ def flush_digests(conn: sqlite3.Connection, sink: list, cfg) -> None:
     sink = sorted(sink, key=lambda q: str(q.subscription.last_notified_at or ""))
     mail_items = [q.item for q in sink if isinstance(q.item, Outgoing)]
     push_items = [q.item for q in sink if not isinstance(q.item, Outgoing)]
-    result, push_delivered = _send_both(conn, mail_items, push_items, cfg)
+    result, push_delivered, mail_error = _send_both(conn, mail_items,
+                                                    push_items, cfg)
     delivered = set(result.delivered) | push_delivered
     for q in sink:
         if q.item.idem_key not in delivered:
@@ -390,4 +397,6 @@ def flush_digests(conn: sqlite3.Connection, sink: list, cfg) -> None:
                                  key.best_time)
             set_last_notified(conn, q.subscription.id, q.match_count)
             record_digest_delivery(conn, q.subscription.id)
+    if mail_error is not None:
+        raise mail_error
     maybe_quota_alert(conn, cfg, deferred=result.deferred)

@@ -216,7 +216,8 @@ failing:
   from `seen_slots` so the cap binds from the first cycle.
 - **Under pressure the mail cap tightens for everyone before anyone is
   deferred** (`MAIL_POOL_PRESSURE_PCT`, default 80, and
-  `MAIL_CAP_UNDER_PRESSURE`, default 1; `0` turns it off). The pool is the
+  `MAIL_CAP_UNDER_PRESSURE`, default 1; `0` turns it off, and so does
+  turning the ordinary cap off). The pool is the
   free provider chain and there is no paid capacity behind it, so when the
   combined rolling-24h usage reaches the percentage, every mail subscriber's
   daily cap drops to the tightened value for as long as the pressure lasts.

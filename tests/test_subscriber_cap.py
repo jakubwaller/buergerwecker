@@ -325,8 +325,10 @@ def test_tightening_is_off_with_zero_or_a_cap_no_lower_than_the_ordinary_one(db,
     assert subscriber_caps(db, load_config()) == (2, 2, False)
     monkeypatch.setenv("MAIL_CAP_UNDER_PRESSURE", "1")
     monkeypatch.setenv("MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY", "0")
-    # No ordinary cap at all: the pressure cap still applies to mail.
-    assert subscriber_caps(db, load_config()) == (0, 1, True)
+    # The ordinary cap turned off is off, pressure or not: /admin and the
+    # summary only show the cap row while one is configured, so a hidden
+    # pressure cap would be invisible everywhere but the poller log.
+    assert subscriber_caps(db, load_config()) == (0, 0, False)
 
 
 def test_under_pressure_mail_gets_one_digest_a_day_and_push_keeps_two(db, apns, monkeypatch):

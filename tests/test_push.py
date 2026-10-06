@@ -695,6 +695,37 @@ def test_a_failing_push_batch_does_not_lose_the_mail_bookkeeping(db):
     assert recorded == {mail_id}
 
 
+def test_a_failing_mail_batch_still_records_the_pushes_that_went_out(db):
+    """A push that went out and is not recorded goes out again next cycle
+    under a fresh key, outside the cap: the bookkeeping comes before the
+    mail error is raised."""
+    mail_id = insert_pending(db, email="m@example.com", city="leipzig",
+                             language="de", filter_=_filter(), ttl_days=30)
+    confirm(db, mail_id)
+    dev = _device(db)
+    push_id = _push_sub(db, dev)
+    slot = Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")
+    sink = [
+        QueuedDigest(item=Outgoing(to="m@example.com", subject="s", body="b",
+                                   idem_key="km"),
+                     subscription=SimpleNamespace(id=mail_id, last_notified_at=None),
+                     slots=[slot], match_count=1),
+        QueuedDigest(item=_item(dev, "kp"),
+                     subscription=SimpleNamespace(id=push_id, last_notified_at=None),
+                     slots=[slot], match_count=1),
+    ]
+    with patch("app.digest.send_batch", side_effect=RuntimeError("database is locked")), \
+         patch("app.push.send_push_batch", return_value=PushResult(delivered={"kp"})), \
+         patch("app.digest.maybe_quota_alert") as alert, \
+         pytest.raises(RuntimeError, match="locked"):
+        flush_digests(db, sink, _cfg())
+    recorded = {r["subscription_id"] for r in db.execute("SELECT subscription_id FROM seen_slots")}
+    assert recorded == {push_id}
+    assert db.execute("SELECT COUNT(*) FROM digest_deliveries WHERE subscription_id=?",
+                      (push_id,)).fetchone()[0] == 1
+    alert.assert_not_called()
+
+
 def test_flush_on_an_in_memory_database_runs_the_batches_in_turn():
     """A second connection cannot reach an in-memory database, so the two
     batches run one after the other on the one connection."""
