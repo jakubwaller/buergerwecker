@@ -104,14 +104,13 @@ def _cfg():
     return current_app.config["TERMINE_CONFIG"]
 
 
-# The WebView origins of the Capacitor app. Android serves https://localhost
-# (the default); on iOS the origin is `<ios.scheme>://localhost` and the
-# scheme is overridden in client/capacitor.config.json ("Buergerwecker", which
-# browsers serialise lowercase); capacitor://localhost is the Capacitor default
-# and is kept so an unconfigured iOS build still works.
+# The WebView origins of the Capacitor app: Android https://localhost and iOS
+# capacitor://localhost, the defaults, because server.androidScheme and
+# server.iosScheme are unset in client/capacitor.config.json (`ios.scheme`
+# there is the Xcode scheme name, not the WebView URL scheme). If either is
+# ever set, this list must follow.
 CORS_ORIGINS = frozenset({
     "https://localhost",
-    "buergerwecker://localhost",
     "capacitor://localhost",
 })
 _CORS_METHODS = "GET, POST, PUT, DELETE, OPTIONS"

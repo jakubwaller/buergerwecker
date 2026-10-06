@@ -6,7 +6,7 @@ from app.db import connect, init_schema
 from app.web import create_app
 from tests.test_api import _ENV
 
-ALLOWED = ["https://localhost", "buergerwecker://localhost", "capacitor://localhost"]
+ALLOWED = ["https://localhost", "capacitor://localhost"]
 
 
 def _client(tmp_path, monkeypatch, enabled):
@@ -47,7 +47,8 @@ def test_allowed_origin_gets_headers(on, origin):
 
 
 @pytest.mark.parametrize("origin", ["https://evil.example", "http://localhost",
-                                    "https://localhost.evil.example", "null"])
+                                    "https://localhost.evil.example", "null",
+                                    "buergerwecker://localhost"])
 def test_disallowed_origin_gets_none(on, origin):
     r = on.get("/api/v1/cities", headers={"Origin": origin})
     assert r.status_code == 200
