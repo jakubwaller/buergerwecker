@@ -95,8 +95,9 @@ Bundle id and applicationId `de.buergerwecker.app` on both platforms — the ser
 **CapacitorHttp is enabled**, which routes the page's `fetch` through native HTTP. It was needed
 because the API sent no CORS headers; the server now answers CORS for the page's origins,
 `capacitor://localhost` (iOS) and `https://localhost` (Android) (`CORS_ORIGINS` in `app/api.py`),
-so the setting could go. Unrouted errors under `/api/v1` (an unknown path's 404, a wrong method's
-405) still carry no CORS headers, so a plain fetch would see those as network errors.
+so the setting could go. Every response under `/api/v1` carries them, routing errors (an unknown
+path's 404, a wrong method's 405) and preflights to unknown paths included. The client stays on
+CapacitorHttp for now; switching it off is a separate decision.
 
 ## Build
 

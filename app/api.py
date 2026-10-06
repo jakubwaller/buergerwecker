@@ -39,8 +39,10 @@ APP_API_ENABLED=1. An open registration endpoint lets anyone create
 subscriptions without a confirmation step, so it stays closed until the app
 ships; device verification (above) is what the open endpoint rests on.
 
-CORS. The app's WebView calls this API cross-origin, so the blueprint answers
-CORS for exactly the Capacitor origins in `CORS_ORIGINS` and nobody else: the
+CORS. The app's WebView calls this API cross-origin, so every response under
+/api/v1 (routing errors such as an unknown path's 404 or a wrong method's 405
+included, which match no blueprint) answers CORS, through app-level hooks
+(`register_cors`) keyed on the path prefix, for exactly the Capacitor origins in `CORS_ORIGINS` and nobody else: the
 origin is echoed only on an exact match (never `*`, never reflected), no
 credentials flag (auth is a Bearer header, not a cookie), `Vary: Origin`
 always. An OPTIONS preflight is answered 204 before the gate, so it succeeds
@@ -118,27 +120,44 @@ _CORS_HEADERS = "Authorization, Content-Type"
 _CORS_MAX_AGE = "86400"
 
 
-@api.before_request
+def _in_api() -> bool:
+    return request.path == "/api/v1" or request.path.startswith("/api/v1/")
+
+
+def _is_preflight() -> bool:
+    return request.method == "OPTIONS" and "Access-Control-Request-Method" in request.headers
+
+
 def _preflight():
-    """Answer a CORS preflight for every /api/v1 route, ahead of the gate and
-    of authentication (a preflight carries no credentials). A disallowed
-    origin gets a bare 204 without CORS headers, which the browser rejects."""
-    if request.method == "OPTIONS" and "Access-Control-Request-Method" in request.headers:
+    """Answer a CORS preflight for every /api/v1 path, ahead of routing's
+    errors, the gate and authentication (a preflight carries no credentials).
+    A disallowed origin gets a bare 204 without CORS headers, which the
+    browser rejects."""
+    if _in_api() and _is_preflight():
         return current_app.response_class(status=204)
     return None
 
 
-@api.after_request
 def _cors(resp):
+    if not _in_api():
+        return resp
     resp.vary.add("Origin")
     origin = request.headers.get("Origin")
     if origin in CORS_ORIGINS:
         resp.headers["Access-Control-Allow-Origin"] = origin
-        if request.method == "OPTIONS" and "Access-Control-Request-Method" in request.headers:
+        if _is_preflight():
             resp.headers["Access-Control-Allow-Methods"] = _CORS_METHODS
             resp.headers["Access-Control-Allow-Headers"] = _CORS_HEADERS
             resp.headers["Access-Control-Max-Age"] = _CORS_MAX_AGE
     return resp
+
+
+def register_cors(app):
+    """Install the CORS hooks on the app, keyed on the path prefix rather than
+    on the blueprint: a routing error (unknown path, wrong method) matches no
+    blueprint, and the app must still be able to read it."""
+    app.before_request(_preflight)
+    app.after_request(_cors)
 
 
 @api.before_request

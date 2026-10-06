@@ -114,3 +114,51 @@ def test_gate_off_disallowed_origin_gets_none(off):
 def test_website_routes_have_no_cors(on):
     r = on.get("/healthz", headers={"Origin": "https://localhost"})
     assert "Access-Control-Allow-Origin" not in r.headers
+
+
+def test_unknown_api_path_404_has_cors(on):
+    r = on.get("/api/v1/nope", headers={"Origin": "https://localhost"})
+    assert r.status_code == 404
+    assert r.headers["Access-Control-Allow-Origin"] == "https://localhost"
+    assert r.headers.getlist("Access-Control-Allow-Origin") == ["https://localhost"]
+    assert "Origin" in r.headers["Vary"]
+
+
+def test_api_root_404_has_cors(on):
+    r = on.get("/api/v1", headers={"Origin": "capacitor://localhost"})
+    assert r.headers["Access-Control-Allow-Origin"] == "capacitor://localhost"
+
+
+def test_wrong_method_405_has_cors(on):
+    r = on.post("/api/v1/cities", headers={"Origin": "https://localhost"})
+    assert r.status_code == 405
+    assert r.headers.getlist("Access-Control-Allow-Origin") == ["https://localhost"]
+
+
+def test_preflight_to_unknown_path(on):
+    r = _preflight(on, "https://localhost", "/api/v1/nope", "GET")
+    assert r.status_code == 204
+    assert r.headers["Access-Control-Allow-Origin"] == "https://localhost"
+    assert r.headers["Access-Control-Allow-Headers"] == "Authorization, Content-Type"
+
+
+def test_unknown_path_disallowed_origin_gets_none(on):
+    r = on.get("/api/v1/nope", headers={"Origin": "https://evil.example"})
+    assert r.status_code == 404
+    assert "Access-Control-Allow-Origin" not in r.headers
+
+
+def test_gate_off_unknown_path_still_404_with_cors(off):
+    r = off.get("/api/v1/nope", headers={"Origin": "https://localhost"})
+    assert r.status_code == 404
+    assert r.headers["Access-Control-Allow-Origin"] == "https://localhost"
+
+
+def test_website_404_has_no_cors(on):
+    r = on.get("/api/v1x", headers={"Origin": "https://localhost"})
+    assert r.status_code == 404
+    assert "Access-Control-Allow-Origin" not in r.headers
+    r = on.get("/nope", headers={"Origin": "https://localhost"})
+    assert r.status_code == 404
+    assert not any(h.startswith("Access-Control-") for h in r.headers.keys())
+    assert "Origin" not in r.headers.get("Vary", "")
