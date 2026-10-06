@@ -14,8 +14,11 @@
 //   - if server.iosScheme / server.androidScheme ever change, the origin
 //     changes with them and CORS_ORIGINS must follow, or every call fails.
 // A CORS or connection failure surfaces as a rejected fetch (a TypeError, no
-// status), which is the "network" error below; an HTTP error is a resolved
-// fetch with a non-2xx status.
+// status), which is the "network" error below; an HTTP error from the app is
+// a resolved fetch with a non-2xx status. An error the proxies generate
+// themselves (Caddy's 502/503 while the container restarts on a deploy, a
+// Cloudflare error or challenge page) never reaches the app, so it carries no
+// CORS headers and also arrives as "network", not as http_5xx.
 //
 // Errors are plain objects, { status, error, message }: `error` is the
 // server's key ("waitlist_full", "token_in_use" …) or one of ours
