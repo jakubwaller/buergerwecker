@@ -62,7 +62,9 @@ client/
   plugins.test.mjs      Package.swift's plugin list held to package.json
   assets/               icon and splash sources (the site's alarm-clock glyph on #2563eb); every
                         size under ios/ and android/ comes from
-                        `npx @capacitor/assets generate --ios --android`
+                        `npx @capacitor/assets generate --ios --android`; afterwards rename
+                        the 1024 px icon it writes into AppIcon.appiconset to AppIcon-1024.png (and in Contents.json), or
+                        tests/test_no_real_pii.py reads the name as an email address
   ios/App/              the Xcode project (SPM, no CocoaPods), iOS 18
     App/                AppDelegate (hands the APNs token to the push plugin), SceneDelegate,
                         Info.plist, App.entitlements (aps-environment), PrivacyInfo.xcprivacy

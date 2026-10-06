@@ -6,7 +6,7 @@ import { assertion, trackBody, parseArgs, retryable, withRetry } from "./play.mj
 test("the assertion is an RS256 JWT Google's token endpoint accepts", () => {
   const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const key = {
-    client_email: "ci@buergerwecker.iam.gserviceaccount.example.com",
+    client_email: "ci@example.com",
     private_key: privateKey.export({ type: "pkcs8", format: "pem" }),
     token_uri: "https://oauth2.googleapis.com/token",
   };
