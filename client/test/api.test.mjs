@@ -74,3 +74,24 @@ test("request: no credentials means a local 401, nothing sent", async () => {
   });
   assert.equal(sent, false);
 });
+
+test("CapacitorHttp stays off: the page's fetch is the WebView's, CORS comes from the server", async () => {
+  const { readFileSync } = await import("node:fs");
+  const cfg = JSON.parse(readFileSync(new URL("../capacitor.config.json", import.meta.url), "utf8"));
+  assert.equal(cfg.plugins.CapacitorHttp.enabled, false);
+  // CORS_ORIGINS in app/api.py is derived from the default schemes.
+  assert.equal(cfg.server?.iosScheme, undefined, "a custom iosScheme changes the origin: update CORS_ORIGINS");
+  assert.equal(cfg.server?.androidScheme, undefined, "a custom androidScheme changes the origin: update CORS_ORIGINS");
+});
+
+test("request headers stay within what the server's CORS preflight allows", async () => {
+  const allowed = new Set(["accept", "authorization", "content-type"]);
+  configure({ getCredentials: () => ({ id: 1, secret: "s" }) });
+  const seen = [];
+  const fetchImpl = async (_url, opts) => { seen.push(Object.keys(opts.headers)); return res(200, {}); };
+  await request("GET", "/x", { fetchImpl });
+  await request("POST", "/x", { body: { a: 1 }, auth: true, fetchImpl });
+  await request("DELETE", "/x", { auth: true, fetchImpl });
+  assert.equal(seen.length, 3);
+  for (const names of seen) for (const n of names) assert.ok(allowed.has(n.toLowerCase()), `header ${n} would fail CORS preflight`);
+});
