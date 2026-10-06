@@ -4,7 +4,19 @@ import pytest
 
 from app.db import connect, init_schema
 from app.web import create_app
-from tests.test_api import _ENV
+_ENV = {
+    "TOKEN_SECRET_PRIMARY": "x" * 32, "TOKEN_SECRET_PREVIOUS": "",
+    "SUBSCRIPTION_TTL_DAYS": "90", "SENSITIVE_SUBSCRIPTION_TTL_DAYS": "30",
+    "SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR": "99",
+    "SUBSCRIBE_RATELIMIT_PER_EMAIL_PER_DAY": "99",
+    "MAILJET_API_KEY": "m", "MAILJET_API_SECRET": "m", "MAILJET_FROM_EMAIL": "x@x",
+    "MAILJET_FROM_NAME": "x", "MAILJET_DAILY_QUOTA": "6000",
+    "ADMIN_TOKEN": "a" * 32, "PUBLIC_BASE_URL": "https://x",
+    "DEDUP_WINDOW_HOURS": "24", "RATE_LIMIT_MINUTES": "15",
+    "RENEWAL_REMINDER_DAYS_BEFORE": "10", "MAX_PLANS_PER_CITY": "10",
+    "PARSER_CANARY_THRESHOLD_HOURS": "2", "DEVELOPER_EMAIL": "dev@x",
+    "KOFI_URL": "https://k",
+}
 
 ALLOWED = ["https://localhost", "capacitor://localhost"]
 
