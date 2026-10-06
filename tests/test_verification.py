@@ -512,17 +512,33 @@ def test_the_stored_code_is_the_claim_one_sender_per_device_per_minute(client, m
     assert len(third.calls) == 1 and _row(dev)["verify_code_hash"] != first
 
 
-def test_a_resend_clears_the_code_stamp_and_sends_at_once(relay):
+def test_a_resend_leaves_an_in_flight_code_alone(client):
+    dev, secret = _register(client, verified=False)       # no credentials: stored, unsent
+    before = _row(dev)
+    assert before["verify_code_hash"] and before["verify_code_at"]
+    with patch("app.push._post", Relay()) as r:
+        assert client.post("/api/v1/device/verify/resend",
+                           headers=_auth(dev, secret)).status_code == 202
+    after = _row(dev)
+    assert r.calls == []                                   # the claim is held
+    assert after["verify_code_hash"] == before["verify_code_hash"]
+    assert after["verify_code_at"] == before["verify_code_at"]
+
+
+def test_a_resend_clears_a_stale_code_and_sends_a_new_one(relay):
     client, r = relay
     dev, secret = _register(client, verified=False)
-    _age_deliveries(dev)
+    old = _row(dev)["verify_code_hash"]
+    # Age the delivery rows only; the code's own stamp is aged on its own.
+    _db().execute("UPDATE sent_idempotency SET sent_at=datetime(sent_at,'-2 minutes'), "
+                  "idem_key=idem_key || '-old' WHERE idem_key LIKE ?", (f"verify|{dev}|%",))
+    _backdate(dev, "verify_code_at", "-61 seconds")
     assert client.post("/api/v1/device/verify/resend",
                        headers=_auth(dev, secret)).status_code == 202
     assert len(r.calls) == 2
-    # Cleared by the request, stored again by the send that followed.
-    from app.repo import request_verification
-    request_verification(_db(), dev)
-    assert _row(dev)["verify_code_at"] is None
+    assert _row(dev)["verify_code_hash"] not in (None, old)
+    assert _post_code(client, _auth(dev, secret), r.codes()[0]).status_code == 400
+    assert _post_code(client, _auth(dev, secret), r.codes()[1]).status_code == 200
 
 
 def test_a_request_older_than_a_day_is_no_longer_swept(client, monkeypatch):

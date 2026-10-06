@@ -84,7 +84,7 @@ def register_device(conn: sqlite3.Connection, *, platform: str, token: str,
         "UPDATE push_devices SET pending_secret_hash=?, "
         "pending_since=CURRENT_TIMESTAMP, retired_at=NULL, retire_reason=NULL, "
         "dead_since=NULL WHERE id=?", (secret_hash, existing["id"]))
-    request_verification(conn, existing["id"], keep_code=True)
+    request_verification(conn, existing["id"], code="keep")
     return existing["id"]
 
 
@@ -162,21 +162,33 @@ def mark_verification_sent(conn: sqlite3.Connection,
 
 
 def request_verification(conn: sqlite3.Connection, device_id: int, *,
-                         keep_code: bool = False) -> None:
+                         code: str = "drop") -> None:
     """Stamp a new verification request: `verify_requested_at` restarts (so
     the poller's sweep grace always covers the web request's own send) and
-    `verify_sent_at` clears, whatever the sender's rules then decide. A
-    resend or a token change also drops the old code, so it stops working at
-    once, and its stamp goes with it so the next send is not held back; a
-    re-registration keeps both (`keep_code`): the code was delivered to the
-    same token and stays valid until a new one replaces it, and the next send
-    waits until it is a minute old, as the one-a-minute rule wants."""
+    `verify_sent_at` clears, whatever the sender's rules then decide. What
+    happens to the stored code and its stamp depends on the path:
+
+    - "drop" (a token change): cleared unconditionally; a code made for the
+      old token is useless and must stop working.
+    - "drop_if_stale" (a resend): cleared only when the code is absent or at
+      least 60 seconds old. A younger one is either in flight (the sender that
+      stored it will deliver it) or was just delivered, and clearing it would
+      let the resend bypass the claim: the in-flight sender would deliver a
+      code the database no longer holds.
+    - "keep" (a re-registration): kept; the code was delivered to the same
+      token and stays valid until a new one replaces it, and the next send
+      waits until it is a minute old, as the one-a-minute rule wants."""
+    if code == "drop":
+        clear = "verify_code_hash=NULL, verify_code_at=NULL "
+    elif code == "drop_if_stale":
+        stale = "(verify_code_at IS NULL OR verify_code_at <= datetime('now','-60 seconds'))"
+        clear = (f"verify_code_hash=CASE WHEN {stale} THEN NULL ELSE verify_code_hash END, "
+                 f"verify_code_at=CASE WHEN {stale} THEN NULL ELSE verify_code_at END ")
+    else:
+        clear = "verify_code_hash=verify_code_hash "
     conn.execute(
         "UPDATE push_devices SET verify_requested_at=CURRENT_TIMESTAMP, "
-        "verify_sent_at=NULL, "
-        f"verify_code_hash={'verify_code_hash' if keep_code else 'NULL'}, "
-        f"verify_code_at={'verify_code_at' if keep_code else 'NULL'} "
-        "WHERE id=?", (device_id,))
+        f"verify_sent_at=NULL, {clear}WHERE id=?", (device_id,))
 
 
 def pending_secret_fresh(conn: sqlite3.Connection, device_id: int) -> bool:

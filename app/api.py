@@ -354,7 +354,7 @@ def device_verify_resend():
     if wait > 0:
         return _error("rate_limited", 429, lang, retry_after=wait)
     with transaction(g.conn):
-        request_verification(g.conn, g.device["id"])
+        request_verification(g.conn, g.device["id"], code="drop_if_stale")
     _send_verification(g.conn, g.device["id"])
     return jsonify({"verified": False}), 202
 
