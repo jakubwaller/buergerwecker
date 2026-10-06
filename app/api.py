@@ -292,7 +292,7 @@ def city_slots(slug):
         services.append({
             "id": entry["service_uuid"],
             "name": cat.appointment_type_label(entry["service_uuid"], lang),
-            "polled_at": entry["polled_at"],
+            "polled_at": _iso_sql(entry["polled_at"]),
             "n_total": entry["n_total"],
             "earliest": slots[0] if slots else None,
             "slots": slots,
@@ -300,7 +300,14 @@ def city_slots(slug):
         if newest is None or entry["polled_at"] > newest:
             newest = entry["polled_at"]
     services.sort(key=lambda e: e["name"].casefold())
-    return jsonify({"slug": slug, "polled_at": newest, "services": services})
+    return jsonify({"slug": slug, "polled_at": _iso_sql(newest), "services": services})
+
+
+def _iso_sql(ts: str | None) -> str | None:
+    """SQLite's UTC shape ("2026-06-08 12:00:00") as ISO 8601 with the Z the
+    app's date parser needs; the subscription timestamps go out the same way
+    (`_iso`)."""
+    return f"{ts[:10]}T{ts[11:19]}Z" if ts else None
 
 
 def _office_label(cat, city_name: str, lang: str, fallback: str) -> str:

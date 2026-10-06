@@ -208,21 +208,23 @@ CREATE TABLE IF NOT EXISTS email_suppressions (
 CREATE INDEX IF NOT EXISTS idx_suppressed
   ON email_suppressions(reason) WHERE reason IS NOT NULL;
 
--- The last successful poll of each plan, for the app's live overview and
--- widget (app/snapshots.py): the soonest slots as compact JSON, the count
--- before the cap, and when. Replaced every cycle the plan is polled; a
--- failed poll leaves the previous row. Pruned after a day, so a plan nobody
--- watches any more does not outlive the inventory it described. Read by
+-- The last successful poll of each watched service, for the app's live
+-- overview and widget (app/snapshots.py): the soonest slots as compact
+-- JSON, the count before the cap, and when. One row per (city, service),
+-- the union of the plans that cover it, replaced every cycle all of them
+-- succeed; a failed poll leaves the previous row. Keyed by service rather
+-- than by plan because a plan's key names its office set and changes with
+-- every edit. Pruned after a day, so a service nobody watches any more does
+-- not outlive the inventory it described. Read by
 -- GET /api/v1/cities/<slug>/slots, never by the notification path.
 CREATE TABLE IF NOT EXISTS slot_snapshots (
-  plan_key     TEXT PRIMARY KEY,
   city         TEXT NOT NULL,
   service_uuid TEXT NOT NULL,
   slots_json   TEXT NOT NULL,
   n_total      INTEGER NOT NULL,
-  polled_at    TIMESTAMP NOT NULL
+  polled_at    TIMESTAMP NOT NULL,
+  PRIMARY KEY (city, service_uuid)
 );
-CREATE INDEX IF NOT EXISTS idx_slot_snapshots_city ON slot_snapshots(city);
 
 CREATE TABLE IF NOT EXISTS meta (
   key        TEXT PRIMARY KEY,

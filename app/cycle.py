@@ -298,9 +298,10 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
             slots_by_city[p.city].append(slot)
     record_availability(conn, slots_by_city, polled_ok)
     # The app's overview reads the last poll from here rather than polling
-    # the city itself. Only plans that were actually polled this cycle: a
-    # failed poll keeps the previous snapshot, with its older polled_at.
-    record_snapshots(conn, plans_ok, slots_by_plan)
+    # the city itself. One row per service, written only when every plan of
+    # the service succeeded this cycle: a failed poll keeps the previous
+    # snapshot, with its older polled_at.
+    record_snapshots(conn, plans, cities_polled, plans_ok, slots_by_plan)
 
     now = datetime.utcnow()
     max_multiplier = getattr(cfg, "adaptive_rate_limit_max_multiplier",
