@@ -48,15 +48,15 @@ def register_device(conn: sqlite3.Connection, *, platform: str, token: str,
     It loses any retirement and any remembered dead answer (the evidence
     clock starts over).
 
-    The same token registering again (reinstall, a phone that changed hands)
-    never breaks the install that already works. On a verified row the new
-    secret is stored as `pending_secret_hash` and the old secret keeps full
-    access (secret, verification, language untouched); the new one has only
-    the three unverified routes, and when its holder posts the code pushed to
-    the token it replaces the old secret, which dies at that moment. Whoever
-    holds the new secret must prove possession of the phone. On a row that
-    was never verified the secret is simply rotated: the old one is
-    worthless.
+    A registration of a known token only ever yields a pending secret, on a
+    verified row and on a never-verified one alike: the existing main secret
+    keeps its access (verified or locked), language and subscriptions stay,
+    and the new secret has only `GET /device` and the verify routes for 24
+    hours. The main secret changes hands only through a posted code: when the
+    pending holder posts the code pushed to the token it replaces the old
+    secret, which dies at that moment; when the main holder posts it, any
+    pending secret is dropped. Whoever holds the new secret must prove
+    possession of the phone.
 
     A repeat registration never refuses: it stamps a new verification request
     and the sender's rules decide whether a push goes out now, within a
@@ -68,24 +68,22 @@ def register_device(conn: sqlite3.Connection, *, platform: str, token: str,
     demand, nor to lock the real app out. A code already delivered stays
     valid until a new one replaces it."""
     existing = conn.execute(
-        "SELECT id, verified_at FROM push_devices WHERE platform=? AND token=?",
+        "SELECT id FROM push_devices WHERE platform=? AND token=?",
         (platform, token)).fetchone()
     if existing is None:
         return conn.execute(
             "INSERT INTO push_devices (platform, token, secret_hash, language, "
             "verify_requested_at) VALUES (?,?,?,?,CURRENT_TIMESTAMP) "
             "RETURNING id", (platform, token, secret_hash, language)).fetchone()[0]
-    if existing["verified_at"] is not None:
-        conn.execute(
-            "UPDATE push_devices SET pending_secret_hash=?, retired_at=NULL, "
-            "retire_reason=NULL, dead_since=NULL WHERE id=?",
-            (secret_hash, existing["id"]))
-    else:
-        conn.execute(
-            "UPDATE push_devices SET secret_hash=?, pending_secret_hash=NULL, "
-            "language=?, retired_at=NULL, retire_reason=NULL, dead_since=NULL, "
-            "last_seen_at=CURRENT_TIMESTAMP WHERE id=?",
-            (secret_hash, language, existing["id"]))
+    # The main secret is never touched, verified row or not: it changes hands
+    # only through a posted code. A row can be unverified while it holds a real
+    # user's subscriptions (a token change pauses them), and rotating its
+    # secret to whoever knows the token would hand them DELETE /device and
+    # the subscriptions.
+    conn.execute(
+        "UPDATE push_devices SET pending_secret_hash=?, "
+        "pending_since=CURRENT_TIMESTAMP, retired_at=NULL, retire_reason=NULL, "
+        "dead_since=NULL WHERE id=?", (secret_hash, existing["id"]))
     request_verification(conn, existing["id"], keep_code=True)
     return existing["id"]
 
@@ -142,7 +140,8 @@ def devices_awaiting_verification(conn: sqlite3.Connection, *,
 
 def set_verify_code(conn: sqlite3.Connection, device_id: int,
                     code_hash: str) -> None:
-    conn.execute("UPDATE push_devices SET verify_code_hash=? WHERE id=?",
+    conn.execute("UPDATE push_devices SET verify_code_hash=?, "
+                 "verify_code_at=CURRENT_TIMESTAMP WHERE id=?",
                  (code_hash, device_id))
 
 
@@ -169,10 +168,10 @@ def request_verification(conn: sqlite3.Connection, device_id: int, *,
 
 
 def pending_secret_fresh(conn: sqlite3.Connection, device_id: int) -> bool:
-    """A pending secret is usable for 24 hours after the request that
-    created it."""
+    """A pending secret is usable for 24 hours from when it was stored
+    (`pending_since`, which a resend or re-registration does not move)."""
     row = conn.execute(
-        "SELECT verify_requested_at > datetime('now', ?) AS fresh "
+        "SELECT pending_since > datetime('now', ?) AS fresh "
         "FROM push_devices WHERE id=?", (VERIFY_WINDOW, device_id)).fetchone()
     return bool(row and row["fresh"])
 
@@ -194,7 +193,7 @@ def verify_device(conn: sqlite3.Connection, device_id: int, code: str, *,
     from app.api import _hash
     row = conn.execute(
         "SELECT verify_code_hash, pending_secret_hash, "
-        "verify_requested_at > datetime('now', ?) AS fresh "
+        "verify_code_at > datetime('now', ?) AS fresh "
         "FROM push_devices WHERE id=?", (VERIFY_WINDOW, device_id)).fetchone()
     if row is None or not row["verify_code_hash"] or not row["fresh"]:
         return False
@@ -203,14 +202,17 @@ def verify_device(conn: sqlite3.Connection, device_id: int, code: str, *,
     if pending_hash is not None:
         cur = conn.execute(
             "UPDATE push_devices SET secret_hash=pending_secret_hash, "
-            "pending_secret_hash=NULL, verified_at=CURRENT_TIMESTAMP, "
+            "pending_secret_hash=NULL, pending_since=NULL, "
+            "verified_at=CURRENT_TIMESTAMP, "
             "verify_code_hash=NULL WHERE id=? AND pending_secret_hash=?",
             (device_id, pending_hash))
         if cur.rowcount == 0:
             return False
     else:
+        # The owner proved possession: a stranger's pending secret is dropped.
         conn.execute("UPDATE push_devices SET verified_at=CURRENT_TIMESTAMP, "
-                     "verify_code_hash=NULL WHERE id=?", (device_id,))
+                     "verify_code_hash=NULL, pending_secret_hash=NULL, "
+                     "pending_since=NULL WHERE id=?", (device_id,))
     return True
 
 

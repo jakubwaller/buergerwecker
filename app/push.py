@@ -158,6 +158,11 @@ def render_checkin(lang: str, *, sub_id: int, city_name: str | None,
         collapse_id=f"checkin-{sub_id}")
 
 
+def _verify_minute() -> str:
+    """The UTC minute of this attempt, the last part of the idempotency key."""
+    return datetime.utcnow().strftime("%Y%m%d%H%M")
+
+
 def send_verifications(conn: sqlite3.Connection, cfg, *,
                        device_ids: list[int] | None = None) -> int:
     """Push a one-time code to every device awaiting verification (or just
@@ -165,9 +170,13 @@ def send_verifications(conn: sqlite3.Connection, cfg, *,
     gives is posting the code back (`POST /device/verify`).
 
     The code is made here, at send time, so only its hash is ever stored; it
-    travels in the push payload and nowhere else. The idempotency key carries
-    the first 16 hex of that hash: unique per attempt, no plaintext in the
-    database. `verify_sent_at` is stamped only for delivered pushes, so a
+    travels in the push payload and nowhere else. The idempotency key is
+    `verify|<device_id>|<UTC minute>`: `send_push_batch` claims it atomically,
+    so two senders in the same minute (two web workers, or the web request and
+    the poller) cannot both deliver, and nothing but the hash of a code
+    is in the database. The five-a-day count (`verify_push_wait`) is a read
+    before the send: under concurrency it is approximate, bounded by the
+    one-a-minute claim. `verify_sent_at` is stamped only for delivered pushes, so a
     device whose push could not go out (no credentials, relay down) is picked
     up again by the poller's sweep, for as long as the request is under 24
     hours old, and never more than MAX_VERIFY_PUSHES_PER_DAY a device a day.
@@ -189,10 +198,12 @@ def send_verifications(conn: sqlite3.Connection, cfg, *,
     with transaction(conn):
         for row in rows:
             lang = "en" if row["language"] == "en" else "de"
+            key = f"verify|{row['id']}|{_verify_minute()}"
+            if conn.execute("SELECT 1 FROM sent_idempotency WHERE idem_key=?",
+                            (key,)).fetchone():
+                continue    # another sender holds this minute's claim
             code = secrets.token_urlsafe(16)
-            code_hash = _hash(code)
-            set_verify_code(conn, row["id"], code_hash)
-            key = f"verify|{row['id']}|{code_hash[:16]}"
+            set_verify_code(conn, row["id"], _hash(code))
             # No subscription is involved, and OutgoingPush has no sub_id
             # field: the `sub` key of a slots or check-in push is simply
             # absent from this payload.

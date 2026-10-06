@@ -58,8 +58,10 @@ def _row(dev):
 def _age_deliveries(dev, minutes=2):
     """Make the device's delivered verification pushes `minutes` older: the
     one-a-minute and five-a-day limits are measured from these rows."""
-    _db().execute("UPDATE sent_idempotency SET sent_at=datetime(sent_at, ?) "
-                  "WHERE idem_key LIKE ?", (f"-{minutes} minutes", f"verify|{dev}|%"))
+    # The key changes too: a real delivery that old has a different minute.
+    _db().execute("UPDATE sent_idempotency SET sent_at=datetime(sent_at, ?), "
+                  "idem_key=idem_key || '-' || abs(random()) WHERE idem_key LIKE ?",
+                  (f"-{minutes} minutes", f"verify|{dev}|%"))
 
 
 def _backdate(dev, column, modifier):
@@ -134,7 +136,8 @@ def test_registering_pushes_a_code_and_posting_it_unlocks_the_device(relay):
     code = payload["code"]
     assert row["verify_code_hash"] == hashlib.sha256(code.encode()).hexdigest()
     keys = [k[0] for k in _db().execute("SELECT idem_key FROM sent_idempotency")]
-    assert keys == [f"verify|{dev}|{row['verify_code_hash'][:16]}"]
+    import re
+    assert len(keys) == 1 and re.fullmatch(rf"verify\|{dev}\|\d{{12}}", keys[0])
     assert code not in "".join(keys)
 
     assert _subscribe(client, auth).status_code == 403
@@ -160,7 +163,7 @@ def test_a_wrong_missing_or_expired_code_is_invalid(relay):
         resp = client.post("/api/v1/device/verify", json=body, headers=auth)
         assert resp.status_code == 400 and resp.get_json()["error"] == "invalid_code"
     assert resp.get_json()["message"] == "Der Code ist ungültig oder abgelaufen."
-    _backdate(dev, "verify_requested_at", "-25 hours")
+    _backdate(dev, "verify_code_at", "-25 hours")
     assert _post_code(client, auth, r.codes()[0]).status_code == 400
     assert _row(dev)["verified_at"] is None
 
@@ -224,9 +227,26 @@ def test_a_pending_secret_older_than_a_day_is_unauthorized(relay):
     dev, secret = _register(client, verified=True)
     _, new = _register(client, verified=False)
     assert client.get("/api/v1/device", headers=_auth(dev, new)).status_code == 200
-    _backdate(dev, "verify_requested_at", "-25 hours")
+    _backdate(dev, "pending_since", "-25 hours")
     assert client.get("/api/v1/device", headers=_auth(dev, new)).status_code == 401
     assert client.get("/api/v1/device", headers=_auth(dev, secret)).status_code == 200
+    # A resend re-stamps the request but does not extend the pending secret.
+    _age_deliveries(dev)
+    assert client.post("/api/v1/device/verify/resend",
+                       headers=_auth(dev, secret)).status_code == 200  # verified: no-op
+    _db().execute("UPDATE push_devices SET verify_requested_at=datetime('now') "
+                  "WHERE id=?", (dev,))
+    assert client.get("/api/v1/device", headers=_auth(dev, new)).status_code == 401
+
+
+def test_a_code_does_not_live_on_because_the_request_was_restamped(relay):
+    client, r = relay
+    dev, secret = _register(client, verified=False)
+    _backdate(dev, "verify_code_at", "-25 hours")
+    _age_deliveries(dev)
+    _register(client, verified=False)                  # re-stamps verify_requested_at
+    assert _row(dev)["verify_requested_at"] > "2000"
+    assert _post_code(client, _auth(dev, secret), r.codes()[0]).status_code == 400
 
 
 def test_a_token_change_unverifies_and_pauses_subscriptions_until_the_new_token_verifies(relay):
@@ -261,25 +281,73 @@ def test_swapping_the_token_for_junk_does_not_mint_verified_devices(relay):
     assert active_subscriptions(_db()) == []           # nothing counts toward a cap
 
 
-def test_registering_again_inside_a_minute_sends_nothing_but_rotates_and_restamps(relay):
+def test_registering_again_inside_a_minute_sends_nothing_and_never_touches_the_secret(relay):
     client, r = relay
     dev, secret = _register(client, verified=False)
     code = r.codes()[0]
     before = _row(dev)
-    _db().execute("UPDATE push_devices SET verify_requested_at="
-                  "datetime('now','-10 seconds') WHERE id=?", (dev,))
     _, new_secret = _register(client, verified=False)
     after = _row(dev)
     assert len(r.calls) == 1 and new_secret != secret
-    assert after["secret_hash"] != before["secret_hash"]   # never verified: rotated
-    assert after["verify_requested_at"] > "2000"           # stamped afresh
-    assert after["verify_sent_at"] is None                 # the sender decides
+    assert after["secret_hash"] == before["secret_hash"]       # never rotated
+    assert after["pending_secret_hash"] == hashlib.sha256(new_secret.encode()).hexdigest()
+    assert after["verify_sent_at"] is None                     # the sender decides
     assert after["verify_code_hash"] == before["verify_code_hash"]
-    # The delivered code still works for the new holder.
+    # The old (locked) secret still works, the new one is pending.
+    assert client.get("/api/v1/device", headers=_auth(dev, secret)).status_code == 200
+    assert _subscribe(client, _auth(dev, secret)).status_code == 403
+    assert _subscribe(client, _auth(dev, new_secret)).status_code == 403
+    # The delivered code promotes the pending secret; the old one dies.
     assert _post_code(client, _auth(dev, new_secret), code).status_code == 200
+    assert client.get("/api/v1/device", headers=_auth(dev, secret)).status_code == 401
+    assert _subscribe(client, _auth(dev, new_secret)).status_code == 201
     _age_deliveries(dev)
     _register(client, verified=False)
     assert len(r.calls) == 2
+
+
+def test_a_registration_cannot_take_over_a_row_that_holds_subscriptions(relay):
+    client, r = relay
+    dev, secret = _register(client, token="T")
+    own = _auth(dev, secret)
+    sub = _subscribe(client, own).get_json()["id"]
+    _age_deliveries(dev)
+    client.put("/api/v1/device", json={"token": "T2"}, headers=own)   # unverified now
+    _age_deliveries(dev)
+    # A stranger who knows the new token registers it.
+    dev2, stranger = _register(client, token="T2", verified=False)
+    assert dev2 == dev
+    pend = _auth(dev, stranger)
+    for resp in (client.put("/api/v1/device", json={"token": "x"}, headers=pend),
+                 client.delete("/api/v1/device", headers=pend)):
+        assert resp.status_code == 403
+    assert client.get("/api/v1/device", headers=pend).get_json()["subscriptions"] == []
+    # The owner's secret still works and verifies with the code on the new token.
+    assert client.get("/api/v1/device", headers=own).status_code == 200
+    assert _post_code(client, own, r.codes()[-1]).status_code == 200
+    assert _row(dev)["pending_secret_hash"] is None
+    assert [s["id"] for s in client.get("/api/v1/subscriptions",
+                                        headers=own).get_json()["subscriptions"]] == [sub]
+    assert client.get("/api/v1/device", headers=pend).status_code == 401
+
+
+def test_the_minute_claim_stops_a_second_sender(client, monkeypatch):
+    dev, _ = _register(client, verified=False)
+    _backdate(dev, "verify_requested_at", "-1 minutes")
+    _enable_push(monkeypatch)
+    conn = _db()
+    with patch("app.push._verify_minute", return_value="202601010000"):
+        conn.execute("INSERT INTO sent_idempotency (idem_key, provider) "
+                     "VALUES (?, 'pending')", (f"verify|{dev}|202601010000",))
+        with patch("app.push._post", Relay()) as r:
+            assert send_verifications(conn, load_config()) == 0
+        assert r.calls == []
+        conn.execute("DELETE FROM sent_idempotency")
+        with patch("app.push._post", Relay()) as r:
+            assert send_verifications(conn, load_config()) == 1
+        assert len(r.calls) == 1
+    assert [k[0] for k in conn.execute("SELECT idem_key FROM sent_idempotency")] \
+        == [f"verify|{dev}|202601010000"]
 
 
 def test_a_pending_secret_replaced_in_between_is_never_promoted_by_the_old_code(relay):

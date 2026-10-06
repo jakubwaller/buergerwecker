@@ -484,12 +484,14 @@ again included) makes the server push a one-time code to the token
 answers `403 {"error": "device_unverified"}`. The app shows "waiting for the
 test notification" meanwhile, and may ask for a new push with
 `POST /device/verify/resend` (once a minute; the old code stops working). A code
-is valid 24 hours and stored only as a hash. The web container sends the push
+is valid 24 hours from when it was made and stored only as a hash (a pending
+secret likewise 24 hours from when it was stored; resends and re-registrations
+do not extend either). The web container sends the push
 itself inside the register request when it has the `APNS_*`/`FCM_*`
 credentials; otherwise (or when the relay is down) the poller sweeps once a
-minute and sends it, for up to 24 hours. Registering a verified token again
-never breaks the install that works: the old secret keeps full access, the new
-one is pending (`GET /device` and the two verify routes only, usable 24 hours)
+minute and sends it, for up to 24 hours. Registering a known token again (verified or not)
+never touches the existing secret, so it never breaks the install that works and
+cannot take a row over: the old secret keeps its access, the new one is pending (`GET /device` and the two verify routes only, usable 24 hours)
 and replaces the old secret the moment its holder posts the code (exactly the
 secret that authenticated that call). A device's main secret may always call
 `GET/PUT/DELETE /device` and the verify routes, verified or not, so a device
@@ -500,7 +502,8 @@ nor count toward a city's plan cap until it verifies again. The same token can t
 verification push a minute and five a day, both measured from delivered pushes
 in the database; register and token change never refuse, they stamp the
 request and the sender decides when it goes out (resend answers 429 with
-`retry_after`). The operator dashboard counts only subscriptions that run. `GET /device` shows an unverified device no subscriptions. A device that never verified and
+`retry_after`); the minute rule is an atomic claim on the idempotency key
+`verify|<device_id>|<UTC minute>`. The operator dashboard counts only subscriptions that run. `GET /device` shows an unverified device no subscriptions. A device that never verified and
 holds no subscription is purged after a day (housekeeping). An app that shows
 "waiting for the test notification" forever therefore means `APNS_*`/`FCM_*`
 are missing or wrong on the VPS: check `docker compose logs poller | grep
