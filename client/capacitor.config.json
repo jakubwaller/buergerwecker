@@ -14,7 +14,7 @@
       "enabled": false
     },
     "CapacitorHttp": {
-      "enabled": true
+      "enabled": false
     },
     "PushNotifications": {
       "presentationOptions": []

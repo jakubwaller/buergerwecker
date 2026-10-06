@@ -55,7 +55,7 @@ server's `APP_API_ENABLED` gate is closed (every route `404 not_available`) the 
 ```
 client/
   package.json          Capacitor and its plugins: push-notifications, preferences, browser, app
-  capacitor.config.json appId de.buergerwecker.app, webDir www; CapacitorHttp on (below)
+  capacitor.config.json appId de.buergerwecker.app, webDir www; CapacitorHttp off (below)
   check-www.js          `npm run build`: www/ IS the source, so the build only checks that every
                         import and every file index.html loads exists
   www/                  the app: index.html, app.js (start-up, frame, notification taps),
@@ -92,12 +92,16 @@ client/
 Bundle id and applicationId `de.buergerwecker.app` on both platforms — the server's
 `APNS_TOPIC` is this bundle id. URL scheme `buergerwecker://`.
 
-**CapacitorHttp is enabled**, which routes the page's `fetch` through native HTTP. It was needed
-because the API sent no CORS headers; the server now answers CORS for the page's origins,
-`capacitor://localhost` (iOS) and `https://localhost` (Android) (`CORS_ORIGINS` in `app/api.py`),
-so the setting could go. Every response under `/api/v1` carries them, routing errors (an unknown
-path's 404, a wrong method's 405) and preflights to unknown paths included. The client stays on
-CapacitorHttp for now; switching it off is a separate decision.
+**CapacitorHttp is off**: the page's `fetch` is the WebView's own. The page's origin is
+`capacitor://localhost` (iOS) or `https://localhost` (Android), so every API call is
+cross-origin, and it works because the server answers CORS for exactly those two origins on
+every response under `/api/v1`, routing errors and preflights included (`CORS_ORIGINS` and
+`register_cors` in `app/api.py`). Two rules follow. Request headers stay within `Accept`,
+`Authorization` and `Content-Type` (the server's preflight allows no others; a test holds
+`api.js` to it). And if `server.iosScheme` or `androidScheme` is ever set in
+`capacitor.config.json`, the origin changes and `CORS_ORIGINS` must change with it, or every call
+fails. The page's CSP (`connect-src`) names `https://buergerwecker.de` only. The native widgets
+fetch in Swift and Java, outside the WebView, and need no CORS.
 
 ## Build
 

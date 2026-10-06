@@ -3,10 +3,22 @@
 // own site (the booking page opens in the system browser, via the server's
 // /go/<slug> redirect).
 //
-// Requests run through Capacitor's native HTTP (CapacitorHttp in
-// capacitor.config.json patches fetch). The page's origin is
-// capacitor://localhost / https://localhost; the API now answers CORS for
-// both, so a plain WebView fetch would also work (see client/README.md).
+// Requests are the WebView's own fetch (CapacitorHttp is off in
+// capacitor.config.json). The page's origin is capacitor://localhost on iOS
+// and https://localhost on Android, so every call is cross-origin and works
+// only because the server answers CORS for exactly those two origins on every
+// /api/v1 response (CORS_ORIGINS in app/api.py). Two things follow:
+//   - request headers stay within Accept, Authorization and Content-Type: the
+//     server's preflight allows only the last two beyond the safelisted ones,
+//     so any other custom header would fail the preflight (a test holds this);
+//   - if server.iosScheme / server.androidScheme ever change, the origin
+//     changes with them and CORS_ORIGINS must follow, or every call fails.
+// A CORS or connection failure surfaces as a rejected fetch (a TypeError, no
+// status), which is the "network" error below; an HTTP error from the app is
+// a resolved fetch with a non-2xx status. An error the proxies generate
+// themselves (Caddy's 502/503 while the container restarts on a deploy, a
+// Cloudflare error or challenge page) never reaches the app, so it carries no
+// CORS headers and also arrives as "network", not as http_5xx.
 //
 // Errors are plain objects, { status, error, message }: `error` is the
 // server's key ("waitlist_full", "token_in_use" …) or one of ours
@@ -80,8 +92,9 @@ export async function request(method, path, { body, auth = false, fetchImpl = gl
   }
   const ctrl = typeof AbortController === "function" ? new AbortController() : null;
   let timer;
-  // The race, not only the abort signal: the native HTTP bridge does not
-  // promise to honour the signal, and the timeout has to hold either way.
+  // The race as well as the abort signal: the timeout also has to cover a
+  // body that stalls after the headers arrived, and a fetch stub that ignores
+  // the signal.
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => {
       ctrl?.abort();
