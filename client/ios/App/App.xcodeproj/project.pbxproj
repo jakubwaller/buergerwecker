@@ -7,7 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0834DC86F690097936817A74 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 34DC556A8E21A7DA9EADC456 /* Foundation.framework */; };
+		0D9E38309F7FEC19DA6EF3AE /* WidgetBridgePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AA7719A838125726430E6C0 /* WidgetBridgePlugin.swift */; };
+		181E0F320DECB991CF5E0190 /* MainViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DF82FFB5D207CA3D253597D /* MainViewController.swift */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
+		48F5C3E383C556B45EE98BA3 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 22F5FD8C45D46D60FC6BEBF2 /* PrivacyInfo.xcprivacy */; };
 		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
 		504EC3081FED79650016851F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504EC3071FED79650016851F /* AppDelegate.swift */; };
@@ -15,12 +19,47 @@
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
+		5DCA71A199B41A6CAAF83ACA /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 311496AD4E12339E7A3E351F /* Localizable.strings */; };
+		8F722F4F577E1A51B4372D13 /* BuergerweckerWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 556970A75EAFAE8D15E84C29 /* BuergerweckerWidget.swift */; };
 		9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9582B6822FE993A50072D4E8 /* SceneDelegate.swift */; };
+		A0A63534C1EFF8E97EF3E4B9 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4470BC2716D062FF388C7F0E /* SwiftUI.framework */; };
 		B0E1A0022F00000100C0FFEE /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B0E1A0012F00000100C0FFEE /* PrivacyInfo.xcprivacy */; };
+		D9B3C8616D7A5508210BE4C5 /* BuergerweckerWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 60DD25599925B6A759E64537 /* BuergerweckerWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		DCD8930F37BFE7984249C483 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4DFCD97884D6B9B136D12E35 /* WidgetKit.framework */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		3884728DD72426BFD9967E39 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 69193429B4355F0A1B30B728;
+			remoteInfo = BuergerweckerWidget;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		6BCAAE390A7768863CD75AE5 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				D9B3C8616D7A5508210BE4C5 /* BuergerweckerWidget.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		22F5FD8C45D46D60FC6BEBF2 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
+		34DC556A8E21A7DA9EADC456 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		3AA7719A838125726430E6C0 /* WidgetBridgePlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WidgetBridgePlugin.swift; sourceTree = "<group>"; };
+		3EED67395BE73C3FA227852B /* BuergerweckerWidget.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = BuergerweckerWidget.entitlements; sourceTree = "<group>"; };
+		4470BC2716D062FF388C7F0E /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		4DFCD97884D6B9B136D12E35 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
 		504EC3041FED79650016851F /* App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = App.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		504EC3071FED79650016851F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -28,11 +67,17 @@
 		504EC30E1FED79650016851F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		504EC3111FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		504EC3131FED79650016851F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		50A4E81FE9A825E5B64C7FEE /* en */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
+		556970A75EAFAE8D15E84C29 /* BuergerweckerWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BuergerweckerWidget.swift; sourceTree = "<group>"; };
+		60DD25599925B6A759E64537 /* BuergerweckerWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BuergerweckerWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		9582B6822FE993A50072D4E8 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
+		9DF82FFB5D207CA3D253597D /* MainViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MainViewController.swift; sourceTree = "<group>"; };
 		B0E1A0012F00000100C0FFEE /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		B0E1A0032F00000100C0FFEE /* App.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
+		B53288DCF3FD6A05E449BA67 /* de */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = de; path = de.lproj/Localizable.strings; sourceTree = "<group>"; };
+		C13F50A208B2D5C4B7EE9258 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -44,15 +89,37 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		77131F50AAE65BE2E1978E0B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0834DC86F690097936817A74 /* Foundation.framework in Frameworks */,
+				DCD8930F37BFE7984249C483 /* WidgetKit.framework in Frameworks */,
+				A0A63534C1EFF8E97EF3E4B9 /* SwiftUI.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		08F8018BC1367FB664C83E23 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				F5B42EE0DBFD2AB5AC4E69C8 /* iOS */,
+				4DFCD97884D6B9B136D12E35 /* WidgetKit.framework */,
+				4470BC2716D062FF388C7F0E /* SwiftUI.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		504EC2FB1FED79650016851F = {
 			isa = PBXGroup;
 			children = (
 				958DCC722DB07C7200EA8C5F /* debug.xcconfig */,
 				504EC3061FED79650016851F /* App */,
 				504EC3051FED79650016851F /* Products */,
+				08F8018BC1367FB664C83E23 /* Frameworks */,
+				5ED1C629E8D998018B12C023 /* BuergerweckerWidget */,
 			);
 			sourceTree = "<group>";
 		};
@@ -60,6 +127,7 @@
 			isa = PBXGroup;
 			children = (
 				504EC3041FED79650016851F /* App.app */,
+				60DD25599925B6A759E64537 /* BuergerweckerWidget.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -78,8 +146,31 @@
 				B0E1A0032F00000100C0FFEE /* App.entitlements */,
 				2FAD9762203C412B000D30F8 /* config.xml */,
 				50B271D01FEDC1A000F3C39B /* public */,
+				3AA7719A838125726430E6C0 /* WidgetBridgePlugin.swift */,
+				9DF82FFB5D207CA3D253597D /* MainViewController.swift */,
 			);
 			path = App;
+			sourceTree = "<group>";
+		};
+		5ED1C629E8D998018B12C023 /* BuergerweckerWidget */ = {
+			isa = PBXGroup;
+			children = (
+				C13F50A208B2D5C4B7EE9258 /* Info.plist */,
+				3EED67395BE73C3FA227852B /* BuergerweckerWidget.entitlements */,
+				556970A75EAFAE8D15E84C29 /* BuergerweckerWidget.swift */,
+				22F5FD8C45D46D60FC6BEBF2 /* PrivacyInfo.xcprivacy */,
+				311496AD4E12339E7A3E351F /* Localizable.strings */,
+			);
+			name = BuergerweckerWidget;
+			path = BuergerweckerWidget;
+			sourceTree = "<group>";
+		};
+		F5B42EE0DBFD2AB5AC4E69C8 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				34DC556A8E21A7DA9EADC456 /* Foundation.framework */,
+			);
+			name = iOS;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -92,10 +183,12 @@
 				504EC3001FED79650016851F /* Sources */,
 				504EC3011FED79650016851F /* Frameworks */,
 				504EC3021FED79650016851F /* Resources */,
+				6BCAAE390A7768863CD75AE5 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				9409B53FB4A777948457D3D1 /* PBXTargetDependency */,
 			);
 			name = App;
 			packageProductDependencies = (
@@ -104,6 +197,23 @@
 			productName = App;
 			productReference = 504EC3041FED79650016851F /* App.app */;
 			productType = "com.apple.product-type.application";
+		};
+		69193429B4355F0A1B30B728 /* BuergerweckerWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B7849E3A58480A9E2ED6DFE8 /* Build configuration list for PBXNativeTarget "BuergerweckerWidget" */;
+			buildPhases = (
+				65200689A511CF311277B12F /* Sources */,
+				77131F50AAE65BE2E1978E0B /* Frameworks */,
+				F48BC8387A21F305A99E161B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BuergerweckerWidget;
+			productName = BuergerweckerWidget;
+			productReference = 60DD25599925B6A759E64537 /* BuergerweckerWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -139,6 +249,7 @@
 			projectRoot = "";
 			targets = (
 				504EC3031FED79650016851F /* App */,
+				69193429B4355F0A1B30B728 /* BuergerweckerWidget */,
 			);
 		};
 /* End PBXProject section */
@@ -158,6 +269,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		F48BC8387A21F305A99E161B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				48F5C3E383C556B45EE98BA3 /* PrivacyInfo.xcprivacy in Resources */,
+				5DCA71A199B41A6CAAF83ACA /* Localizable.strings in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -167,12 +287,40 @@
 			files = (
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
+				0D9E38309F7FEC19DA6EF3AE /* WidgetBridgePlugin.swift in Sources */,
+				181E0F320DECB991CF5E0190 /* MainViewController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		65200689A511CF311277B12F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8F722F4F577E1A51B4372D13 /* BuergerweckerWidget.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		9409B53FB4A777948457D3D1 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = BuergerweckerWidget;
+			target = 69193429B4355F0A1B30B728 /* BuergerweckerWidget */;
+			targetProxy = 3884728DD72426BFD9967E39 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin PBXVariantGroup section */
+		311496AD4E12339E7A3E351F /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				B53288DCF3FD6A05E449BA67 /* de */,
+				50A4E81FE9A825E5B64C7FEE /* en */,
+			);
+			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
 		504EC30B1FED79650016851F /* Main.storyboard */ = {
 			isa = PBXVariantGroup;
 			children = (
@@ -349,6 +497,62 @@
 			};
 			name = Release;
 		};
+		699B2DB5CF5FC43F19CED8BB /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "";
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = "";
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = BuergerweckerWidget/BuergerweckerWidget.entitlements;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BuergerweckerWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = de.buergerwecker.app.widget;
+				PRODUCT_NAME = BuergerweckerWidget;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		89F5110733DF7A357DC6AFD6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "";
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = "";
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_ENTITLEMENTS = BuergerweckerWidget/BuergerweckerWidget.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BuergerweckerWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = de.buergerwecker.app.widget;
+				PRODUCT_NAME = BuergerweckerWidget;
+				PROVISIONING_PROFILE_SPECIFIER = "Buergerwecker CI de.buergerwecker.app.widget";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -366,6 +570,15 @@
 			buildConfigurations = (
 				504EC3171FED79650016851F /* Debug */,
 				504EC3181FED79650016851F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B7849E3A58480A9E2ED6DFE8 /* Build configuration list for PBXNativeTarget "BuergerweckerWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				89F5110733DF7A357DC6AFD6 /* Release */,
+				699B2DB5CF5FC43F19CED8BB /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

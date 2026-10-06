@@ -3,6 +3,7 @@
 import { api } from "./api.js";
 import { getLang } from "./i18n.js";
 import * as push from "./push.js";
+import * as widget from "./widget.js";
 
 export const state = {
   permission: "prompt", // granted | denied | prompt | unsupported
@@ -126,12 +127,30 @@ async function doRefresh() {
     const r = await push.authed(() => api.subscriptions());
     state.subs = r?.subscriptions ?? [];
     state.subsError = null;
+    syncWidget();
   } catch (e) {
     state.subsError = e;
   } finally {
     state.subsLoading = false;
   }
   changed("subs");
+}
+
+// Tells the home-screen widget which cities matter now. Coalesced: a burst
+// of changes (the list loading, then an edit) is one write of the latest
+// state. Never throws, never waits: the widget is a convenience.
+let widgetPending = false;
+export function syncWidget() {
+  if (widgetPending) return;
+  widgetPending = true;
+  Promise.resolve()
+    .then(async () => {
+      widgetPending = false;
+      if (state.subs == null) return;
+      const list = await cities().catch(() => []);
+      await widget.sync(state.subs, list, getLang());
+    })
+    .catch(() => {});
 }
 
 // Puts a subscription the server just returned into the list.
@@ -142,8 +161,10 @@ export function upsertSub(sub) {
   if (i >= 0) list[i] = sub;
   else list.unshift(sub);
   state.subs = list;
+  syncWidget();
 }
 
 export function dropSub(id) {
   state.subs = (state.subs || []).filter((s) => s.id !== id);
+  syncWidget();
 }

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- updatePeriodMillis is the platform's own floor, 30 minutes: the system
+     wakes the provider (battery-friendly, no WorkManager dependency) and
+     EarliestSlotWidget fetches inside that broadcast. The page also asks for
+     an update whenever the alerts change (WidgetBridgePlugin). -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="110dp"
+    android:minHeight="40dp"
+    android:targetCellWidth="4"
+    android:targetCellHeight="2"
+    android:minResizeWidth="110dp"
+    android:minResizeHeight="40dp"
+    android:resizeMode="horizontal|vertical"
+    android:updatePeriodMillis="1800000"
+    android:initialLayout="@layout/widget_slot"
+    android:description="@string/widget_description"
+    android:widgetCategory="home_screen" />

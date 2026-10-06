@@ -1,12 +1,12 @@
 // The App Store Connect API, as far as signing on a runner needs it. No Xcode
 // account, no fastlane, no dependency: Node's own crypto signs the token and
 // fetch does the rest. Called by .github/workflows/app-build.yml. Adapted
-// from PapaMap's app/ios/asc.mjs, without its store-listing commands, its
-// widget and its App Group.
+// from PapaMap's app/ios/asc.mjs, without its store-listing commands.
 //
-//   node ios/asc.mjs ids                  register the bundle id, Push Notifications on
+//   node ios/asc.mjs ids                  register the two bundle ids (the app: Push Notifications and
+//                                         App Groups; the widget: App Groups)
 //   node ios/asc.mjs cert <csr> <out.cer> one distribution certificate from a CSR (once a year)
-//   node ios/asc.mjs profiles <dir>       a fresh App Store profile for the bundle id
+//   node ios/asc.mjs profiles <dir>       a fresh App Store profile for each bundle id
 //   node ios/asc.mjs beta-text pull                                   print what's live in TestFlight
 //   node ios/asc.mjs beta-text push --build <n>                      testflight/what-to-test.*.txt → that build
 //   node ios/asc.mjs beta-text distribute --build <n> --group <name> add to a beta group, submit for review
@@ -15,8 +15,11 @@
 // environment — the repository secrets of the same names.
 //
 // What the API cannot do: create the App Store Connect app record for
-// de.buergerwecker.app (My Apps → +), and the APNs auth key the server sends
-// with (developer.apple.com → Keys). client/README.md has the checklist.
+// de.buergerwecker.app (My Apps → +), the APNs auth key the server sends
+// with (developer.apple.com → Keys), and create the App Group
+// group.de.buergerwecker.app and tick it on both App IDs (Identifiers → App
+// Groups): no key can script that, so `profiles` says so when a profile it was
+// handed lacks the group. client/README.md has the checklist.
 import { createPrivateKey, sign } from "node:crypto";
 import { readFileSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -24,8 +27,13 @@ import { fileURLToPath } from "node:url";
 
 const API = "https://api.appstoreconnect.apple.com/v1";
 
+// The home-screen widget is an extension of the app with a bundle id of its
+// own; it reads what the page wrote for it from the App Group. `capabilities`
+// is what each App ID needs switched on.
+export const APP_GROUP = "group.de.buergerwecker.app";
 export const BUNDLE_IDS = [
-  { identifier: "de.buergerwecker.app", name: "Buergerwecker" },
+  { identifier: "de.buergerwecker.app", name: "Buergerwecker", capabilities: ["PUSH_NOTIFICATIONS", "APP_GROUPS"] },
+  { identifier: "de.buergerwecker.app.widget", name: "Buergerwecker Widget", capabilities: ["APP_GROUPS"] },
 ];
 // The name the Xcode project's Release configuration asks for
 // (PROVISIONING_PROFILE_SPECIFIER) and the export options repeat.
@@ -100,8 +108,8 @@ async function bundleId(identifier) {
   return { id: hit.id, caps };
 }
 
-async function ids() {
-  for (const { identifier, name } of BUNDLE_IDS) {
+export async function ids() {
+  for (const { identifier, name, capabilities } of BUNDLE_IDS) {
     let b = await bundleId(identifier);
     if (!b) {
       const made = await api("POST", "/bundleIds", {
@@ -112,15 +120,16 @@ async function ids() {
     } else {
       console.log(`${identifier}: already registered`);
     }
-    if (!b.caps.includes("PUSH_NOTIFICATIONS")) {
+    for (const capabilityType of capabilities) {
+      if (b.caps.includes(capabilityType)) continue;
       await api("POST", "/bundleIdCapabilities", {
         data: {
           type: "bundleIdCapabilities",
-          attributes: { capabilityType: "PUSH_NOTIFICATIONS" },
+          attributes: { capabilityType },
           relationships: { bundleId: { data: { type: "bundleIds", id: b.id } } },
         },
       });
-      console.log(`${identifier}: Push Notifications switched on`);
+      console.log(`${identifier}: ${capabilityType} switched on`);
     }
   }
 }
@@ -147,15 +156,15 @@ async function cert(csrPath, outPath) {
 }
 
 // A profile is a snapshot of its App ID: one made before Push Notifications
-// was switched on never learns of it and the archive fails on the
-// aps-environment entitlement. So the profile is not kept — every build
-// deletes it and asks for a new one, which costs two requests and no mail to
+// was switched on, or the App Group ticked, never learns of it and the archive
+// fails on the entitlement. So the profiles are not kept — every build deletes
+// the pair and asks for new ones, which costs a few requests and no mail to
 // anybody.
-async function profiles(dir) {
+export async function profiles(dir) {
   mkdirSync(dir, { recursive: true });
   const certs = (await api("GET", "/certificates?filter[certificateType]=DISTRIBUTION&limit=200")).data;
   if (!certs.length) throw new Error("no distribution certificate on the account — run `cert` first");
-  for (const { identifier } of BUNDLE_IDS) {
+  for (const { identifier, capabilities } of BUNDLE_IDS) {
     const b = await bundleId(identifier);
     if (!b) throw new Error(`${identifier} is not registered — run \`ids\` first`);
     const name = profileName(identifier);
@@ -177,9 +186,14 @@ async function profiles(dir) {
     writeFileSync(file, content);
     // The profile is a CMS envelope around a plain-text plist, so the one
     // thing worth checking before an eight-minute archive can be read off it.
-    if (!content.toString("latin1").includes("aps-environment")) {
+    const text = content.toString("latin1");
+    if (capabilities.includes("PUSH_NOTIFICATIONS") && !text.includes("aps-environment")) {
       throw new Error(`${name} carries no Push Notifications entitlement: run \`ids\` (task apple-setup), ` +
                       `or tick Push Notifications on ${identifier} on developer.apple.com (Identifiers)`);
+    }
+    if (capabilities.includes("APP_GROUPS") && !text.includes(APP_GROUP)) {
+      throw new Error(`${name} carries no App Group: create ${APP_GROUP} on developer.apple.com ` +
+                      `(Identifiers → App Groups) and tick it on ${identifier} (App IDs → App Groups → Configure)`);
     }
     console.log(`${name} → ${file}`);
   }

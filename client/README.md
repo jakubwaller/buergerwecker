@@ -38,7 +38,10 @@ call sends `Authorization: Bearer <id>.<secret>`. "Delete my data" is one `DELET
    service), offices filtered by the service, weekdays, time window, how far ahead.
 6. **My alerts**: each with its filter, "runs until", "Keep looking" on expired ones, edit and
    stop. Loaded on launch and on resume, never on a timer.
-7. **Settings**: language (German/English, from the device language at first), delete my data,
+7. **Home-screen widget** (iOS small + medium, Android resizable): the earliest free slot in the
+   cities of the device's active alerts, "as of" the server's last poll. It only shows; a tap opens
+   the app (see "The widget" below).
+8. **Settings**: language (German/English, from the device language at first), delete my data,
    privacy / imprint / contact on buergerwecker.de, the version.
 
 Notification taps: `slots` opens the booking URL in the system browser and the city's overview
@@ -69,13 +72,19 @@ client/
                         tests/test_no_real_pii.py reads the name as an email address
   ios/App/              the Xcode project (SPM, no CocoaPods), iOS 18
     App/                AppDelegate (hands the APNs token to the push plugin), SceneDelegate,
-                        Info.plist, App.entitlements (aps-environment), PrivacyInfo.xcprivacy
+                        MainViewController (registers WidgetBridgePlugin), Info.plist,
+                        App.entitlements (aps-environment, App Group), PrivacyInfo.xcprivacy
+    BuergerweckerWidget/ the WidgetKit extension (SwiftUI): the widget, its Info.plist, App Group
+                        entitlements, privacy manifest, German/English gallery texts
+  ios/add-widget-target.rb  registers the extension target with the Xcode project; idempotent,
+                        for after `npx cap add ios` regenerated it
   ios/asc.mjs           App Store Connect API for the runner: bundle id, certificate, profile,
                         TestFlight "What to Test" text and beta group distribution
   ios/distribution.csr  the request the distribution certificate is signed from (no secret in it)
   ios/testflight/       what-to-test.<locale>.txt, one per TestFlight locale
   android/              the Android project; MainActivity registers PushGatePlugin (is push
-                        available in this build, and the notification settings button)
+                        available in this build, and the notification settings button) and
+                        WidgetBridgePlugin; EarliestSlotWidget is the home-screen widget
   android/play.mjs      Google Play Developer API: upload a signed bundle to a track
   android/PLAY.md       keys, Firebase, the first Play release
 ```
@@ -131,7 +140,8 @@ so the Mac jobs run only when `client/` changes.
 
 Once per Apple account (task or label `apple-setup`, safe to repeat):
 
-1. registers `de.buergerwecker.app` and switches Push Notifications on for it;
+1. registers `de.buergerwecker.app` (Push Notifications, App Groups) and its widget extension
+   `de.buergerwecker.app.widget` (App Groups);
 2. has Apple sign `ios/distribution.csr` into the distribution certificate. The CSR's private
    key stays on the machine that made it; key + certificate go into the secrets
    `IOS_DIST_P12` (base64) and `IOS_DIST_P12_PASSWORD`:
@@ -152,17 +162,52 @@ Once per Apple account (task or label `apple-setup`, safe to repeat):
    PapaMap's is already there, `cert` says so and makes none — either reuse that one's key and
    `.p12` for this repository's secrets too, or revoke it and let both apps share the new one.
 
-The Release configuration is signed manually (`Apple Distribution`, profile
-`Buergerwecker CI de.buergerwecker.app`, made fresh by every build); Debug stays automatic, so
+The Release configuration is signed manually (`Apple Distribution`, profiles
+`Buergerwecker CI de.buergerwecker.app` and `Buergerwecker CI de.buergerwecker.app.widget`, made
+fresh by every build); Debug stays automatic, so
 with Xcode on a Mac: select the team and run. `App.entitlements` says `aps-environment
 development`; the App Store export re-signs it as `production`, which is why the server stays at
 `APNS_SANDBOX=0` from the first TestFlight build on.
 
 If `ios/` is ever regenerated (`npx cap add ios --packagemanager SPM`), re-apply by hand what
 the template lacks — `git diff` on those files shows it: the deployment target 18.0 and the
-Release signing settings in `project.pbxproj`, `App.entitlements` and `PrivacyInfo.xcprivacy`
+Release signing settings in `project.pbxproj`, the widget target (`ruby ios/add-widget-target.rb`
+puts it and the two app Swift files back; `MainViewController` must also be the class in
+`Main.storyboard` and in `SceneDelegate`), `App.entitlements` and `PrivacyInfo.xcprivacy`
 in the project, the URL scheme, `CFBundleLocalizations` and `ITSAppUsesNonExemptEncryption` in
 `Info.plist`, and the two push callbacks in `AppDelegate.swift`.
+
+### The widget
+
+For App Review 4.2 / 4.2.2 the app's answer to "a repackaged website" is what a website cannot be:
+push, no account, and a widget. The widget only shows; it never books and a tap opens the app.
+
+- **Data.** It fetches `GET /api/v1/cities/<slug>/slots` itself, the public snapshot route (no device
+  credential, so none is shared with it), and shows the earliest slot that would also trigger an
+  alert: each alert's service plus its offices, weekdays, time window and days ahead, matched like the
+  server's `app/filters.py` (inclusive time bounds, ISO weekdays, office ids, Berlin's today). The
+  snapshot keeps only the 100 soonest slots per service, so a match further out than that is not seen.
+  Nothing matching: "no matching slot right now" with the as-of time. Nothing new leaves the phone: the same host, the same route the app's city overview reads.
+  While `APP_API_ENABLED` is off (every route 404) or the network is down it shows the last answer
+  with its "as of" time; with none, a neutral "set up an alert in the app" text.
+- **Which cities.** The page decides (`www/widget.js`): the cities of the *active* alerts, at most
+  five, with each alert's filter, the language, and the strings and weekday/month words from
+  `i18n.js` (native code cannot read it). It writes that through the local `WidgetBridge` plugin
+  (`setConfig` / `clear`) after the alert list loads or changes, after a language change, and on
+  "Delete my data". No alerts: the widget asks the person to open the app.
+- **iOS.** `BuergerweckerWidget` (bundle id `de.buergerwecker.app.widget`), SwiftUI, small and
+  medium; timeline refresh about every 20 minutes (WidgetKit decides). The plugin
+  (`App/WidgetBridgePlugin.swift`) writes the JSON into the App Group `group.de.buergerwecker.app`'s
+  UserDefaults and calls `reloadAllTimelines()`; the extension keeps its last answers there too. Both
+  privacy manifests declare reason `1C8F.1` (the App Group's defaults).
+- **Android.** `EarliestSlotWidget`, an `AppWidgetProvider` with a RemoteViews layout (one to three
+  rows by height, light and dark), `updatePeriodMillis` 30 minutes (the platform floor; no
+  WorkManager dependency) plus an update broadcast from the plugin whenever the list changes. The
+  fetch runs inside that broadcast (`goAsync`), cities in parallel, 8 s timeouts. Data and cache
+  live in the SharedPreferences file `buergerwecker_widget`.
+
+`test/widget.test.mjs` holds the page's side and the native contracts (plugin methods on both
+platforms, the App Group name, the storage keys, every string key native code reads) together.
 
 ### TestFlight text
 
@@ -185,8 +230,13 @@ A checklist for the parts no workflow can do.
 
 - [ ] Secrets `APPLE_TEAM_ID`, `ASC_ISSUER_ID`, `ASC_KEY_ID`, `ASC_API_KEY_P8` (a team API key,
       Admin — the PapaMap values work, it is the same account).
-- [ ] Run task `apple-setup` (registers the App ID `de.buergerwecker.app` with Push
-      Notifications, signs the certificate); turn its artifact into `IOS_DIST_P12` and
+- [ ] developer.apple.com → Identifiers → **App Groups** → +: create `group.de.buergerwecker.app`.
+      No API key can do this. Then, after `apple-setup` below has registered the two App IDs,
+      open each of `de.buergerwecker.app` and `de.buergerwecker.app.widget` → App Groups →
+      Configure → tick the group. (`testflight` stops early, naming this, if a profile lacks it.)
+- [ ] Run task `apple-setup` (registers the App IDs `de.buergerwecker.app` with Push
+      Notifications and App Groups and `de.buergerwecker.app.widget` with App Groups, signs the
+      certificate); turn its artifact into `IOS_DIST_P12` and
       `IOS_DIST_P12_PASSWORD` as above. The private key is
       `~/gitlab/buergerwecker-ios-signing/distribution.key` on the Mac that wrote the CSR.
 - [ ] App Store Connect → My Apps → + → New App: iOS, name "Bürgerwecker", primary language
@@ -209,7 +259,8 @@ A checklist for the parts no workflow can do.
 **Google Play** (`android/PLAY.md`)
 
 - [ ] Upload key → `ANDROID_UPLOAD_KEYSTORE`, `ANDROID_UPLOAD_KEYSTORE_PASSWORD`.
-- [ ] Play Console app record, first bundle by hand, then `PLAY_SERVICE_ACCOUNT_JSON`.
+- [ ] Play Console app record, first bundle by hand, then `PLAY_SERVICE_ACCOUNT_JSON`. The
+      widget needs nothing in the Console (no permission, no extra declaration).
 
 **Server**
 
@@ -223,4 +274,5 @@ Repository variables (optional): `ASC_BETA_GROUP`, `PLAY_TRACK`, `PLAY_RELEASE_S
 
 ## Not in this version
 
-No widget, no store listing texts or screenshots, no in-app booking (never).
+No store listing texts or screenshots, no in-app booking (never), no widget configuration screen
+(it follows the alerts).
