@@ -87,6 +87,7 @@ Bundle id and applicationId `de.buergerwecker.app` on both platforms — the ser
 no CORS headers and the page's origin is `capacitor://localhost` (iOS) / `https://localhost`
 (Android), so a plain WebView fetch would be refused. If the server ever answers CORS for those
 origins, the setting can go.
+The server now answers CORS for those origins (`app/api.py`), so CapacitorHttp could be turned off.
 
 ## Build
 

@@ -470,7 +470,9 @@ credentials for the TestFlight build. Registration has no confirmation step of
 its own, so a device is verified by push before it may subscribe (below).
 
 The app talks to the web container under `/api/v1` (`app/api.py`); nothing
-else uses it, and the website is unchanged. A device registers its push
+else uses it, and the website is unchanged. The API answers CORS only for the
+app's WebView origins (`CORS_ORIGINS`), and preflights succeed even while
+`APP_API_ENABLED` is off, so the gated 404 stays readable by the app. A device registers its push
 token once (`POST /api/v1/devices`, `{platform, token, language}`) and gets a
 `device_id` and a `secret` shown once; every later call carries
 `Authorization: Bearer <device_id>.<secret>`. The secret is stored hashed
