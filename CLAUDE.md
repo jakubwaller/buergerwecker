@@ -10,6 +10,11 @@ yourself, there. A Flask web app takes subscriptions, a Python poller checks eac
 three minutes, and a backup container snapshots the SQLite database. One Docker Compose stack behind
 the shared Caddy on the VPS. Cities live as directories under `catalog/`.
 
+`client/` is the store app (iOS and Android, Capacitor 8, a vanilla-JS page in `client/www/`) that
+uses the server's JSON API (`app/api.py`, `/api/v1`) and push instead of mail; it has its own
+`npm test` and its own workflow (`.github/workflows/app-build.yml`), see `client/README.md`. The
+`app/` directory stays the Python package: never put app-client code there.
+
 ## Working in this repo
 
 **Work in a git worktree, not this checkout.** More than one session runs here at once and they
