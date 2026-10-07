@@ -1170,10 +1170,10 @@ def test_junk_on_a_carrier_48_cannot_lock_real_phones_out(client, monkeypatch):
 
 def test_a_stranger_on_the_same_network_cannot_block_existing_phones(client, monkeypatch):
     """Every write counted in one per-network bucket, so a stranger behind
-    the same NAT could keep everyone's code posts, resends and alerts at 429
-    for an hour. Writes of an existing device count per device; only
-    registrations count per network, and over ten minutes."""
-    monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR", "6")
+    the same NAT could keep everyone's code posts and alerts at 429 for an
+    hour. Writes of an existing device count per device; only requests that
+    mint a token or ask for a push count per network, and over ten minutes."""
+    monkeypatch.setenv("MAX_TOKEN_REQUESTS_PER_IP_PER_10_MIN", "3")
     app_client = _relay_client(monkeypatch)
     with patch("app.push._post", Relay()) as relay:
         dev, secret = _register(app_client, verified=False)   # the real phone
@@ -1189,14 +1189,135 @@ def test_a_stranger_on_the_same_network_cannot_block_existing_phones(client, mon
         assert ok.status_code == 200
         assert _subscribe(app_client, {**auth, **NAT}).status_code == 201
     # And registrations there open again within ten minutes.
-    import time
-    later = time.time() + 601
-    with patch("app.ratelimit.time.time", return_value=later), \
-            patch("app.push._post", Relay()):
+    _db().execute("UPDATE rate_events SET at=datetime(at, '-601 seconds')")
+    with patch("app.push._post", Relay()):
         r = app_client.post("/api/v1/devices", json={"platform": "apns",
                                                      "token": tok("after-the-attack")},
                             headers=NAT)
     assert r.status_code == 201
+
+
+# ---------------------------------------------------------------------------
+# Sibling paths: every route that mints a token or asks for a push goes
+# through the same network gate and the same per-token ceiling.
+
+def _fill_the_nat(app_client, n):
+    """`n` junk registrations behind NAT, never verified."""
+    for i in range(n):
+        app_client.post("/api/v1/devices", json={"platform": "apns",
+                                                 "token": tok(f"fill-{i}")},
+                        headers=NAT)
+
+
+def test_a_token_change_is_a_new_unverified_token_of_its_network(client, monkeypatch):
+    """PUT /device with a fresh junk token minted a verifiable token outside
+    every network count: one device could change its token without end, each
+    one pushed at once."""
+    monkeypatch.setenv("MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR", "2")
+    monkeypatch.setenv("MAX_TOKEN_REQUESTS_PER_IP_PER_10_MIN", "3")
+    app_client = _relay_client(monkeypatch)
+    with patch("app.push._post", Relay()):
+        dev, secret = _register(app_client)             # registered elsewhere
+    auth = {**_auth(dev, secret), **NAT}
+    relay = ByToken([f"swap-{i}" for i in range(5)], status=400, reason="BadDeviceToken")
+    with patch("app.push._post", relay):
+        answers = []
+        for i in range(4):
+            _time_passes()
+            answers.append(app_client.put("/api/v1/device",
+                                          json={"token": tok(f"swap-{i}")}, headers=auth))
+        assert [a.status_code for a in answers[:3]] == [200, 200, 200]
+        # Two new tokens are the network's unverified count: the third's push
+        # is left to the sweep, like a registration's.
+        assert [len(relay.to(f"swap-{i}")) for i in range(3)] == [1, 1, 0]
+        # And token changes count toward the network's requests like
+        # registrations: the fourth is over the three a ten minutes.
+        assert answers[3].status_code == 429 and answers[3].get_json()["retry_after"] <= 600
+        _backdate(dev, "verify_requested_at", "-1 minutes")
+        send_verifications(_db(), load_config())
+        assert len(relay.to("swap-2")) == 1             # the sweep sent it
+    events = _db().execute("SELECT COUNT(*) FROM rate_events WHERE device_id=?",
+                           (dev,)).fetchone()[0]
+    assert events == 1 + 3                               # its registration, three new tokens
+
+
+def test_re_registering_a_known_token_is_deferred_alike(client, monkeypatch):
+    monkeypatch.setenv("MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR", "2")
+    app_client = _relay_client(monkeypatch)
+    with patch("app.push._post", Relay()) as relay:
+        dev, _ = _register(app_client, token="known", verified=False)   # elsewhere
+        assert len(relay.calls) == 1
+    with patch("app.push._post", ByToken([f"fill-{i}" for i in range(2)], status=400,
+                                         reason="BadDeviceToken")) as relay:
+        _fill_the_nat(app_client, 2)
+        _time_passes()
+        r = app_client.post("/api/v1/devices", json={"platform": "apns",
+                                                     "token": tok("known")}, headers=NAT)
+        assert r.status_code == 201 and r.get_json()["device_id"] == dev
+        assert not relay.to("known")                    # left to the sweep
+        _backdate(dev, "verify_requested_at", "-1 minutes")
+        send_verifications(_db(), load_config())
+        assert len(relay.to("known")) == 1
+
+
+def test_a_resend_is_deferred_and_counted_alike(client, monkeypatch):
+    monkeypatch.setenv("MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR", "2")
+    monkeypatch.setenv("MAX_TOKEN_REQUESTS_PER_IP_PER_10_MIN", "4")
+    app_client = _relay_client(monkeypatch)
+    with patch("app.push._post", Relay()):
+        dev, secret = _register(app_client, token="waiting", verified=False)   # elsewhere
+    auth = {**_auth(dev, secret), **NAT}
+    with patch("app.push._post", ByToken([f"fill-{i}" for i in range(2)], status=400,
+                                         reason="BadDeviceToken")) as relay:
+        _fill_the_nat(app_client, 2)                    # two of the NAT's four requests
+        _age_deliveries(dev)
+        assert app_client.post("/api/v1/device/verify/resend", json={},
+                               headers=auth).status_code == 202
+        assert not relay.to("waiting")                  # left to the sweep
+        _backdate(dev, "verify_requested_at", "-1 minutes")
+        send_verifications(_db(), load_config())
+        assert len(relay.to("waiting")) == 1
+        _age_deliveries(dev)
+        _db().execute("UPDATE push_devices SET verify_sent_at=NULL WHERE id=?", (dev,))
+        assert app_client.post("/api/v1/device/verify/resend", json={},
+                               headers=auth).status_code == 202   # the fourth
+        _age_deliveries(dev)
+        over = app_client.post("/api/v1/device/verify/resend", json={}, headers=auth)
+        assert over.status_code == 429 and over.get_json()["retry_after"] <= 600
+
+
+def test_every_path_to_one_token_shares_its_ceiling(client, monkeypatch):
+    """Register, re-register, PUT /device to it, resend and the sweep: once
+    one path has spent a junk token's ceiling, none of the others reaches the
+    relay for it either. (Short of the ceiling, the token's refusal count
+    backs every path off too: it outlives requests and rows.)"""
+    app_client = _relay_client(monkeypatch)
+    with patch("app.push._post", Relay()):
+        swapper, ssecret = _register(app_client, token="swapper")
+    relay = ByToken(["junk"], status=400, reason="BadDeviceToken")
+    with patch("app.push._post", relay):
+        for _ in range(_ceiling()):                     # registrations alone
+            _time_passes()
+            r = app_client.post("/api/v1/devices", json={"platform": "apns",
+                                                         "token": tok("junk")})
+            app_client.delete("/api/v1/device", headers=_auth(
+                r.get_json()["device_id"], r.get_json()["secret"]))
+        assert len(relay.to("junk")) == _ceiling()
+        _time_passes()
+        put = app_client.put("/api/v1/device", json={"token": tok("junk")},
+                             headers=_auth(swapper, ssecret))
+        assert put.status_code == 200                   # PUT /device to it
+        _time_passes()
+        again = app_client.post("/api/v1/devices", json={"platform": "apns",
+                                                         "token": tok("junk")})
+        assert again.get_json()["device_id"] == swapper  # re-registering it
+        _time_passes()
+        resend = app_client.post("/api/v1/device/verify/resend", json={},
+                                 headers=_auth(swapper, ssecret))
+        assert resend.status_code == 429 and resend.get_json()["retry_after"] > 3600
+        _time_passes(minutes=61)
+        send_verifications(_db(), load_config())        # the sweep
+    assert len(relay.to("junk")) == _ceiling()
 
 
 def test_junk_on_one_platform_cannot_crowd_out_the_other(client, monkeypatch):

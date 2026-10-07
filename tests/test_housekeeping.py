@@ -333,3 +333,25 @@ def test_the_device_prune_uses_the_subscriptions_device_index(db):
         "EXPLAIN QUERY PLAN SELECT 1 FROM subscriptions s "
         "WHERE s.device_id = ? AND s.deleted_at IS NULL", (1,)))
     assert "idx_subs_device" in plan
+
+
+def test_rate_events_live_their_window_and_no_longer(db):
+    """The poller prunes every cycle: an event that names a hashed network
+    outlives its window by at most a cycle."""
+    from app.ratelimit import prune_rate_events
+    rows = [("req:a", "-11 minutes", None), ("req:a", "-9 minutes", None),
+            ("req48:b", "-11 minutes", None), ("req48:b", "-9 minutes", None),
+            ("newdev:c", "-61 minutes", 1), ("newdev:c", "-59 minutes", 2),
+            ("newdev48:d", "-61 minutes", 1), ("slots:7", "-61 minutes", None),
+            ("slots:7", "-59 minutes", None)]
+    db.executemany("INSERT INTO rate_events (bucket, at, device_id) "
+                   "VALUES (?, datetime('now', ?), ?)", rows)
+    prune_rate_events(db)
+    left = sorted((b, d) for b, d in db.execute("SELECT bucket, device_id FROM rate_events"))
+    assert left == [("newdev:c", 2), ("req48:b", None), ("req:a", None), ("slots:7", None)]
+
+
+def test_the_poller_prunes_rate_events_every_cycle_and_never_breaks_it(capsys):
+    from app.poller import _prune_rate_events
+    _prune_rate_events(None)                     # a broken connection: logged, not raised
+    assert "rate event prune failed" in capsys.readouterr().out

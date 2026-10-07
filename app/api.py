@@ -16,16 +16,18 @@ difference is the opt-in: the OS permission prompt the app had to pass is
 the opt-in, so a push subscription is live at once.
 
 Rate limits. Nothing keyed on a client network may let a stranger on the same
-network (a carrier NAT, a carrier /48) lock the real phones there out. Per
-process (soft, see `IPRateLimiter`), in the API's own buckets, apart from the
-sign-up form's: registrations per client network (an IPv4 address, an IPv6
-/64, and ten times that per /48) over ten minutes, and every write of a
-registered device, `DELETE /device` included, per credential. Held across
-workers, in the database: new devices that have not verified per client
-network per hour (MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR; past it the push
-comes from the sweep, never a refusal), slot-overview reads per device per
-hour, verification pushes per token (see repo.token_verify_wait), and the
-MAX_SUBSCRIPTIONS_PER_DEVICE live subscriptions a device may hold.
+network (a carrier NAT, a carrier /48) lock the real phones there out for
+longer than ten minutes. Every request that mints a verifiable token or asks
+for a verification push (registration, PUT /device with a new token, resend)
+goes through one gate, `_token_gate`, held across workers in the database:
+such requests per client network (an IPv4 address or IPv6 /64; ten times as
+many per /48) per ten minutes, then new unverified tokens per network per
+hour, past which the push comes from the sweep instead of at once. Also in the
+database: slot-overview reads per device per hour, verification pushes per
+token (see repo.token_verify_wait), and the MAX_SUBSCRIPTIONS_PER_DEVICE live
+subscriptions a device may hold. Per process (soft, see `IPRateLimiter`):
+every write of a registered device, `DELETE /device` included, per
+credential, in the API's own buckets apart from the sign-up form's.
 
 A device is not trusted until it has proven it receives our pushes. Registering
 (or registering the same token again) triggers a push
@@ -83,8 +85,8 @@ from app.config import ttl_days_for
 from app.db import connect, transaction
 from app.models import Filter
 from app.planning import would_exceed_cap
-from app.ratelimit import (GLOBAL_IP_LIMITER, db_rate_hit, record_new_device,
-                           unverified_devices)
+from app.ratelimit import (GLOBAL_IP_LIMITER, db_rate_hit, db_rate_hit_all,
+                           record_new_device, unverified_devices)
 from app.repo import (active_subscriptions, delete_device, device_by_id,
                       insert_push_subscription, live_subscription_count,
                       register_device, renew_subscription,
@@ -333,30 +335,71 @@ def _network_bucket(prefix: str, network: str | None = None) -> str:
     return f"{prefix}:{mac.hexdigest()[:32]}"
 
 
-# The registration window of the per-process limiter: short, so a stranger
-# who fills a shared network's count (a carrier NAT, a carrier /48) holds
-# real phones there off for minutes, not an hour.
-_REGISTRATION_WINDOW = 600
-# New devices recorded per client network in the database: the window of
-# MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR.
+# The token-request window: short, so a stranger who fills a shared network's
+# count (a carrier NAT, a carrier /48) holds real phones there off for
+# minutes, not an hour (MAX_TOKEN_REQUESTS_PER_IP_PER_10_MIN).
+_TOKEN_REQUEST_WINDOW = 600
+# New unverified tokens recorded per client network in the database: the
+# window of MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR.
 _UNVERIFIED_WINDOW = 3600
 
 
-def _registration_limited() -> int:
-    """0, or the seconds until a registration from this client network may
-    try again. Per process (soft, see `IPRateLimiter`), in the API's own
-    buckets, apart from the sign-up form's: the form's hourly allowance per
-    ten minutes, per network (IPv4 address or IPv6 /64) and ten times that
-    per IPv6 /48. The only per-network refusal there is: everything else a
-    device does counts per device (`_device_rate_limited`)."""
-    per_hour = _cfg().subscribe_ratelimit_per_ip_per_hour
-    allowance = max(1, -(-per_hour // 6))
-    keys = [(f"apireg:{_client_network()}", allowance)]
+class _Gate:
+    """What `_token_gate` decided for a request: `wait` > 0 is a refusal
+    (429 with that retry_after); otherwise `defer` says the verification
+    push is left to the sweep, and `networks` are the unverified-token
+    buckets a new token is recorded in (`record_new_device`)."""
+
+    def __init__(self, wait: int, defer: bool, networks: list[str]):
+        self.wait, self.defer, self.networks = wait, defer, networks
+
+
+def _token_gate(conn) -> _Gate:
+    """The one gate in front of every request that mints a verifiable token
+    or asks for a verification push: registration (a new token or a known
+    one), PUT /device with a new token, and resend. All of them, so no
+    sibling route is the way around it; the per-token budget and ceiling
+    then apply to the push itself, on the request path and in the sweep
+    alike (push.send_verifications).
+
+    1. The cross-worker bound, in the database: such requests per client
+       network (an IPv4 address or IPv6 /64) per ten minutes,
+       MAX_TOKEN_REQUESTS_PER_IP_PER_10_MIN, ten times that per IPv6 /48, all
+       or nothing. Past it, a refusal with a retry_after of at most ten
+       minutes: the longest a stranger on a shared network can hold the real
+       phones there off, and it holds however many workers there are and
+       across restarts.
+    2. The network's new unverified tokens in the last hour
+       (MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR, ..._PER_IP6_48_PER_HOUR): past
+       either, the request is served but its push comes from the poller's
+       sweep, paced, instead of at once. A verified device drops out of the
+       count, so real phones never fill it."""
+    cfg = _cfg()
+    per_10_min = cfg.max_token_requests_per_ip_per_10_min
+    hits = [(_network_bucket("req"), per_10_min, _TOKEN_REQUEST_WINDOW)]
+    networks = [(_network_bucket("newdev"), cfg.max_unverified_devices_per_ip_per_hour)]
     ip6_48 = _client_ip6_48()
     if ip6_48 is not None:
-        keys.append((f"apireg48:{ip6_48}", 10 * allowance))
-    full = GLOBAL_IP_LIMITER.hit_all(keys, _REGISTRATION_WINDOW)
-    return GLOBAL_IP_LIMITER.retry_after(full, _REGISTRATION_WINDOW) if full else 0
+        hits.append((_network_bucket("req48", ip6_48), 10 * per_10_min,
+                     _TOKEN_REQUEST_WINDOW))
+        networks.append((_network_bucket("newdev48", ip6_48),
+                         cfg.max_unverified_devices_per_ip6_48_per_hour))
+    wait = db_rate_hit_all(conn, hits)
+    if wait:
+        return _Gate(wait, False, [])
+    defer = any(limit > 0 and unverified_devices(conn, bucket, _UNVERIFIED_WINDOW) >= limit
+                for bucket, limit in networks)
+    return _Gate(0, defer, [bucket for bucket, _ in networks])
+
+
+def _push_code(conn, device_id: int, gate: _Gate) -> None:
+    """Send the verification push at once, or leave it to the sweep when the
+    gate says the network is over its unverified-token count."""
+    if gate.defer:
+        print(f"api: device {device_id}: its network is over its unverified-token "
+              f"limit; the code comes from the sweep", flush=True)
+        return
+    _send_verification(conn, device_id)
 
 
 def _device_rate_limited() -> bool:
@@ -505,22 +548,17 @@ def register():
     answer for a phone that changed hands). On a never-verified device the
     secret is simply rotated. See repo.register_device.
 
-    Limits, none of which a stranger on a shared network (a carrier NAT, a
-    carrier /48) can turn into a lockout of the real phones there:
-
-    - Registrations per network per ten minutes (`_registration_limited`,
-      429 `rate_limited` with `retry_after` of at most ten minutes).
-    - New devices (a token no row holds yet) that have not verified, per
-      network per hour across workers (MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR,
-      and ..._PER_IP6_48_PER_HOUR for a whole IPv6 /48). Past either, the
-      registration still succeeds, and its verification push comes from the
-      poller's sweep a minute later instead of at once: junk from one network
-      cannot make the relay calls at request speed, and a real phone waits a
-      minute, never a day. A device that verifies drops out of the count; one
-      deleted or retired does not."""
-    wait = _registration_limited()
-    if wait:
-        return _error("rate_limited", 429, retry_after=wait)
+    Limits: `_token_gate`, as for every route that mints a token or asks for
+    a push. A token no row holds yet is recorded as a new unverified token of
+    its network; a known one is not, but its push is left to the sweep all
+    the same when the network is over its count. None of it lets a stranger
+    on a shared network (a carrier NAT, a carrier /48) lock the real phones
+    there out for longer than ten minutes."""
+    cfg = _cfg()
+    conn = connect(cfg.db_path)
+    gate = _token_gate(conn)
+    if gate.wait:
+        return _error("rate_limited", 429, retry_after=gate.wait)
     body = _json()
     platform = str(body.get("platform", "")).strip().lower()
     lang = _lang(body.get("language"))
@@ -530,32 +568,15 @@ def register():
     token = normalize_push_token(platform, body.get("token"))
     if token is None:
         return _error("invalid_push_token", 400, lang)
-    cfg = _cfg()
-    conn = connect(cfg.db_path)
     known = conn.execute("SELECT 1 FROM push_devices WHERE platform=? AND token=?",
                          (platform, token)).fetchone()
-    networks: list[tuple[str, int]] = []
-    if known is None:
-        networks.append((_network_bucket("newdev"),
-                         cfg.max_unverified_devices_per_ip_per_hour))
-        ip6_48 = _client_ip6_48()
-        if ip6_48 is not None:
-            networks.append((_network_bucket("newdev48", ip6_48),
-                             cfg.max_unverified_devices_per_ip6_48_per_hour))
-    over = any(limit > 0 and unverified_devices(conn, bucket, _UNVERIFIED_WINDOW) >= limit
-               for bucket, limit in networks)
     secret = secrets.token_urlsafe(32)
     with transaction(conn):
         device_id = register_device(conn, platform=platform, token=token,
                                     secret_hash=_hash(secret), language=lang)
-        if networks:
-            record_new_device(conn, [bucket for bucket, _ in networks], device_id,
-                              _UNVERIFIED_WINDOW)
-    if over:
-        print(f"api: device {device_id} registered from a network over its "
-              f"unverified-device limit; its code comes from the sweep", flush=True)
-    else:
-        _send_verification(conn, device_id)
+        if known is None:
+            record_new_device(conn, gate.networks, device_id, _UNVERIFIED_WINDOW)
+    _push_code(conn, device_id, gate)
     return jsonify({"device_id": device_id, "secret": secret,
                     "language": lang, "verified": False}), 201
 
@@ -588,7 +609,11 @@ def device_status():
 @api.route("/device", methods=["PUT"])
 @device_owner
 def device_update():
-    """A rotated push token (the platforms do that) or a new language."""
+    """A rotated push token (the platforms do that) or a new language. A new
+    token is a new verifiable token like a registration's: it goes through
+    `_token_gate` (the network's cross-worker count, and the push left to the
+    sweep when the network is over its unverified-token count) and is
+    recorded as a new unverified token of its network."""
     lang = g.device["language"]
     if _device_rate_limited():
         return _error("rate_limited", 429, lang)
@@ -601,17 +626,24 @@ def device_update():
             return _error("invalid_push_token", 400, lang)
     if language is not None and language not in _LANGS:
         return _error("invalid_language", 400, lang)
+    new_token = token is not None and token != g.device["token"]
+    gate = None
+    if new_token:
+        gate = _token_gate(g.conn)
+        if gate.wait:
+            return _error("rate_limited", 429, lang, retry_after=gate.wait)
     with transaction(g.conn):
         outcome = update_device(g.conn, g.device["id"], secret_hash=g.secret_hash,
                                 token=token, language=language)
+        if outcome == "ok" and gate is not None:
+            record_new_device(g.conn, gate.networks, g.device["id"], _UNVERIFIED_WINDOW)
     if outcome == "unauthorized":
         return _error("unauthorized", 401)
     if outcome == "token_in_use":
         return _error("token_in_use", 409, lang)
+    if gate is not None:
+        _push_code(g.conn, g.device["id"], gate)
     row = device_by_id(g.conn, g.device["id"])
-    if token is not None and token != g.device["token"]:
-        _send_verification(g.conn, row["id"])
-        row = device_by_id(g.conn, row["id"])
     return jsonify(_device_json(row, row["verified_at"] is not None))
 
 
@@ -665,7 +697,8 @@ def device_verify_resend():
     a daily budget per token, the main credential's apart from everyone
     else's (a pending credential's resend is a stranger's as far as the
     budget knows), counted in the database across workers and rows (see
-    repo.token_verify_wait). The old code stops working."""
+    repo.token_verify_wait), and through `_token_gate` like every route that
+    asks for a push. The old code stops working."""
     lang = g.device["language"]
     if g.credential_verified:
         return jsonify({"verified": True})
@@ -677,10 +710,13 @@ def device_verify_resend():
                             config=config_fingerprint(_cfg(), g.device["platform"]))
     if wait > 0:
         return _error("rate_limited", 429, lang, retry_after=wait)
+    gate = _token_gate(g.conn)
+    if gate.wait:
+        return _error("rate_limited", 429, lang, retry_after=gate.wait)
     with transaction(g.conn):
         request_verification(g.conn, g.device["id"], code="drop_if_stale",
                              kind=kind)
-    _send_verification(g.conn, g.device["id"])
+    _push_code(g.conn, g.device["id"], gate)
     return jsonify({"verified": False}), 202
 
 

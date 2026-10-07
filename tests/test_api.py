@@ -36,6 +36,7 @@ _ENV = {
     # Every test client is one address; the tests of the limits lower them.
     "MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR": "999",
     "MAX_UNVERIFIED_DEVICES_PER_IP6_48_PER_HOUR": "999",
+    "MAX_TOKEN_REQUESTS_PER_IP_PER_10_MIN": "999",
 }
 
 
@@ -281,34 +282,48 @@ def _device(c, name, addr):
 
 
 def _left_to_the_sweep(capsys):
-    """The devices whose code a registration left to the sweep, from the log."""
+    """The devices whose code a request left to the sweep, from the log."""
     return [int(d) for d in re.findall(
-        r"api: device (\d+) registered from a network over", capsys.readouterr().out)]
+        r"api: device (\d+): its network is over", capsys.readouterr().out)]
 
 
-def test_registration_is_rate_limited_per_network_over_ten_minutes(client, monkeypatch):
-    monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR", "12")    # 2 per ten minutes
-    c = create_app().test_client()
-    assert _reg(c, "a").status_code == 201
-    assert _reg(c, "b").status_code == 201
-    r = _reg(c, "c")
-    assert r.status_code == 429 and r.get_json()["error"] == "rate_limited"
-    assert 0 < r.get_json()["retry_after"] <= 600
+def _ten_minutes_pass():
+    _db().execute("UPDATE rate_events SET at=datetime(at, '-601 seconds')")
+
+
+def test_token_requests_per_network_hold_across_four_workers_and_restarts(client, monkeypatch):
+    """The bound on what one network can make the API do with push tokens
+    is in the database: four gunicorn workers (each with its own per-process
+    limiter) and a restart in between still let only the allowance through."""
+    monkeypatch.setenv("MAX_TOKEN_REQUESTS_PER_IP_PER_10_MIN", "3")
+    workers = [create_app().test_client() for _ in range(4)]
+    answers = []
+    for i in range(20):
+        GLOBAL_IP_LIMITER._events.clear()            # nothing per process to lean on
+        answers.append(_reg(workers[i % 4], f"w{i}", "192.0.2.40"))
+    assert [a.status_code for a in answers].count(201) == 3
+    refused = answers[-1]
+    assert refused.status_code == 429 and refused.get_json()["error"] == "rate_limited"
+    assert 0 < refused.get_json()["retry_after"] <= 600
+    restarted = create_app().test_client()
+    assert _reg(restarted, "after-restart", "192.0.2.40").status_code == 429
     # Reads are not counted: the app lists its subscriptions on every launch.
-    assert c.get("/api/v1/cities").status_code == 200
-    # The API has its own buckets: app traffic behind a carrier NAT does not
-    # use up the sign-up form's budget for everyone there.
-    assert set(GLOBAL_IP_LIMITER._events) == {"apireg:127.0.0.1"}
+    assert restarted.get("/api/v1/cities").status_code == 200
+    # Another network has its own count, and the table holds no address.
+    assert _reg(restarted, "elsewhere", "198.51.100.40").status_code == 201
+    buckets = [b for (b,) in _db().execute("SELECT bucket FROM rate_events")]
+    assert not any("192.0.2" in b or "198.51" in b for b in buckets)
     # Ten minutes on, the network registers again: a stranger who filled the
-    # count holds real phones off for that long, not an hour.
-    with patch("app.ratelimit.time.time", return_value=time.time() + 601):
-        assert _reg(c, "d").status_code == 201
+    # count holds real phones off for that long, no longer.
+    _ten_minutes_pass()
+    assert _reg(restarted, "later", "192.0.2.40").status_code == 201
 
 
 def test_a_devices_own_writes_count_per_device_not_per_network(client, monkeypatch):
     """Behind one carrier NAT, a stranger who used up the network's count
-    kept everyone's code posts, resends and alerts at 429 for an hour."""
-    monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR", "3")     # 1 registration / 10 min
+    kept everyone's code posts and alerts at 429 for an hour."""
+    monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR", "3")     # writes per device
+    monkeypatch.setenv("MAX_TOKEN_REQUESTS_PER_IP_PER_10_MIN", "1")
     c = create_app().test_client()
     mine, secret = _device(c, "mine", "192.0.2.80")
     nat = {"X-Forwarded-For": "192.0.2.80"}
@@ -325,8 +340,8 @@ def test_a_devices_own_writes_count_per_device_not_per_network(client, monkeypat
     assert f"apidev:{mine}:main" in keys and not any(k.startswith("api:") for k in keys)
 
 
-def test_registrations_are_counted_by_ipv6_64_and_48(client, monkeypatch):
-    monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR", "6")     # 1 per /64, 10 per /48
+def test_token_requests_are_counted_by_ipv6_64_and_48(client, monkeypatch):
+    monkeypatch.setenv("MAX_TOKEN_REQUESTS_PER_IP_PER_10_MIN", "1")    # 1 per /64, 10 per /48
     c = create_app().test_client()
     assert _reg(c, "v6-a", "2001:db8:1:2::1").status_code == 201
     assert _reg(c, "v6-b", "2001:db8:1:2:ffff::9").status_code == 429  # same /64
@@ -338,27 +353,24 @@ def test_registrations_are_counted_by_ipv6_64_and_48(client, monkeypatch):
     assert _reg(c, "v4-a", "192.0.2.1").status_code == 201
     assert _reg(c, "v4-b", "::ffff:192.0.2.1").status_code == 429
     assert _reg(c, "v4-c", "192.0.2.2").status_code == 201
-    assert {"apireg:2001:db8:1:2::/64", "apireg48:2001:db8:1::/48"} <= set(
-        GLOBAL_IP_LIMITER._events)
 
 
 def test_addresses_that_embed_an_ipv4_address_count_as_it(client, monkeypatch, capsys):
     """A 6to4 address carries its IPv4 address, and 2002:<v4>::/48 is 65,536
     /64s for whoever holds that one IPv4: counted by the /64, every one was a
     fresh count. Teredo names its client's IPv4 the same way."""
-    monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR", "6")
+    monkeypatch.setenv("MAX_TOKEN_REQUESTS_PER_IP_PER_10_MIN", "1")
     monkeypatch.setenv("MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR", "2")
     c = create_app().test_client()
     assert _reg(c, "e1", "192.0.2.1").status_code == 201
     assert _reg(c, "e2", "2002:c000:201:1::1").status_code == 429          # 6to4 of it
     assert _reg(c, "e3", "2001:0:4136:e378:8000:63bf:3fff:fdfe").status_code == 429  # Teredo
     assert _reg(c, "e4", "2002:c000:202::1").status_code == 201            # 6to4 of .2
-    assert set(GLOBAL_IP_LIMITER._events) == {"apireg:192.0.2.1", "apireg:192.0.2.2"}
-    # The database count is shared the same way, across workers.
+    # The unverified-token count is shared the same way.
     capsys.readouterr()
-    GLOBAL_IP_LIMITER._events.clear()
+    _ten_minutes_pass()
     assert _reg(c, "e5", "2002:c000:201:3::1").status_code == 201
-    GLOBAL_IP_LIMITER._events.clear()
+    _ten_minutes_pass()
     r = _reg(c, "e6", "2002:c000:201:4::1")
     assert r.status_code == 201
     assert _left_to_the_sweep(capsys) == [r.get_json()["device_id"]]
@@ -387,9 +399,14 @@ def test_unverified_devices_per_network_hold_across_workers_and_never_refuse(
                     ).status_code == 204
     n5 = _reg(c, "n5", nat).get_json()
     assert _left_to_the_sweep(capsys) == [n5["device_id"]]
-    # A token that already has a row is not a new device.
+    # A token that already has a row is no new token and is not counted, but
+    # while the network is over, its push waits for the sweep all the same.
+    def counted():
+        return _db().execute("SELECT COUNT(*) FROM rate_events "
+                             "WHERE device_id IS NOT NULL").fetchone()[0]
+    before = counted()
     _reg(c, "n4", nat)
-    assert _left_to_the_sweep(capsys) == [] and n4
+    assert _left_to_the_sweep(capsys) == [n4["device_id"]] and counted() == before
     # Another network has its own count, and the table holds no address.
     _reg(c, "n6", "198.51.100.7")
     assert _left_to_the_sweep(capsys) == []

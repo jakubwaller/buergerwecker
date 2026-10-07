@@ -670,28 +670,42 @@ are missing or wrong on the VPS: check `docker compose logs poller | grep
   real phones there out for long. A client network is an IPv4 address or an
   IPv6 /64; an IPv6 address that carries an IPv4 one (IPv4-mapped, 6to4,
   Teredo) counts as that IPv4.
-  - Registrations, per process (soft, like the form, but in the API's own
-    buckets): a sixth of `SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR` per client
-    network over ten minutes, ten times that per IPv6 /48 (`apireg:`,
-    `apireg48:`), counted only if both have room; `429 rate_limited` with a
-    `retry_after` of at most ten minutes. The only per-network refusal there
-    is, and the ten minutes are its worst case once a stranger stops.
+
+  Every request that mints a push token or asks for a verification push
+  goes through one gate (`api._token_gate`), kept in the database across
+  workers and restarts: a registration (a new token or a known one),
+  `PUT /device` with a new token, and a resend. No sibling route goes around
+  it, and the push itself then meets the per-token budget and ceiling,
+  on the request path and in the sweep alike.
+  - The hard bound: such requests per client network per ten minutes,
+    `MAX_TOKEN_REQUESTS_PER_IP_PER_10_MIN` (default 10), ten times that per
+    IPv6 /48, counted only if both have room; `429 rate_limited` with a
+    `retry_after` of at most ten minutes. That is the longest a stranger can
+    hold the real phones on a shared network off once they stop, and it
+    holds however many workers there are.
+  - New push tokens that have not verified, per hour:
+    `MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR` per client network and
+    `MAX_UNVERIFIED_DEVICES_PER_IP6_48_PER_HOUR` per /48 (defaults 5 and 50).
+    A new device and a device's token change each add one; a device that
+    verifies drops out, one deleted or retired before it did stays in. Past
+    either, nothing is refused: every verification push the network asks
+    for (new token, known token, resend) comes from the poller's sweep a
+    minute later instead of at once. Junk from one network cannot make relay
+    calls at request speed, and a real phone behind it waits a minute,
+    never a day. The web container logs `api: device N: its network is over
+    its unverified-token limit; the code comes from the sweep` for each.
   - Every write of a registered device, `DELETE /device` included (counted,
     never refused: erasure does not wait): `SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR`
-    per device credential per hour (`apidev:<id>:main` or `:pending`), so no
-    one else can use up a device's count.
-  - New devices (a token no row holds yet) that have not verified, across
-    workers in the database: `MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR` per
-    client network and `MAX_UNVERIFIED_DEVICES_PER_IP6_48_PER_HOUR` per /48
-    (defaults 5 and 50). Past either, the device still registers, and its
-    verification push comes from the poller's sweep a minute later instead
-    of at once: junk from one network cannot make the relay calls at request
-    speed, and a real phone behind it waits a minute, never a day. A device
-    that verifies drops out of the count; one deleted or retired before it
-    did stays in (`rate_events`, under a keyed hash of the network or
-    prefix with the device id, no address stored, dropped after the hour).
-    The web container logs `api: device N registered from a network over its
-    unverified-device limit` for each.
+    per device credential per hour, per process (`apidev:<id>:main` or
+    `:pending`), so no one else can use up a device's count.
+
+  What the database keeps for the network limits (`rate_events`): a bucket
+  name (the limit and the first 32 hex digits of an HMAC-SHA256 of the IPv4
+  address, the IPv6 /64 or the /48, keyed from `TOKEN_SECRET_PRIMARY`), a
+  timestamp, and for a new token the device id. The poller drops each row
+  once its window is over, every cycle: the request counts after ten
+  minutes, the new-token rows after an hour, so a row lives its window and
+  at most a minute more.
 
   These are speed bumps; the walls against minted devices are what a device
   may hold: at most 10 live subscriptions (`api.MAX_SUBSCRIPTIONS_PER_DEVICE`)
@@ -727,9 +741,10 @@ Silence is the healthy state. Retention: an unverified device without any
 subscription is purged after a day; a retired device is purged 30 days
 after retirement; a live one once 30 days have passed since both its last
 registration and the end of its last subscription (housekeeping, same clock as
-an address). The per-token verification record (`verify_attempts`) and the
-cross-worker rate events (`rate_events`) are pruned by the daily housekeeping
-run once they are a day old, so no row lives past two days.
+an address). The per-token verification record (`verify_attempts`) is pruned
+by the daily housekeeping run once it is a day old, so no row lives past two
+days; the rate events (`rate_events`) go every poller cycle once their window
+is over (ten minutes or an hour), and housekeeping drops anything a day old.
 
 ## Subscription term & the "still looking?" check-in
 
