@@ -8,9 +8,13 @@ while true; do
   iso=$(date -u +%FT%TZ)
   tmp="$DEST/app-${ts}.db"
   echo "[backup] $iso snapshot → $tmp"
+  # datenschutz.html promises no snapshot outlives RETENTION_DAYS. find's
+  # -mtime +N only matches files at least N+1 whole days old, hence the -1;
+  # and the prune runs whether or not tonight's snapshot works, because a
+  # failing backup must not stretch the promise (its alert is the fix).
+  find "$DEST" -name 'app-*.db.gz' -mtime "+$((RETENTION_DAYS - 1))" -delete || true
   if sqlite3 "$DB" ".backup '$tmp'"; then
     gzip -f "$tmp"
-    find "$DEST" -name 'app-*.db.gz' -mtime "+$RETENTION_DAYS" -delete || true
     # Record success in meta. Retry up to 3× with backoff to handle a
     # transient SQLITE_BUSY when the poller or web container is mid-write.
     # If we still fail, write a sentinel file so the housekeeping pass

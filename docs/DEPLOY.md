@@ -939,15 +939,17 @@ WantedBy=timers.target
 ## Off-host backup (secondary)
 
 `/mnt/backup` shares a disk with the live database, so a copy has to leave the
-host. A scheduled pull from a workstation does it — daily, over scp, keeping
-every snapshot it has ever fetched:
+host. The host's own nightly backup (outside this repo) takes a `sqlite3
+.backup` dump of `data/app.db` along with everything else under the home
+directory, keeps it 14 days, and a workstation pulls the last seven nights.
 
-```
-scp 'vps:/mnt/backup/app-*.db.gz' <local-snapshot-dir>/
-```
-
-Never let the puller delete: the point is to survive a deletion on the server,
-which a mirroring sync would faithfully replicate.
+**No copy of the database may outlive 30 days, wherever it sits.** The privacy
+page promises that a permanently removed record is gone from the last backup
+30 days later at the latest; `BACKUP_RETENTION_DAYS` in `scripts/backup-loop.sh`
+holds `/mnt/backup` to it. Any off-host copy prunes by its own age, not by
+mirroring the server: it still has to survive a wiped server, and it still has
+to expire. A puller that keeps every snapshot it ever fetched breaks the
+promise — the earlier scp pull did exactly that and is retired.
 
 ## IP-block runbook
 
