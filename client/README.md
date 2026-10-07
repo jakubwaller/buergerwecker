@@ -371,28 +371,33 @@ Internal, not for the store texts. `APP_API_ENABLED` was opened on 2026-10-07 fo
 closed again the same day, when the review below found a hole; it stays closed until every fix
 listed there is deployed.
 
-A verified device is not a real phone, on either platform. `google-services.json` ships in every
-APK, and a headless FCM receiver can register real tokens under the project and receive the
-verification push without one; on iOS, one install's push token can be presented under many
-device records. Every review here assumes scripted, unlimited verified devices.
+A verified device is not a real phone on Android. `google-services.json` ships in every APK,
+and a headless FCM receiver can register real tokens under the project and receive the
+verification push without one. On iOS one install's push token could be presented under many
+device records in aliased spellings until #110, which normalises tokens and keeps one device per
+token. Every review here assumes scripted, unlimited verified Android devices.
 
-- [x] **Security review of the app API, 2026-10-07**: server, capacity, client and privacy,
-      reviewed in parallel. Fixed in:
+- [x] **Security review of the app API, 2026-10-07**: three read-only reviews in parallel
+      (device auth, abuse and limits, HTTP surface). Fixed in:
       - #107: sign-up filters de-duplicated, 16 kB bodies on `/api/v1`. The critical finding: an
-        office list repeated thousands of times went out to the city's booking site.
+        office list repeated thousands of times could go out to the city's booking site.
       - #110: push-token validation, a verification budget and daily ceiling per token, a token
         gate per network (IPv4, IPv6 /64 and /48), slots only for a verified device subscribed in
-        that city and never for Art. 9 services, JSON bodies only.
+        that city, an Art. 9 service only to a device that watches it, JSON bodies only.
       - #109: the app's share of a city's plan cap, at most three alerts per city per device, a
-        50-slot horizon, a push budget under mail pressure, one queue for mail and push.
+        50-slot horizon, a push budget per cycle, the same tightened cap for mail and app under
+        mail pressure, and one queue for both, where push waits behind mail only for an hourly
+        quota wall.
       - #108: the device secret in Keychain/Keystore and out of backups, the widget with that
         credential and without Art. 9 alerts, a push-URL allowlist.
       - #111, #112: the privacy page for the app, the network identifier, Apple and Google, the
         right to object, backups.
 - [ ] **A final combined review** of the API, `app/planning.py` and the client after all of the
-      above, **before any Android build leaves the team, Play internal testing included**: from
-      that moment anyone holding the APK can mint verified devices. Check the per-network gate,
-      the per-token budget and the app's share of the plan cap against a scripted fleet.
+      above, **before the first `play` run**: its signed AAB, `google-services.json` inside, is
+      uploaded as an Actions artifact of this public repository, and from then on anyone holding
+      it can mint verified devices. The same holds for any other Android build that leaves the
+      team, Play internal testing included. Check the per-network gate, the per-token budget
+      and the app's share of the plan cap against a scripted fleet.
 - [ ] **Firebase**: accept the Data Processing and Security Terms in the Firebase project, then
       add Google to the privacy page's list of processors with a DPA.
 
