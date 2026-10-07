@@ -62,14 +62,18 @@ mint verified devices. One-time setup:
    project (its number is the sender ID in `google-services.json`, which the plugin
    reads, so the two cannot drift apart).
 2. In that Google Cloud project, enable the **Play Integrity API**.
-3. The server decodes verdicts with a service account: the FCM one
-   (`FCM_SERVICE_ACCOUNT_JSON(_FILE)`) is used unless
-   `PLAY_INTEGRITY_SERVICE_ACCOUNT_JSON(_FILE)` names another. Either one's
-   project must have the API enabled (`docs/DEPLOY.md`, "Push delivery (the app)").
+3. The server decodes verdicts with a service account, and that account must
+   belong to the Google Cloud project linked in step 1. A service account from
+   any other project is refused by Google with 403 on every decode, which the
+   server answers as 503 to every Android registration. Use the FCM service
+   account of the linked Firebase project (`FCM_SERVICE_ACCOUNT_JSON(_FILE)`);
+   it is the default, and `PLAY_INTEGRITY_SERVICE_ACCOUNT_JSON(_FILE)` should stay
+   unset unless it is another account of the same project (`docs/DEPLOY.md`,
+   "Push delivery (the app)").
 
 Only builds installed from Google Play pass, closed testing included. A sideloaded
 or debug build cannot register against a production server (it gets
-`integrity_failed`, "install the app from Google Play"); to try one, point it at a
+`integrity_failed`, "must be installed from Google Play and run on a certified Android device"); to try one, point it at a
 dev server running with `PLAY_INTEGRITY_REQUIRED=0`. The Play Console **data safety**
 form must mention it: the app sends an integrity token to our server at
 registration, and Google Play processes the request.

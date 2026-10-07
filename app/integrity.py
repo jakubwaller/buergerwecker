@@ -18,13 +18,11 @@ rate-limiting us) the registration is refused, never let through.
 from __future__ import annotations
 import hashlib
 import json
+import re
 import time
 from urllib.parse import quote
 
-import httpx
-
 from app import push
-from app.push import PushAuthError
 
 PACKAGE_NAME = "de.buergerwecker.app"
 DECODE_URL = "https://playintegrity.googleapis.com/v1/{package}:decodeIntegrityToken"
@@ -34,6 +32,14 @@ SCOPE = "https://www.googleapis.com/auth/playintegrity"
 # into the future allows for clock skew between Google and us.
 MAX_AGE_MS = 10 * 60 * 1000
 MAX_FUTURE_MS = 60 * 1000
+_JWE_SHAPE = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
+
+
+def looks_like_integrity_token(token: str) -> bool:
+    """A Play Integrity token is a JWE in compact serialization: five
+    base64url segments separated by dots. Anything else cannot decode, so it
+    is refused without asking Google (a decode costs daily quota)."""
+    return bool(_JWE_SHAPE.fullmatch(token))
 
 
 def verify_play_integrity(cfg, integrity_token, push_token: str) -> str | None:
@@ -53,9 +59,13 @@ def verify_play_integrity(cfg, integrity_token, push_token: str) -> str | None:
             "integrity", DECODE_URL.format(package=quote(PACKAGE_NAME, safe="")),
             headers={"authorization": f"Bearer {bearer}"},
             json={"integrity_token": integrity_token.strip()})
-    except (PushAuthError, httpx.HTTPError, ValueError, KeyError) as exc:
-        # ValueError covers unparsable credentials, KeyError missing fields.
-        print(f"integrity: Google unreachable or refused us: {exc!r}", flush=True)
+    except Exception as exc:
+        # Ours or Google's, never this device's: a network error, a refused
+        # token exchange, and any malformed service account (bad JSON, a JSON
+        # that is not the expected object, a private_key jwt cannot load).
+        # Same stance as push._credentials; fail closed with a 503, not a 500.
+        print(f"integrity: Google unreachable or credentials unusable: {exc!r}",
+              flush=True)
         return "integrity_unavailable"
     if resp.status_code == 400:
         return "integrity_failed"

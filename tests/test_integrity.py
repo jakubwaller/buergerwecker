@@ -47,6 +47,9 @@ _ENV = {
 }
 
 
+JWE = "aaa.bbb.ccc.ddd.eee"      # shaped like a compact JWE; never decoded here
+
+
 def fcm_tok(name):
     digest = hashlib.sha256(name.encode()).hexdigest()
     return f"{digest[:22]}:APA91b{hashlib.sha512(name.encode()).hexdigest()}"
@@ -150,7 +153,7 @@ def _cfg(**over):
     return SimpleNamespace(**base)
 
 
-def _verify(google, token="T" * 100, integrity="jwe.token"):
+def _verify(google, token="T" * 100, integrity=JWE):
     with patch("app.push._post", google):
         return verify_play_integrity(_cfg(), integrity, token)
 
@@ -162,7 +165,7 @@ def test_a_passing_verdict_returns_none_and_calls_google_as_documented():
     call = google.decode_calls[0]
     assert call["url"] == ("https://playintegrity.googleapis.com/v1/"
                            "de.buergerwecker.app:decodeIntegrityToken")
-    assert call["json"] == {"integrity_token": "jwe.token"}
+    assert call["json"] == {"integrity_token": JWE}
     assert call["headers"]["authorization"] == "Bearer ya29.test"
 
 
@@ -248,7 +251,7 @@ def test_no_credentials_is_unavailable_without_calling_google():
     google = passing("x")
     with patch("app.push._post", google):
         assert verify_play_integrity(_cfg(play_integrity_service_account_json=""),
-                                     "jwe", "x") == "integrity_unavailable"
+                                     JWE, "x") == "integrity_unavailable"
     assert google.decode_calls == []
 
 
@@ -256,7 +259,7 @@ def test_unparsable_credentials_are_unavailable():
     with patch("app.push._post", passing("x")):
         assert verify_play_integrity(
             _cfg(play_integrity_service_account_json="{not json"),
-            "jwe", "x") == "integrity_unavailable"
+            JWE, "x") == "integrity_unavailable"
 
 
 # --- config ----------------------------------------------------------------
@@ -280,7 +283,7 @@ def test_the_fcm_account_is_the_fallback_and_required_defaults_on(monkeypatch):
 def test_a_passing_verdict_registers(client):
     t = fcm_tok("a")
     with patch("app.push._post", passing(t)) as google:
-        r = _post(client, t, integrity_token="jwe")
+        r = _post(client, t, integrity_token=JWE)
     assert r.status_code == 201
     assert _devices() == 1
     assert len(google.decode_calls) == 1
@@ -294,7 +297,7 @@ def test_a_passing_verdict_registers(client):
 ])
 def test_a_refused_verdict_registers_nothing(client, decode, status, key):
     with patch("app.push._post", FakeGoogle(decode)):
-        r = _post(client, fcm_tok("a"), integrity_token="jwe", language="en")
+        r = _post(client, fcm_tok("a"), integrity_token=JWE, language="en")
     assert r.status_code == status
     assert r.get_json()["error"] == key
     assert r.get_json()["message"]
@@ -311,7 +314,7 @@ def test_a_missing_token_is_400_and_never_calls_google(client):
 
 def test_no_credentials_fails_closed_over_http(make_client):
     client = make_client(FCM_SERVICE_ACCOUNT_JSON="")
-    r = _post(client, fcm_tok("a"), integrity_token="jwe")
+    r = _post(client, fcm_tok("a"), integrity_token=JWE)
     assert r.status_code == 503 and r.get_json()["error"] == "integrity_unavailable"
     assert _devices() == 0
 
@@ -334,7 +337,7 @@ def test_apns_registration_is_not_checked(client):
 def test_a_known_token_registering_again_is_not_checked(client):
     t = fcm_tok("a")
     with patch("app.push._post", passing(t)):
-        assert _post(client, t, integrity_token="jwe").status_code == 201
+        assert _post(client, t, integrity_token=JWE).status_code == 201
     google = passing(t)
     with patch("app.push._post", google):
         r = _post(client, t)
@@ -346,10 +349,10 @@ def test_no_google_call_when_the_gate_refuses(make_client):
     client = make_client(MAX_TOKEN_REQUESTS_PER_IP_PER_10_MIN="1")
     t = fcm_tok("a")
     with patch("app.push._post", passing(t)):
-        assert _post(client, t, integrity_token="jwe").status_code == 201
+        assert _post(client, t, integrity_token=JWE).status_code == 201
     google = passing(fcm_tok("b"))
     with patch("app.push._post", google):
-        r = _post(client, fcm_tok("b"), integrity_token="jwe")
+        r = _post(client, fcm_tok("b"), integrity_token=JWE)
     assert r.status_code == 429 and google.decode_calls == []
 
 
@@ -362,14 +365,14 @@ def test_no_google_call_when_the_gate_refuses(make_client):
 def test_no_google_call_for_an_invalid_request(client, payload):
     google = passing("x")
     with patch("app.push._post", google):
-        r = client.post("/api/v1/devices", json={**payload, "integrity_token": "jwe"})
+        r = client.post("/api/v1/devices", json={**payload, "integrity_token": JWE})
     assert r.status_code == 400 and google.decode_calls == []
 
 
 def test_a_verdict_for_one_token_cannot_register_another(client):
     google = passing(fcm_tok("minted-for-this-one"))
     with patch("app.push._post", google):
-        r = _post(client, fcm_tok("scripted"), integrity_token="jwe")
+        r = _post(client, fcm_tok("scripted"), integrity_token=JWE)
     assert r.status_code == 403 and _devices() == 0
 
 
@@ -378,7 +381,7 @@ def test_a_verdict_for_one_token_cannot_register_another(client):
 def _registered(client, name="a"):
     t = fcm_tok(name)
     with patch("app.push._post", passing(t)):
-        body = _post(client, t, integrity_token="jwe").get_json()
+        body = _post(client, t, integrity_token=JWE).get_json()
     return {"Authorization": f"Bearer {body['device_id']}.{body['secret']}"}
 
 
@@ -388,7 +391,7 @@ def test_a_new_fcm_token_on_put_is_checked_against_the_new_token(client):
     google = passing(new)
     with patch("app.push._post", google):
         r = client.put("/api/v1/device", headers=auth,
-                       json={"token": new, "integrity_token": "jwe"})
+                       json={"token": new, "integrity_token": JWE})
     assert r.status_code == 200 and len(google.decode_calls) == 1
 
 
@@ -396,7 +399,7 @@ def test_put_with_a_verdict_for_the_old_token_is_refused(client):
     auth = _registered(client)
     with patch("app.push._post", passing(fcm_tok("a"))):
         r = client.put("/api/v1/device", headers=auth,
-                       json={"token": fcm_tok("scripted"), "integrity_token": "jwe"})
+                       json={"token": fcm_tok("scripted"), "integrity_token": JWE})
     assert r.status_code == 403
     row = connect(os.environ["DB_PATH"]).execute("SELECT token FROM push_devices").fetchone()
     assert row["token"] == fcm_tok("a")
@@ -428,9 +431,9 @@ def test_no_google_call_on_put_for_an_invalid_token_or_a_refused_gate(make_clien
     google = passing("x")
     with patch("app.push._post", google):
         bad = client.put("/api/v1/device", headers=auth,
-                         json={"token": "has space", "integrity_token": "jwe"})
+                         json={"token": "has space", "integrity_token": JWE})
         gated = client.put("/api/v1/device", headers=auth,
-                           json={"token": fcm_tok("b"), "integrity_token": "jwe"})
+                           json={"token": fcm_tok("b"), "integrity_token": JWE})
     assert bad.status_code == 400
     assert gated.status_code == 429
     assert google.decode_calls == []
@@ -449,5 +452,104 @@ def test_put_on_an_apns_device_is_not_checked(client):
 def test_a_registration_body_with_a_large_integrity_token_is_accepted(client):
     t = fcm_tok("a")
     with patch("app.push._post", passing(t)):
-        r = _post(client, t, integrity_token="j" * 20000)
+        r = _post(client, t, integrity_token="j" * 20000 + ".b.c.d.e")
     assert r.status_code == 201
+
+
+# --- credentials that are not what they should be ---------------------------
+
+@pytest.mark.parametrize("creds", [
+    json.dumps({"project_id": "p", "client_email": "sa@example.com",
+                "token_uri": "https://oauth2.example.com/token",
+                "private_key": "not a key"}),
+    "[1, 2]", "7", "null", '"text"', "{}",
+])
+def test_malformed_service_accounts_are_unavailable_never_a_500(creds):
+    google = passing("x")
+    with patch("app.push._post", google):
+        assert verify_play_integrity(_cfg(play_integrity_service_account_json=creds),
+                                     JWE, "x") == "integrity_unavailable"
+    assert google.decode_calls == []
+
+
+def test_a_malformed_service_account_is_a_503_over_http(make_client):
+    client = make_client(FCM_SERVICE_ACCOUNT_JSON="[1, 2]")
+    r = _post(client, fcm_tok("a"), integrity_token=JWE)
+    assert r.status_code == 503 and r.get_json()["error"] == "integrity_unavailable"
+
+
+# --- failed checks per network: the daily Google quota is not for junk -----
+
+V6 = "2001:db8:1:%x::1"
+
+
+def _fail_google():
+    return FakeGoogle((400, {}))
+
+
+def _from(client, name, addr="203.0.113.7", token=JWE):
+    return client.post("/api/v1/devices", headers={"X-Forwarded-For": addr},
+                       json={"platform": "fcm", "token": fcm_tok(name),
+                             "integrity_token": token})
+
+
+def test_a_network_over_its_failures_gets_429_and_no_google_call(client):
+    google = _fail_google()
+    with patch("app.push._post", google):
+        for i in range(3):
+            assert _from(client, f"f{i}").status_code == 403
+        r = _from(client, "f3")
+        other = _from(client, "f4", addr="203.0.113.8")
+    assert r.status_code == 429 and r.get_json()["error"] == "rate_limited"
+    assert 1 <= r.get_json()["retry_after"] <= 600
+    assert len(google.decode_calls) == 4      # three + the other network's one
+    assert other.status_code == 403
+
+
+def test_an_ipv6_48_is_bounded_across_its_64s(client):
+    google = _fail_google()
+    with patch("app.push._post", google):
+        for i in range(30):
+            assert _from(client, f"f{i}", addr=V6 % i).status_code == 403
+        r = _from(client, "last", addr=V6 % 99)
+    assert r.status_code == 429 and len(google.decode_calls) == 30
+
+
+def test_the_failures_expire_after_ten_minutes(client):
+    google = _fail_google()
+    with patch("app.push._post", google):
+        for i in range(3):
+            _from(client, f"f{i}")
+        assert _from(client, "blocked").status_code == 429
+        connect(os.environ["DB_PATH"]).execute(
+            "UPDATE rate_events SET at=datetime('now', '-11 minutes')")
+        assert _from(client, "later").status_code == 403
+    assert len(google.decode_calls) == 4
+
+
+def test_a_token_that_is_not_a_jwe_fails_without_a_call_and_counts(client):
+    google = passing("x")
+    with patch("app.push._post", google):
+        for i, junk in enumerate(["x", "a.b.c", "a.b.c.d.e.f", "a b.c.d.e.f", "a..c.d."]):
+            r = _from(client, f"j{i}", token=junk)
+            assert r.status_code == (403 if i < 3 else 429), (junk, r.status_code)
+    assert google.decode_calls == []
+
+
+def test_unavailable_missing_and_passing_checks_do_not_count(client):
+    with patch("app.push._post", FakeGoogle((500, {}))):
+        for i in range(5):
+            assert _from(client, f"u{i}").status_code == 503
+    with patch("app.push._post", passing(fcm_tok("ok"))):
+        assert _from(client, "ok").status_code == 201
+    for i in range(5):
+        assert _post(client, fcm_tok(f"m{i}")).status_code == 400
+    google = _fail_google()
+    with patch("app.push._post", google):
+        assert _from(client, "f0").status_code == 403    # still room: nothing above counted
+    assert len(google.decode_calls) == 1
+
+
+def test_the_poller_prunes_the_failure_buckets():
+    from app.ratelimit import RATE_EVENT_LIFETIMES
+    assert RATE_EVENT_LIFETIMES["intfail"] == RATE_EVENT_LIFETIMES["intfail48"] == 600

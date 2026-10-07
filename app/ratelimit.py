@@ -84,6 +84,31 @@ def db_rate_hit(conn: sqlite3.Connection, bucket: str, limit: int,
         (bucket, window)).fetchone()[0]
     return max(1, int(window_seconds) - int(age or 0))
 
+def rate_wait(conn: sqlite3.Connection, bucket: str, limit: int,
+              window_seconds: int) -> int:
+    """0 when `bucket` has fewer than `limit` events in the last
+    `window_seconds`, else the seconds until the oldest ages out. Records
+    nothing: for a limit that counts something other than the request itself
+    (see `rate_record`)."""
+    if limit <= 0:
+        return 0
+    window = f"-{int(window_seconds)} seconds"
+    n, age = conn.execute(
+        "SELECT COUNT(*), "
+        "CAST(strftime('%s','now') - strftime('%s', MIN(at)) AS INTEGER) "
+        "FROM rate_events WHERE bucket=? AND at > datetime('now', ?)",
+        (bucket, window)).fetchone()
+    if n < limit:
+        return 0
+    return max(1, int(window_seconds) - int(age or 0))
+
+
+def rate_record(conn: sqlite3.Connection, buckets: list[str]) -> None:
+    """One event in each of `buckets`."""
+    conn.executemany("INSERT INTO rate_events (bucket) VALUES (?)",
+                     [(b,) for b in buckets])
+
+
 def db_rate_hit_all(conn: sqlite3.Connection,
                     hits: list[tuple[str, int, int]]) -> int:
     """`db_rate_hit` for several (bucket, limit, window_seconds) at once, all
@@ -126,6 +151,8 @@ RATE_EVENT_LIFETIMES = {
     "req48": 600,        # ...per IPv6 /48
     "newdev": 3600,      # new unverified tokens per client network, with device id
     "newdev48": 3600,    # ...per IPv6 /48
+    "intfail": 600,      # failed Play Integrity checks per client network (api._integrity_refusal)
+    "intfail48": 600,    # ...per IPv6 /48
     "slots": 3600,       # slot-overview reads per device
 }
 

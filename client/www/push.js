@@ -161,8 +161,11 @@ export async function onToken(token) {
   if (!device) return registerFresh(token);
   if (device.token === token) return;
   try {
+    // The integrity token can take seconds the first time; `seq` is read only
+    // after it, right before the request, so it covers the request alone.
+    const integrity_token = await integrityToken(token);
     const seq = verifySeq;
-    const r = await api.updateDevice({ token, integrity_token: await integrityToken(token) });
+    const r = await api.updateDevice({ token, integrity_token });
     // A changed token is unverified again until the setup push sent to it
     // comes back; the waiting screen shows meanwhile. Should that push have
     // been posted already while this request was in flight, it stays verified.
