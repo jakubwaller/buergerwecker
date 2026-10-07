@@ -988,9 +988,12 @@ def test_devices_cannot_lock_the_website_out_of_a_city(client, monkeypatch):
     assert _subscribe(c, _auth(a, sa), appointment_type=svcs[3]).status_code == 201
 
 
-def test_a_device_watches_at_most_three_services_per_city(client):
+def test_a_device_watches_at_most_three_services_per_city(client, monkeypatch):
     from app.api import MAX_SERVICES_PER_DEVICE_PER_CITY
     assert MAX_SERVICES_PER_DEVICE_PER_CITY == 3
+    # The three-subscriptions-a-city limit would answer first; lifted here so
+    # the service count is what is under test.
+    monkeypatch.setattr("app.api.MAX_SUBSCRIPTIONS_PER_DEVICE_PER_CITY", 10)
     dev, secret = _register(client)
     auth = _auth(dev, secret)
     svcs = _leipzig_services(4)
@@ -1047,11 +1050,44 @@ def test_the_city_ceiling_turns_the_app_away_and_only_the_app(client, monkeypatc
     assert _subscribe(c, _auth(b, sb)).status_code == 201
 
 
-def test_zero_turns_the_city_ceiling_off(client, monkeypatch):
-    c = _app_client(monkeypatch, MAX_APP_SUBSCRIPTIONS_PER_CITY="0")
-    dev, secret = _register(c)
-    for _ in range(4):
-        assert _subscribe(c, _auth(dev, secret)).status_code == 201
+@pytest.mark.parametrize("ceiling, second", [("1", 503), ("0", 201)])
+def test_zero_turns_the_city_ceiling_off(client, monkeypatch, ceiling, second):
+    c = _app_client(monkeypatch, MAX_APP_SUBSCRIPTIONS_PER_CITY=ceiling)
+    a, sa = _register(c, token="a")
+    b, sb = _register(c, token="b")
+    assert _subscribe(c, _auth(a, sa)).status_code == 201
+    assert _subscribe(c, _auth(b, sb)).status_code == second
+
+
+def test_a_device_holds_at_most_three_subscriptions_per_city(client):
+    """The city ceiling is shared by every device. At ten a device, ten free
+    devices filled a city's hundred places and every other app user got
+    waitlist_full there; at three a city takes thirty-four."""
+    from app.api import MAX_SUBSCRIPTIONS_PER_DEVICE_PER_CITY
+    assert MAX_SUBSCRIPTIONS_PER_DEVICE_PER_CITY == 3
+    dev, secret = _register(client)
+    auth = _auth(dev, secret)
+    ids = [_subscribe(client, auth, weekdays=[d]).get_json()["id"] for d in (1, 2, 3)]
+    r = _subscribe(client, auth, weekdays=[4])
+    assert r.status_code == 409
+    body = r.get_json()
+    assert body["error"] == "too_many_in_city" and body["limit"] == 3
+    assert "höchstens 3" in body["message"]
+    # Another city is another count; an edit adds nothing; a renewal is not
+    # counted against itself, an expired one included.
+    assert _subscribe(client, auth, city="muenster-standesamt",
+                      appointment_type="2434").status_code == 201
+    assert client.put(f"/api/v1/subscriptions/{ids[0]}", headers=auth,
+                      json={"appointment_type": LEIPZIG_SVC, "weekdays": [5]}).status_code == 200
+    _db().execute("UPDATE subscriptions SET expires_at=datetime('now','-1 day') "
+                  "WHERE id=?", (ids[1],))
+    assert client.post(f"/api/v1/subscriptions/{ids[1]}/renew", json={},
+                       headers=auth).status_code == 200
+    # An expired one still holds its place (it is renewable); a deleted one
+    # frees it.
+    assert _subscribe(client, auth, weekdays=[4]).status_code == 409
+    assert client.delete(f"/api/v1/subscriptions/{ids[2]}", headers=auth).status_code == 204
+    assert _subscribe(client, auth, weekdays=[4]).status_code == 201
 
 
 def test_renew_is_judged_like_a_sign_up(client, monkeypatch):
@@ -1099,6 +1135,95 @@ def test_app_held_services_past_the_share_are_not_renewed(client, monkeypatch):
         assert r.status_code == 503, sid
     # The website still has its whole cap.
     assert _web_signup(c, _leipzig_services(15)[-1], "n@example.com").status_code == 302
+
+
+def test_conversions_do_not_let_a_city_grow_past_cap_and_a_half(client, monkeypatch):
+    """Mail fills its cap, devices join every service, mail leaves: the
+    services are app-held now, past the app's half, and they count against
+    mail until they drain. Before, mail could fill a whole new cap every
+    round."""
+    from app.repo import city_services
+    c = _app_client(monkeypatch, MAX_PLANS_PER_CITY="4")     # app share: 2
+    svcs = _leipzig_services(9)
+    for i, svc in enumerate(svcs[:4]):
+        assert _web_signup(c, svc, f"m{i}@example.com").status_code == 302
+    a, sa = _register(c, token="a")
+    b, sb = _register(c, token="b")
+    for (dev, sec), svc in zip([(a, sa)] * 3 + [(b, sb)], svcs[:4]):
+        assert _subscribe(c, _auth(dev, sec), appointment_type=svc).status_code == 201
+    _db().execute("UPDATE subscriptions SET deleted_at=CURRENT_TIMESTAMP WHERE email<>''")
+    # Four app-held against a share of two: mail has 4 - 2 places left.
+    assert _web_signup(c, svcs[4], "n1@example.com").status_code == 302
+    assert _web_signup(c, svcs[5], "n2@example.com").status_code == 302
+    assert _web_signup(c, svcs[6], "n3@example.com").status_code == 503
+    mail, app = city_services(_db(), "leipzig")
+    assert len(mail | app) == 6                               # cap + cap // 2
+
+
+def test_two_workers_racing_for_the_last_place_get_201_and_503(client, monkeypatch):
+    """Check-then-insert runs under BEGIN IMMEDIATE: the second request waits
+    for the first and then counts its row. Under a plain BEGIN both passed
+    the check and the loser failed with "database is locked", a 500."""
+    import threading
+    from app import api
+    c = _app_client(monkeypatch, MAX_APP_SUBSCRIPTIONS_PER_CITY="1")
+    a, sa = _register(c, token="a")
+    b, sb = _register(c, token="b")
+    gate = threading.Barrier(2, timeout=1)
+    real = api.app_subscriptions_in_city
+
+    def both_at_the_check(*args, **kw):
+        try:
+            gate.wait()          # both requests between check and insert
+        except threading.BrokenBarrierError:
+            pass                 # serialised: the other one already finished
+        return real(*args, **kw)
+
+    monkeypatch.setattr(api, "app_subscriptions_in_city", both_at_the_check)
+    results: list = []
+
+    def subscribe(dev, sec):
+        try:
+            results.append(_subscribe(c.application.test_client(), _auth(dev, sec)).status_code)
+        except Exception as exc:          # TESTING propagates a 500's cause
+            results.append(repr(exc))
+
+    threads = [threading.Thread(target=subscribe, args=x) for x in ((a, sa), (b, sb))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    assert sorted(results, key=str) == [201, 503]
+    assert _db().execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 1
+
+
+def test_an_edit_cannot_move_a_subscription_to_another_city(client):
+    """The city is the one the subscription was made in; a `city` in the
+    body is not read, so no edit escapes the checks of the city it lands in."""
+    dev, secret = _register(client)
+    auth = _auth(dev, secret)
+    sid = _subscribe(client, auth).get_json()["id"]
+    r = client.put(f"/api/v1/subscriptions/{sid}", headers=auth,
+                   json={"city": "muenster-standesamt", "appointment_type": "2434"})
+    assert r.status_code == 400 and r.get_json()["error"] == "unknown_type"
+    r = client.put(f"/api/v1/subscriptions/{sid}", headers=auth,
+                   json={"city": "muenster-standesamt", "appointment_type": LEIPZIG_SVC_2})
+    assert r.status_code == 200 and r.get_json()["city"] == "leipzig"
+
+
+def test_a_paused_devices_service_still_holds_the_app_share(client, monkeypatch):
+    """A device that changed its token pauses its subscriptions, and they
+    resume the moment it verifies, without a check: so they keep counting,
+    or devices could take turns pausing to stack the share."""
+    c = _app_client(monkeypatch, MAX_PLANS_PER_CITY="2")     # app share: 1
+    a, sa = _register(c, token="a")
+    b, sb = _register(c, token="b")
+    assert _subscribe(c, _auth(a, sa), appointment_type=LEIPZIG_SVC).status_code == 201
+    _db().execute("UPDATE push_devices SET verified_at=NULL WHERE id=?", (a,))
+    r = _subscribe(c, _auth(b, sb), appointment_type=LEIPZIG_SVC_2)
+    assert r.status_code == 503 and r.get_json()["error"] == "waitlist_full"
+    # Joining the service it holds is fine: it adds no plan.
+    assert _subscribe(c, _auth(b, sb), appointment_type=LEIPZIG_SVC).status_code == 201
 
 
 def test_delete_is_a_soft_delete_the_app_no_longer_sees(client):

@@ -603,17 +603,18 @@ def app_subscriptions_in_city(conn: sqlite3.Connection, city: str, *,
         (city, -1 if exclude_id is None else exclude_id)).fetchone()[0]
 
 
-def device_services_in_city(conn: sqlite3.Connection, device_id: int,
-                            city: str, *,
-                            exclude_id: int | None = None) -> set[str]:
-    """The distinct services one device watches in `city`, leaving out
-    `exclude_id`. Counted over the same rows as MAX_SUBSCRIPTIONS_PER_DEVICE
-    (not deleted, an expired one included: it is renewable)."""
+def device_footprint_in_city(conn: sqlite3.Connection, device_id: int,
+                             city: str, *, exclude_id: int | None = None
+                             ) -> tuple[int, set[str]]:
+    """(subscriptions, distinct services) one device holds in `city`,
+    leaving out `exclude_id`. Counted over the same rows as
+    MAX_SUBSCRIPTIONS_PER_DEVICE (not deleted, an expired one included: it
+    is renewable)."""
     rows = conn.execute(
         "SELECT filters_json FROM subscriptions WHERE device_id=? AND city=? "
         "AND id<>? AND deleted_at IS NULL",
         (device_id, city, -1 if exclude_id is None else exclude_id)).fetchall()
-    return _types_in(rows)
+    return len(rows), _types_in(rows)
 
 
 def renew_subscription(conn: sqlite3.Connection, sub_id: int,

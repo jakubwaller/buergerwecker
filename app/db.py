@@ -353,14 +353,20 @@ def connect(db_path: str) -> sqlite3.Connection:
     return conn
 
 @contextmanager
-def transaction(conn: sqlite3.Connection):
+def transaction(conn: sqlite3.Connection, *, immediate: bool = False):
     """Atomic BEGIN…COMMIT (or ROLLBACK on exception).
 
     Requires the connection to be in autocommit mode (`isolation_level=None`),
     which `connect()` above sets. Outside this context manager, every
     statement is its own transaction.
+
+    `immediate` takes the write lock at BEGIN, for a check-then-write (a cap
+    counted, then a row inserted): two workers then run one after the other,
+    the second reading the first's row. A plain BEGIN does not overshoot
+    either (SQLite refuses a write from a stale snapshot), but the loser
+    fails with "database is locked", a 500 instead of the cap's answer.
     """
-    conn.execute("BEGIN")
+    conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
     try:
         yield conn
     except BaseException:

@@ -740,8 +740,8 @@ are missing or wrong on the VPS: check `docker compose logs poller | grep
   at most a minute more.
 
   These are speed bumps; the walls against minted devices are what a device
-  may hold: at most 10 live subscriptions (`api.MAX_SUBSCRIPTIONS_PER_DEVICE`)
-  under the per-city plan cap.
+  may hold: at most 10 live subscriptions (`api.MAX_SUBSCRIPTIONS_PER_DEVICE`),
+  and the app's share of each city (below).
 - The still-looking check-in reaches app subscriptions as a push
   (`push.checkin_*` in the i18n bundles) in the same window as the mail,
   `RENEWAL_REMINDER_DAYS_BEFORE` days before the term ends; the app answers
@@ -762,28 +762,43 @@ when mail is out of quota push waits behind it (*Email delivery & quotas*,
 
 Devices cost nothing to mint (Android needs no more than a headless FCM
 receiver and the public `google-services.json`), so no limit here rests on
-how many devices a person has; the per-IP and per-day registration limits are
-speed bumps, not ceilings. Each limit below is a count in the database,
-checked inside the write's transaction, so it holds across gunicorn workers.
-Measured before this existed: two verified devices with 16 Bonn
-subscriptions made every website visitor get `waitlist_full` for any other
-Bonn service, and a renew per term kept it that way.
+how many devices a person has; the per-network registration limits above are
+speed bumps, not ceilings. What one device may hold is kept small, and what
+all of them hold together is capped. Each limit is a count in the database,
+checked and written in one `BEGIN IMMEDIATE` transaction, so two gunicorn
+workers run one after the other and the second counts the first's row (under
+a plain `BEGIN` the loser of a race got a 500). Measured before this existed:
+two verified devices with 16 Bonn subscriptions made every website visitor
+get `waitlist_full` for any other Bonn service, and a renew per term kept it
+that way.
 
-- **The plan cap is split, and mail is never locked out by devices**
-  (`planning.cap_refuses`). A service is *mail-held* when a live mail
-  subscription watches it, *app-held* when only live app subscriptions do. A
-  website sign-up or edit is judged against mail-held services alone:
-  refused only for a service nobody polls yet, when mail-held services would
-  then exceed `MAX_PLANS_PER_CITY` (or the tenant's `max_plans`). A service
-  already polled is never refused to anyone. The app gets a new service only
-  if everything polled stays within the cap (never what the website would be
-  refused), and app-held services never exceed **half the cap** (8 of 16).
-  Worst case, a city is polled for cap + cap/2 services (Bonn: 24): the app
-  took its half first, mail then filled its own whole cap; from then on the
-  app gets no new service there until the city is back under the cap.
-- **At most 3 distinct services per city per device**
-  (`api.MAX_SERVICES_PER_DEVICE_PER_CITY`), over the same rows as the
-  10-subscriptions ceiling: `409 too_many_services` with `limit` and a
+- **The plan cap is split** (`planning.cap_refuses`). A service is
+  *mail-held* when a live mail subscription watches it, *app-held* when only
+  live app subscriptions do. A website sign-up or edit is refused only for a
+  service nobody polls yet, and only when mail-held services, plus any
+  app-held services *past the app's half*, would then exceed
+  `MAX_PLANS_PER_CITY` (or the tenant's `max_plans`). App-held services within
+  the half never count against mail, however many devices hold them. A
+  service already polled is never refused to anyone. The app gets a new
+  service only if everything polled stays within the cap (never what the
+  website would be refused), and app-held services stay within **half the
+  cap** (8 of 16).
+- **Why app-held services past the half count against mail.** They exist
+  only by conversion: app subscriptions joined a mail-held service (always
+  allowed) and its last mail subscriber left. Not counted, that recycled the
+  app's half without end: mail fills its cap, devices join, mail leaves,
+  mail fills a new cap (Bonn: 16 → 96 services polled in six rounds, found in
+  review of this change). Counted, a city is never polled for more than
+  cap + cap/2 services (Bonn: 24; the app took its half first, mail then
+  filled its own cap), and conversions only change who holds a service. The
+  excess drains: while app-held services are past the half, no renewal on an
+  app-held service is accepted, so they end with their terms (at most
+  `SUBSCRIPTION_TTL_DAYS`); meanwhile mail has that many fewer places.
+- **At most 3 live subscriptions and 3 distinct services per city per
+  device** (`api.MAX_SUBSCRIPTIONS_PER_DEVICE_PER_CITY`,
+  `api.MAX_SERVICES_PER_DEVICE_PER_CITY`), over the same rows as the
+  10-subscriptions ceiling (an expired one included: it is renewable):
+  `409 too_many_in_city` / `409 too_many_services`, each with `limit` and a
   `message` the app shows as is.
 - **At most `MAX_APP_SUBSCRIPTIONS_PER_CITY` live app subscriptions per
   city** (default 100, `0` = no ceiling), all devices together: `503
@@ -791,13 +806,21 @@ Bonn service, and a renew per term kept it that way.
   scale: about 200 live mail subscriptions across all 38 tenants today.
 - "Live" for the app counts a paused subscription (a device that changed its
   token and has not verified again) because it resumes without passing a
-  check, and does not count an expired one, which can come back only
-  through `/renew`.
+  check (left out, devices could take turns pausing to stack a city), and
+  does not count an expired one, which can come back only through `/renew`.
+  A paused device cannot renew, so its places end with their terms.
 - **`/renew` is judged like a sign-up** at that moment, leaving the
   subscription itself out; refused (`409`/`503`), it keeps the term it has.
-  A service turns app-held when its last mail subscriber leaves; past the
-  app's half, renewals on app-held services are refused, so they drain at the
-  end of their terms instead of being held for ever.
+- **What squatting still costs, and the signal.** The places are shared, so
+  free devices can hold them: 34 devices fill a city's 100 app places, 3 fill
+  its app half of new services (8 of 16). Either way only app users wanting
+  a *new* place in that city are turned away; joining a polled service and
+  the whole website are untouched. The web log says
+  `api: <city> is at MAX_APP_SUBSCRIPTIONS_PER_CITY` or
+  `api: <city> plan cap or app share reached` on each refusal; a city that
+  says so all day with few real users is being held. What to do is the
+  operator's call (raise the ceiling, or end the holding devices'
+  subscriptions); the registration limits are what make holding expensive.
 
 ### Verifying after deploy
 

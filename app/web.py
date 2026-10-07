@@ -943,7 +943,7 @@ def create_app() -> Flask:
             return _result_page(err.key, lang, status=400)
         # 5. plan-cap overflow check + insert atomically (spec 3.2.6).
         conn = connect(cfg.db_path)
-        with transaction(conn):
+        with transaction(conn, immediate=True):
             # Judged against mail-held services only: no number of app
             # devices can fill a city's cap for the website (planning.cap_refuses).
             if refused_by_plan_cap(conn, city, f, push=False,
@@ -1091,7 +1091,7 @@ def create_app() -> Flask:
                 f, sensitive = _filter_from_form(request.form, catalog)
             except _FormError as err:
                 return _result_page(err.key, lang, status=400)
-            with transaction(conn):
+            with transaction(conn, immediate=True):
                 # The same cap check as /subscribe, minus this subscription's
                 # own current plan, which the new filter replaces. Without it
                 # the manage form was a way past the wait-list: a sign-up for

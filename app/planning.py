@@ -76,31 +76,38 @@ def cap_refuses(mail_services: set[str], app_services: set[str],
     subscription being edited or renewed.
 
     Mail: refused only for a service nobody polls yet, and only when the
-    mail-held services would then exceed the cap. App-held services never
-    count against a mail subscriber, so a mail subscriber is never turned
-    away because of devices, however many there are, and a service with a
-    mail subscriber on it (or any polled service) is never refused to one.
+    mail-held services, plus any app-held services past the app's share,
+    would then exceed the cap. App-held services within the share never
+    count against a mail subscriber, however many devices hold them, and a
+    service with a mail subscriber on it (or any polled service) is never
+    refused to one.
 
     App: refused when
     - the service is not polled yet and everything polled would then exceed
       the cap (the app never gets a plan the website would be refused), or
     - the service is not mail-held and the app-held services, counting it,
       would exceed `app_share(cap)`. Joining or renewing on an app-held
-      service is judged too, not only adding one: a service turns app-held
-      when its last mail subscriber leaves, and without that check app-held
-      services could pile up past the share and be renewed there for ever.
-      Over the share, they drain at the end of their terms.
+      service is judged too, not only adding one.
     Joining a mail-held service is never refused to the app.
 
-    The price of never locking mail out: in the worst case (the app holds
-    its full share and mail then fills its own cap) a city is polled for
-    cap + cap // 2 services, and the app gets no new plan there until it is
-    back under the cap."""
+    App-held services past the share exist only by *conversion*: app
+    subscriptions joined a mail-held service and its last mail subscriber
+    left. They must count against mail: otherwise mail fills its cap, the app
+    joins every service, mail leaves, mail fills its cap again, and the city
+    is polled for another cap's worth of services every round (security
+    review 2026-10-07: 16 → 96 Bonn services in six rounds). Counted, the
+    invariant holds: a city is never polled for more than cap + cap // 2
+    services (the app took its half first, mail then filled its own cap;
+    conversions change who holds a service, never how many are polled).
+    The excess drains: no renewal on an app-held service is accepted while
+    app-held services are past the share, so they end with their terms."""
     wanted_set = set(wanted)
     polled = mail_services | app_services
     new = wanted_set - polled
     if not push:
-        return bool(new) and len(mail_services) + len(new) > cap
+        app_held = app_services - mail_services
+        excess = max(0, len(app_held) - app_share(cap))
+        return bool(new) and len(mail_services) + excess + len(new) > cap
     not_mail_held = wanted_set - mail_services
     app_held_after = (app_services - mail_services) | not_mail_held
     if not_mail_held and len(app_held_after) > app_share(cap):

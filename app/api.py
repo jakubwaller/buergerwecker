@@ -87,7 +87,7 @@ from app.models import Filter
 from app.planning import refused_by_plan_cap
 from app.ratelimit import (GLOBAL_IP_LIMITER, db_rate_hit, db_rate_hit_all,
                            record_new_device, unverified_devices)
-from app.repo import app_subscriptions_in_city, device_services_in_city
+from app.repo import app_subscriptions_in_city, device_footprint_in_city
 from app.repo import (delete_device, device_by_id,
                       insert_push_subscription, live_subscription_count,
                       register_device, renew_subscription,
@@ -109,6 +109,11 @@ MAX_SUBSCRIPTIONS_PER_DEVICE = 10
 # few kinds of appointment at one Amt; without it, a handful of devices took a
 # whole city's plan cap (16 Bonn services from two devices, 2026-10-07).
 MAX_SERVICES_PER_DEVICE_PER_CITY = 3
+# Live subscriptions one device may hold in one city. A city's app ceiling
+# (MAX_APP_SUBSCRIPTIONS_PER_CITY) is shared by every device, and at ten a
+# device, ten free devices filled it and turned every other app user away
+# there; at three it takes thirty-four.
+MAX_SUBSCRIPTIONS_PER_DEVICE_PER_CITY = 3
 # What a push token looks like, per platform (after normalize_push_token's
 # lowercasing for APNs). APNs: the device token in hex, 32 bytes today, and
 # Apple reserves the right to make it longer (up to 100 bytes). FCM: a
@@ -161,6 +166,12 @@ _API_MESSAGES = {
         "en": (f"You can watch at most {MAX_SERVICES_PER_DEVICE_PER_CITY} "
                "different services per city. Stop an alert for another "
                "service before you add a new one."),
+    },
+    "too_many_in_city": {
+        "de": (f"Pro Stadt kannst du höchstens {MAX_SUBSCRIPTIONS_PER_DEVICE_PER_CITY} "
+               "Alarme haben. Beende einen, bevor du einen neuen anlegst."),
+        "en": (f"You can have at most {MAX_SUBSCRIPTIONS_PER_DEVICE_PER_CITY} "
+               "alerts per city. Stop one before you create another."),
     },
 }
 
@@ -909,7 +920,7 @@ def create_subscription():
         return _error(err.key, 400, lang)
     sub_lang = _lang(body.get("language"), lang)
     cfg = _cfg()
-    with transaction(g.conn):
+    with transaction(g.conn, immediate=True):
         if live_subscription_count(g.conn, g.device["id"]) >= MAX_SUBSCRIPTIONS_PER_DEVICE:
             return _error("too_many_subscriptions", 409, lang,
                           limit=MAX_SUBSCRIPTIONS_PER_DEVICE)
@@ -955,11 +966,11 @@ def update_subscription(sub_id):
     except FormError as err:
         return _error(err.key, 400, lang)
     cfg = _cfg()
-    with transaction(g.conn):
+    with transaction(g.conn, immediate=True):
         # The city does not change and the subscription stays one, so the
         # city ceiling has nothing new to count.
         refused = _share_refusal(sub.city, f, lang, exclude_id=sub_id,
-                                 ceiling=False)
+                                 adds_one=False)
         if refused is not None:
             return refused
         g.conn.execute("UPDATE subscriptions SET filters_json=?, "
@@ -1009,7 +1020,7 @@ def renew(sub_id):
     if sub is None:
         return _error("not_found", 404, lang)
     ttl = ttl_days_for(_cfg(), sub.consent_special)
-    with transaction(g.conn):
+    with transaction(g.conn, immediate=True):
         refused = _share_refusal(sub.city, sub.sub_filter, lang, exclude_id=sub_id)
         if refused is not None:
             return refused
@@ -1018,34 +1029,46 @@ def renew(sub_id):
 
 
 def _share_refusal(city: str, f: Filter, lang: str, *,
-                   exclude_id: int | None = None, ceiling: bool = True):
-    """The app's share of a city, checked inside the caller's transaction on
-    database counts (so it holds across workers), leaving out `exclude_id`
-    (the subscription being edited or renewed). Returns the error response,
-    or None. Devices are free to mint, so none of this rests on how many a
-    person has.
+                   exclude_id: int | None = None, adds_one: bool = True):
+    """The app's share of a city, checked inside the caller's transaction
+    (BEGIN IMMEDIATE, so two workers run one after the other) on database
+    counts, leaving out `exclude_id` (the subscription being edited or
+    renewed). Returns the error response, or None. Devices are free to
+    mint, so none of this rests on how many a person has: what one device
+    can hold is kept small, and what all of them hold together is capped.
 
+    - 409 `too_many_in_city`: the device would hold more than
+      MAX_SUBSCRIPTIONS_PER_DEVICE_PER_CITY subscriptions in the city
+      (`adds_one`: a sign-up or a renewal, not an edit).
     - 409 `too_many_services`: the device would watch more than
       MAX_SERVICES_PER_DEVICE_PER_CITY distinct services in the city.
     - 503 `waitlist_full`: the city already holds MAX_APP_SUBSCRIPTIONS_PER_CITY
-      live app subscriptions (`ceiling`; 0 turns it off). The app only: the
+      live app subscriptions (`adds_one`; 0 turns it off). The app only: the
       website never sees this count.
     - 503 `waitlist_full`: the plan cap, the app's side of
       `planning.cap_refuses`: never what the website would refuse, and
-      app-held services stay within half the cap, so no number of devices
-      can turn a mail subscriber away."""
+      app-held services within half the cap."""
     cfg = _cfg()
-    services = device_services_in_city(g.conn, g.device["id"], city,
-                                       exclude_id=exclude_id)
+    held, services = device_footprint_in_city(g.conn, g.device["id"], city,
+                                              exclude_id=exclude_id)
+    if adds_one and held >= MAX_SUBSCRIPTIONS_PER_DEVICE_PER_CITY:
+        return _error("too_many_in_city", 409, lang,
+                      limit=MAX_SUBSCRIPTIONS_PER_DEVICE_PER_CITY)
     if len(services | set(f.appointment_types)) > MAX_SERVICES_PER_DEVICE_PER_CITY:
         return _error("too_many_services", 409, lang,
                       limit=MAX_SERVICES_PER_DEVICE_PER_CITY)
     limit = cfg.max_app_subscriptions_per_city
-    if (ceiling and limit
+    if (adds_one and limit
             and app_subscriptions_in_city(g.conn, city, exclude_id=exclude_id) >= limit):
+        # The operator's signal that a city's app places are taken: by
+        # demand (raise the ceiling) or by someone holding them.
+        print(f"api: {city} is at MAX_APP_SUBSCRIPTIONS_PER_CITY ({limit}); "
+              f"app sign-up refused", flush=True)
         return _error("waitlist_full", 503, lang)
     if refused_by_plan_cap(g.conn, city, f, max_plans_per_city=cfg.max_plans_per_city,
                            push=True, exclude_id=exclude_id):
+        print(f"api: {city} plan cap or app share reached; app sign-up refused",
+              flush=True)
         return _error("waitlist_full", 503, lang)
     return None
 

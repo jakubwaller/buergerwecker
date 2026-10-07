@@ -143,3 +143,62 @@ def test_app_held_services_past_the_share_drain_instead_of_renewing():
     assert cap_refuses(mail, app | {"m0"}, ["m0"], cap=16, push=True) is False
     # Mail is not touched by any of it.
     assert cap_refuses(mail, app, ["a0"], cap=16, push=False) is False
+
+
+def test_conversions_cannot_recycle_the_app_share():
+    """Found in review of this change: mail fills its cap, the app joins
+    every service (always allowed), mail leaves, mail fills its cap again,
+    and so on: 16 → 96 Bonn services polled in six rounds. App-held
+    services past the share now count against mail, so a city is never
+    polled for more than cap + cap // 2."""
+    from app.planning import app_share, cap_refuses
+    cap = 16
+    mail, app = set(), set()
+    n = 0
+    for _ in range(6):
+        while not cap_refuses(mail, app, [f"s{n}"], cap=cap, push=False):
+            mail.add(f"s{n}")
+            n += 1
+        for svc in sorted(mail):
+            assert cap_refuses(mail, app, [svc], cap=cap, push=True) is False
+            app.add(svc)
+        mail.clear()
+        assert len(mail | app) <= cap + app_share(cap)
+    assert len(app) == cap + app_share(cap)
+
+
+def test_app_held_services_within_the_share_never_count_against_mail():
+    from app.planning import cap_refuses
+    # Exactly the share: mail keeps its whole cap.
+    assert cap_refuses(_svcs("m", 15), _svcs("a", 8), ["new"], cap=16, push=False) is False
+    # Two past it (conversions): mail has two fewer until they drain.
+    assert cap_refuses(_svcs("m", 13), _svcs("a", 10), ["new"], cap=16, push=False) is False
+    assert cap_refuses(_svcs("m", 14), _svcs("a", 10), ["new"], cap=16, push=False) is True
+    assert cap_refuses(_svcs("m", 14), _svcs("a", 10), ["m0"], cap=16, push=False) is False
+
+
+def test_the_polled_services_never_exceed_cap_and_a_half_under_any_sequence():
+    import random
+    from app.planning import app_share, cap_refuses
+    for seed in range(300):
+        r = random.Random(seed)
+        cap = r.choice([2, 4, 5, 16])
+        mail: dict[str, int] = {}
+        app: dict[str, int] = {}
+        for _ in range(150):
+            m = {k for k, v in mail.items() if v}
+            a = {k for k, v in app.items() if v}
+            svc = f"s{r.randrange(40)}"
+            op = r.random()
+            if op < 0.35:
+                if not cap_refuses(m, a, [svc], cap=cap, push=False):
+                    mail[svc] = mail.get(svc, 0) + 1
+            elif op < 0.7:
+                if not cap_refuses(m, a, [svc], cap=cap, push=True):
+                    app[svc] = app.get(svc, 0) + 1
+            elif op < 0.85 and m:
+                mail[r.choice(sorted(m))] -= 1      # a mail subscriber leaves
+            elif a:
+                app[r.choice(sorted(a))] -= 1
+            polled = {k for k, v in mail.items() if v} | {k for k, v in app.items() if v}
+            assert len(polled) <= cap + app_share(cap), seed
