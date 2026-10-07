@@ -1137,6 +1137,30 @@ def test_app_held_services_past_the_share_are_not_renewed(client, monkeypatch):
     assert _web_signup(c, _leipzig_services(15)[-1], "n@example.com").status_code == 302
 
 
+def test_a_city_above_its_cap_still_lets_its_subscribers_edit_and_renew(client, monkeypatch):
+    """The app took its half first, mail then filled its whole cap: six
+    services polled against a cap of four, as designed. An edit or renewal
+    leaves the subscription itself out, and its own service then looked
+    unpolled and new, so 5 + 1 > 4 refused the app user who came first."""
+    c = _app_client(monkeypatch, MAX_PLANS_PER_CITY="4")     # app share: 2
+    svcs = _leipzig_services(6)
+    a, sa = _register(c, token="a")
+    sid = _subscribe(c, _auth(a, sa), appointment_type=svcs[0]).get_json()["id"]
+    assert _subscribe(c, _auth(a, sa), appointment_type=svcs[1]).status_code == 201
+    for i, svc in enumerate(svcs[2:]):
+        assert _web_signup(c, svc, f"m{i}@example.com").status_code == 302
+    body = {"city": "leipzig", "appointment_type": svcs[0], "locations": "all",
+            "weekdays": [1, 2], "time_start": "08:00", "time_end": "12:00"}
+    r = c.put(f"/api/v1/subscriptions/{sid}", headers=_auth(a, sa), json=body)
+    assert r.status_code == 200, r.get_json()
+    assert c.post(f"/api/v1/subscriptions/{sid}/renew", json={},
+                  headers=_auth(a, sa)).status_code == 200
+    # Moving to a service nobody polls is still judged like a sign-up.
+    r = c.put(f"/api/v1/subscriptions/{sid}", headers=_auth(a, sa),
+              json={**body, "appointment_type": _leipzig_services(7)[-1]})
+    assert r.status_code == 503
+
+
 def test_conversions_do_not_let_a_city_grow_past_cap_and_a_half(client, monkeypatch):
     """Mail fills its cap, devices join every service, mail leaves: the
     services are app-held now, past the app's half, and they count against

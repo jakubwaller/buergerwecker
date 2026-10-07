@@ -593,6 +593,18 @@ def city_services(conn: sqlite3.Connection, city: str, *,
     return _types_in(mail), _types_in(app)
 
 
+def own_live_services(conn: sqlite3.Connection, sub_id: int | None) -> set[str]:
+    """The services subscription `sub_id` watches while it is live (mail or
+    app), else none: what an edit or a renewal of it already has polled, so
+    the plan cap does not judge it as new. An expired one has nothing
+    polled; renewing it is judged like a sign-up."""
+    if sub_id is None:
+        return set()
+    return _types_in(conn.execute(
+        f"SELECT filters_json FROM subscriptions WHERE id=? "
+        f"AND (({_LIVE_MAIL}) OR ({_LIVE_APP}))", (sub_id,)).fetchall())
+
+
 def app_subscriptions_in_city(conn: sqlite3.Connection, city: str, *,
                               exclude_id: int | None = None) -> int:
     """Live app subscriptions in `city`, every device together, leaving out

@@ -155,6 +155,19 @@ def test_push_that_waited_longer_than_the_wall_still_goes_out(db, one_provider):
     assert told == {p0.subscription.id}
 
 
+def test_no_wall_once_mail_is_out_for_the_day(db, one_provider):
+    """The daily window binds: the deferred mail waits for the rolling 24h
+    window, so holding push would only silence the app with it."""
+    m1 = _mail(db, "m1", "2026-06-01 08:00:00")
+    p1 = _push(db, "p1", "2026-06-01 09:00:00")
+    m2 = _mail(db, "m2", "2026-06-01 10:00:00")     # deferred until tomorrow
+    p2 = _push(db, "p2", "2026-06-01 11:00:00")
+    handed, told = _flush(db, [p2, m2, p1, m1],
+                          _wall_cfg(room=100, mailjet_daily_quota=1))
+    assert handed == ["p1", "p2"]
+    assert told == {m1.subscription.id, p1.subscription.id, p2.subscription.id}
+
+
 def test_no_wall_while_mail_has_room(db, one_provider):
     sink = [_mail(db, "m1", "2026-06-01 08:00:00"), _push(db, "p1", "2026-06-01 09:00:00"),
             _mail(db, "m2", "2026-06-01 10:00:00"), _push(db, "p2", "2026-06-01 11:00:00")]

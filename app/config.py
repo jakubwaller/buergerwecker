@@ -106,6 +106,19 @@ def _req_int(key: str) -> int:
     except ValueError:
         raise ValueError(f"Env var {key} must be an integer, got: {raw!r}")
 
+def _nonneg_int(key: str, default: str) -> int:
+    """An optional whole number where 0 means off. A negative one is a typo
+    that would read as on: -1 pushes nothing (every digest over budget) or
+    refuses every app sign-up, with only a log line. Refuse it at start."""
+    raw = os.environ.get(key, default)
+    try:
+        val = int(raw)
+    except ValueError:
+        raise ValueError(f"Env var {key} must be an integer, got: {raw!r}")
+    if val < 0:
+        raise ValueError(f"Env var {key} must be 0 (off) or more, got: {raw!r}")
+    return val
+
 def ttl_days_for(cfg, sensitive: bool) -> int:
     """Days a subscription lives from sign-up or renewal. A special-category
     subscription never outlives an ordinary one: SENSITIVE_SUBSCRIPTION_TTL_DAYS
@@ -257,8 +270,8 @@ def load_config() -> Config:
         mail_pool_pressure_pct=int(os.environ.get("MAIL_POOL_PRESSURE_PCT", "80")),
         mail_cap_under_pressure=int(
             os.environ.get("MAIL_CAP_UNDER_PRESSURE", "1")),
-        max_app_subscriptions_per_city=int(
-            os.environ.get("MAX_APP_SUBSCRIPTIONS_PER_CITY", "100")),
-        push_budget_per_cycle=int(os.environ.get("PUSH_BUDGET_PER_CYCLE", "200")),
-        push_budget_seconds=int(os.environ.get("PUSH_BUDGET_SECONDS", "20")),
+        max_app_subscriptions_per_city=_nonneg_int(
+            "MAX_APP_SUBSCRIPTIONS_PER_CITY", "100"),
+        push_budget_per_cycle=_nonneg_int("PUSH_BUDGET_PER_CYCLE", "200"),
+        push_budget_seconds=_nonneg_int("PUSH_BUDGET_SECONDS", "20"),
     )

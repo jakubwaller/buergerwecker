@@ -63,7 +63,8 @@ def app_share(cap: int) -> int:
 
 
 def cap_refuses(mail_services: set[str], app_services: set[str],
-                wanted: list[str], *, cap: int, push: bool) -> bool:
+                wanted: list[str], *, cap: int, push: bool,
+                own: set[str] = frozenset()) -> bool:
     """Would a subscription to `wanted` be turned away by the city's plan cap?
 
     The cap counts services, not plans: past the cap build_plans collapses a
@@ -73,7 +74,10 @@ def cap_refuses(mail_services: set[str], app_services: set[str],
     least one live app subscription watches; a service watched by app
     subscriptions and by no mail subscription is *app-held*. See
     `app.repo.city_services` for "live". The caller leaves out the
-    subscription being edited or renewed.
+    subscription being edited or renewed, and passes what it watches while
+    live as `own`: those services are polled now, so keeping them is never
+    "new" (without it, a city above the cap refused its own subscribers'
+    edits and renewals — security review of #109).
 
     Mail: refused only for a service nobody polls yet, and only when the
     mail-held services, plus any app-held services past the app's share,
@@ -103,7 +107,7 @@ def cap_refuses(mail_services: set[str], app_services: set[str],
     app-held services are past the share, so they end with their terms."""
     wanted_set = set(wanted)
     polled = mail_services | app_services
-    new = wanted_set - polled
+    new = wanted_set - polled - own
     if not push:
         app_held = app_services - mail_services
         excess = max(0, len(app_held) - app_share(cap))
@@ -120,7 +124,8 @@ def refused_by_plan_cap(conn, city: str, f: Filter, *, max_plans_per_city: int,
     """`cap_refuses` against the database, for a sign-up (or an edit or a
     renewal, leaving out the subscription itself: `exclude_id`) of `f` in
     `city`. The counts are database rows, so they hold across workers."""
-    from app.repo import city_services
+    from app.repo import city_services, own_live_services
     mail, app = city_services(conn, city, exclude_id=exclude_id)
     return cap_refuses(mail, app, list(f.appointment_types),
-                       cap=cap_for_city(city, max_plans_per_city), push=push)
+                       cap=cap_for_city(city, max_plans_per_city), push=push,
+                       own=own_live_services(conn, exclude_id))

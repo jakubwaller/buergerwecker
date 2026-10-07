@@ -245,7 +245,12 @@ failing:
   gets ahead of the other. A mail digest to a dead address takes no room;
   an outage defers more mail than predicted without holding push back (the
   wall is the quota's). The poller logs `push: N digest(s) wait behind the
-  mail quota` when it holds any. The push budget (*Push delivery* below)
+  mail quota` when it holds any. **Hourly walls only:** when the daily
+  windows are what bind (`mail.daily_room` no more than the pool's room),
+  the deferred mail waits for the rolling 24h window, and push goes out —
+  holding it then frees no quota, and anyone who exhausts the mail pool (a
+  flood of confirmation mails, say) would silence the app for the rest of
+  the day as well. The push budget (*Push delivery* below)
   does **not** hold mail back: devices are free to mint, and a push queue
   that held the mail queue would hand them a lever over the website's
   subscribers.
@@ -813,9 +818,12 @@ that way.
   subscription itself out; refused (`409`/`503`), it keeps the term it has.
 - **What squatting still costs, and the signal.** The places are shared, so
   free devices can hold them: 34 devices fill a city's 100 app places, 3 fill
-  its app half of new services (8 of 16). Either way only app users wanting
-  a *new* place in that city are turned away; joining a polled service and
-  the whole website are untouched. The web log says
+  its app half of new services (8 of 16). Either way only app users are
+  turned away: at the ceiling every new app subscription, joining a polled
+  service included; past the half, a new or app-held service (joining a
+  mail-held one stays open). Edits and renewals keep the services they
+  already have, except app-held services past the half, which drain with
+  their terms. The whole website is untouched. The web log says
   `api: <city> is at MAX_APP_SUBSCRIPTIONS_PER_CITY` or
   `api: <city> plan cap or app share reached` on each refusal; a city that
   says so all day with few real users is being held. What to do is the

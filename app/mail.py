@@ -732,6 +732,21 @@ def pool_room(conn: sqlite3.Connection, cfg) -> int:
                for name, _send_fn, _batch_size, limits in _providers(cfg))
 
 
+def daily_room(conn: sqlite3.Connection, cfg) -> int | None:
+    """Mail the provider chain can still take within its daily windows alone,
+    ignoring the hourly ones; None when a provider has no daily window (it
+    recovers within the hour). Next to `pool_room` it says which wall is up:
+    equal, the daily windows are what bind, and what mail defers now waits
+    for the rolling 24h window, not the hour."""
+    total = 0
+    for name, _send_fn, _batch_size, limits in _providers(cfg):
+        daily = [(limit, window) for limit, window in limits if window >= 86400]
+        if not daily:
+            return None
+        total += _headroom(conn, daily, name)
+    return total
+
+
 def pool_usage(conn: sqlite3.Connection, cfg) -> tuple[int, int]:
     """(sends in the rolling 24h, summed daily cap) across every provider that
     can actually send: the number that gates mail delivery. (0, 0) when no

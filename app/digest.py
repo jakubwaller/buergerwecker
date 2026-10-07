@@ -320,15 +320,24 @@ def _behind_the_mail_wall(conn: sqlite3.Connection, sink: list, cfg) -> set[str]
     defers more mail than predicted without holding push: the wall is the
     quota's, which is what fairness is about.
 
+    Hourly walls only. When the daily windows are what bind (`daily_room` no
+    more than `pool_room`), the mail behind the wall waits for the rolling
+    24h window: holding push then frees no quota and serves nobody, and it
+    would let whoever exhausts the mail pool, e.g. with confirmation mails,
+    silence the app for the rest of the day too (owner's call, 2026-10-07).
+
     One-sided on purpose. The push budget (PUSH_BUDGET_*) also leaves
     digests for the next cycle, but it holds no mail back: devices are free
     to mint, and a push queue that held the mail queue would give them a
     lever over the website's subscribers."""
-    from app.mail import _dead_addresses, pool_room
+    from app.mail import _dead_addresses, daily_room, pool_room
     if (all(isinstance(q.item, Outgoing) for q in sink)
             or not any(isinstance(q.item, Outgoing) for q in sink)):
         return set()
     room = pool_room(conn, cfg)
+    day = daily_room(conn, cfg)
+    if day is not None and day <= room:
+        return set()
     dead = _dead_addresses(conn, cfg)
     walled = False
     held: set[str] = set()
