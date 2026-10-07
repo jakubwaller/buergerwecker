@@ -276,6 +276,41 @@ def test_registration_is_rate_limited_per_ip(client, monkeypatch):
     assert keys and all(k.startswith("api:") for k in keys)
 
 
+def test_new_devices_are_also_limited_per_ipv6_48(client, monkeypatch):
+    """A /56 or /48 delegation is 256 to 65,536 /64s, each with its own
+    new-device count: the /48 has a coarser one of its own."""
+    monkeypatch.setenv("MAX_NEW_DEVICES_PER_IP_PER_DAY", "1")
+    monkeypatch.setenv("MAX_NEW_DEVICES_PER_IP6_48_PER_DAY", "3")
+    c = create_app().test_client()
+
+    def reg(name, addr):
+        return c.post("/api/v1/devices", json={"platform": "apns", "token": tok(name)},
+                      headers={"X-Forwarded-For": addr})
+    assert reg("s1", "2001:db8:5:1::1").status_code == 201
+    # The /64 is spent; refusing it must not use up the /48 too.
+    assert reg("s2", "2001:db8:5:1::2").status_code == 429
+    assert reg("s3", "2001:db8:5:2::1").status_code == 201
+    assert reg("s4", "2001:db8:5:3::1").status_code == 201
+    r = reg("s5", "2001:db8:5:4::1")             # a fresh /64, but the /48 is spent
+    assert r.status_code == 429 and r.get_json()["retry_after"] > 3600
+    assert reg("s6", "2001:db8:6:1::1").status_code == 201        # another /48
+    assert reg("s7", "192.0.2.9").status_code == 201              # IPv4 has none
+    assert reg("s8", "2002:c000:20a::1").status_code == 201       # 6to4: IPv4 too
+    # The table holds neither address nor prefix.
+    buckets = [b for (b,) in _db().execute("SELECT bucket FROM rate_events")]
+    assert not any("2001" in b or "192.0" in b for b in buckets)
+
+
+@pytest.mark.parametrize("limit", ["0", "1"])
+def test_the_ipv6_48_limit_can_be_switched_off(client, monkeypatch, limit):
+    monkeypatch.setenv("MAX_NEW_DEVICES_PER_IP6_48_PER_DAY", limit)
+    c = create_app().test_client()
+    codes = [c.post("/api/v1/devices", json={"platform": "apns", "token": tok(f"o{i}")},
+                    headers={"X-Forwarded-For": f"2001:db8:9:{i}::1"}).status_code
+             for i in range(3)]
+    assert codes == ([201, 201, 201] if limit == "0" else [201, 429, 429])
+
+
 def test_addresses_that_embed_an_ipv4_address_count_as_it(client, monkeypatch):
     """A 6to4 address carries its IPv4 address, and 2002:<v4>::/48 is 65,536
     /64s for whoever holds that one IPv4: counted by the /64, every one was a

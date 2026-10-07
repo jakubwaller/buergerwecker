@@ -81,7 +81,7 @@ from app.config import ttl_days_for
 from app.db import connect, transaction
 from app.models import Filter
 from app.planning import would_exceed_cap
-from app.ratelimit import GLOBAL_IP_LIMITER, db_rate_hit
+from app.ratelimit import GLOBAL_IP_LIMITER, db_rate_hit, db_rate_hit_all
 from app.repo import (active_subscriptions, delete_device, device_by_id,
                       insert_push_subscription, live_subscription_count,
                       register_device, renew_subscription,
@@ -281,11 +281,9 @@ def _client_ip() -> str:
     return web_client_ip()
 
 
-def _client_network() -> str:
-    """The client's address as the rate limits count it: an IPv4 address as
-    it is, an IPv6 address by its /64, the smallest network one subscriber
-    is handed (counting single IPv6 addresses would give each phone 2^64
-    budgets). An address that carries an IPv4 address counts as that IPv4:
+def _client_address():
+    """The client's address as an ipaddress object, or the raw string when
+    it is not one. An IPv6 address that carries an IPv4 address is that IPv4:
     IPv4-mapped, 6to4 (2002:<v4>::/48, 65,536 /64s for whoever holds the one
     IPv4) and Teredo (the client's IPv4)."""
     raw = _client_ip()
@@ -296,19 +294,39 @@ def _client_network() -> str:
     if ip.version == 6:
         embedded = ip.ipv4_mapped or ip.sixtofour or (ip.teredo or (None, None))[1]
         if embedded is not None:
-            ip = embedded
-    if ip.version == 6:
+            return embedded
+    return ip
+
+
+def _client_network() -> str:
+    """The client's address as the rate limits count it: an IPv4 address as
+    it is, an IPv6 address by its /64, the smallest network one subscriber
+    is handed (counting single IPv6 addresses would give each phone 2^64
+    budgets); see `_client_address` for the ones that carry an IPv4."""
+    ip = _client_address()
+    if isinstance(ip, ipaddress.IPv6Address):
         return str(ipaddress.ip_network(f"{ip}/64", strict=False))
     return str(ip)
 
 
-def _network_bucket(prefix: str) -> str:
-    """A database rate-limit bucket for the client network, keyed by an HMAC
-    under a key derived from TOKEN_SECRET_PRIMARY: the table holds no address,
-    and a backup without the .env cannot be searched for one."""
+def _client_ip6_48() -> str | None:
+    """The client's IPv6 /48, the coarser count on top of the /64 one, or
+    None for an IPv4 client (an embedded IPv4 included)."""
+    ip = _client_address()
+    if isinstance(ip, ipaddress.IPv6Address):
+        return str(ipaddress.ip_network(f"{ip}/48", strict=False))
+    return None
+
+
+def _network_bucket(prefix: str, network: str | None = None) -> str:
+    """A database rate-limit bucket for a client network (by default the
+    client's, `_client_network`), keyed by an HMAC under a key derived from
+    TOKEN_SECRET_PRIMARY: the table holds no address or prefix, and a backup
+    without the .env cannot be searched for one."""
     key = hashlib.sha256(
         f"ratelimit|{_cfg().token_secret_primary}".encode("utf-8")).digest()
-    mac = hmac.new(key, _client_network().encode("utf-8"), hashlib.sha256)
+    mac = hmac.new(key, (network or _client_network()).encode("utf-8"),
+                   hashlib.sha256)
     return f"{prefix}:{mac.hexdigest()[:32]}"
 
 
@@ -456,9 +474,11 @@ def register():
     secret is simply rotated. See repo.register_device.
 
     A token no row holds yet is a new device, and a client network may add
-    MAX_NEW_DEVICES_PER_IP_PER_DAY of those a rolling day, across workers
-    (429 `rate_limited` with `retry_after`); the count outlives the rows, so
-    deleting and registering again does not reset it."""
+    MAX_NEW_DEVICES_PER_IP_PER_DAY of those a rolling day, and a whole IPv6
+    /48 MAX_NEW_DEVICES_PER_IP6_48_PER_DAY, across workers (429
+    `rate_limited` with `retry_after`; one counts only if both have room).
+    The counts outlive the rows, so deleting and registering again does not
+    reset them."""
     if _rate_limited():
         return _error("rate_limited", 429)
     body = _json()
@@ -475,8 +495,12 @@ def register():
     known = conn.execute("SELECT 1 FROM push_devices WHERE platform=? AND token=?",
                          (platform, token)).fetchone()
     if known is None:
-        wait = db_rate_hit(conn, _network_bucket("newdev"),
-                           cfg.max_new_devices_per_ip_per_day, 86400)
+        hits = [(_network_bucket("newdev"), cfg.max_new_devices_per_ip_per_day, 86400)]
+        ip6_48 = _client_ip6_48()
+        if ip6_48 is not None:
+            hits.append((_network_bucket("newdev48", ip6_48),
+                         cfg.max_new_devices_per_ip6_48_per_day, 86400))
+        wait = db_rate_hit_all(conn, hits)
         if wait:
             return _error("rate_limited", 429, lang, retry_after=wait)
     secret = secrets.token_urlsafe(32)

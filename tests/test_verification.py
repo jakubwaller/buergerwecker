@@ -808,11 +808,12 @@ def test_a_dead_token_retires_a_new_device_once_the_platform_shows_it_works(
     assert _attempts(name="junk") == ["open"]
 
 
-def test_a_misconfigured_platform_spends_no_budget_and_retires_nobody(client, monkeypatch):
+def test_a_misconfigured_platform_spends_no_budget_and_locks_nobody_out(client, monkeypatch):
     """A wrong APNS_SANDBOX or APNS_TOPIC answers dead for every device at
-    once. Counting those answers against the token, or retiring on them,
-    locked every phone that tried in that window out of verification for a
-    day after the knob was fixed."""
+    once. Counting those answers against the token's budget locked every
+    phone that tried in that window out of verification for a day after the
+    knob was fixed. Being retired after three of them is harmless: the app
+    registers again and the row comes back."""
     app_client = _relay_client(monkeypatch)
     wrong = Relay(status=400, reason="BadDeviceToken")
     with patch("app.push._post", wrong):
@@ -825,7 +826,8 @@ def test_a_misconfigured_platform_spends_no_budget_and_retires_nobody(client, mo
             send_verifications(_db(), load_config())
     assert len(wrong.calls) >= 6
     row = _row(dev)
-    assert row["retired_at"] is None and row["verify_failures"] == 0
+    assert row["retire_reason"] in (None, "unconfirmed_refusals")    # never "dead"
+    assert row["verify_failures"] == 0
     assert _attempts() == []
     _age_deliveries(dev)
     assert verify_push_wait(_db(), dev) == 0
@@ -833,6 +835,7 @@ def test_a_misconfigured_platform_spends_no_budget_and_retires_nobody(client, mo
     with patch("app.push._post", Relay()) as fixed:
         _register(app_client, verified=False)
     assert len(fixed.calls) == 1
+    assert _row(dev)["retired_at"] is None and _row(dev)["verify_tries"] == 0
 
 
 def test_a_token_change_under_a_misconfiguration_does_not_pause_subscriptions_for_a_day(
@@ -917,10 +920,18 @@ def test_a_junk_token_has_a_daily_ceiling_on_resend(client, monkeypatch):
                                                      "token": tok("junk")})
         auth = _auth(r.get_json()["device_id"], r.get_json()["secret"])
         answers = []
-        for _ in range(_ceiling() + 10):
+        for _ in range(2 * _ceiling() + 10):
             _time_passes()
-            answers.append(app_client.post("/api/v1/device/verify/resend",
-                                           json={}, headers=auth))
+            answer = app_client.post("/api/v1/device/verify/resend",
+                                     json={}, headers=auth)
+            if answer.status_code == 410:
+                # Retired after three refusals: register it again, which
+                # brings the row back with its secret, and carry on (the
+                # re-registration joins the outstanding resend and keeps its
+                # backoff, so it sends nothing itself).
+                app_client.post("/api/v1/devices", json={"platform": "apns",
+                                                         "token": tok("junk")})
+            answers.append(answer)
     assert len(refusing.calls) == _ceiling()
     assert answers[-1].status_code == 429 and answers[-1].get_json()["retry_after"] > 3600
 
@@ -975,6 +986,53 @@ def test_a_paused_device_backs_off_and_stays_under_the_ceiling(client, monkeypat
     assert _row(dev)["retired_at"] is None and active_subscriptions(_db()) == []
 
 
+def test_re_registering_a_junk_token_beside_other_users_digests_stops_at_the_ceiling(
+        client, monkeypatch):
+    """Review round 2: re-register a junk token every 2 minutes while other
+    users' digests deliver on the platform. Each delivery forgave the earlier
+    refusals, re-registering cleared dead_since so every answer stayed a
+    first one, and it reset verify_tries so the row was never retired: 60
+    relay calls from 60 re-registrations against a ceiling of 20."""
+    from app.push import OutgoingPush, send_push_batch
+    app_client = _relay_client(monkeypatch)
+    with patch("app.push._post", Relay()):
+        other, _ = _register(app_client, token="other-user")      # verified
+    relay = ByToken(["junk"], status=400, reason="BadDeviceToken")
+    retired_seen = False
+    with patch("app.push._post", relay):
+        for i in range(60):
+            _time_passes()
+            digest = OutgoingPush(device_id=other, title="t", body="b",
+                                  idem_key=f"digest-{i}", data={"type": "slots"},
+                                  token=tok("other-user"))
+            assert send_push_batch(_db(), [digest], load_config()).delivered
+            r = app_client.post("/api/v1/devices", json={"platform": "apns",
+                                                         "token": tok("junk")})
+            assert r.status_code == 201
+            junk = r.get_json()["device_id"]
+            retired_seen |= _row(junk)["retire_reason"] == "unconfirmed_refusals"
+    assert len(relay.to("other-user")) == 60
+    assert len(relay.to("junk")) == _ceiling()
+    # Re-registering does not keep the junk row out of retirement either.
+    assert retired_seen
+
+
+def test_a_sender_that_lost_the_claim_leaves_the_device_alone(client, monkeypatch):
+    """Another sender holds the code and will deliver it, or back the device
+    off for longer: stamping a minute over that would undo its backoff."""
+    dev, _ = _register(client, verified=False)
+    _backdate(dev, "verify_requested_at", "-1 minutes")
+    _db().execute("UPDATE push_devices SET verify_code_hash='the-winner', "
+                  "verify_code_at=CURRENT_TIMESTAMP, verify_next_at=NULL WHERE id=?",
+                  (dev,))
+    _enable_push(monkeypatch)
+    with patch("app.push._post", Relay()) as r:
+        assert send_verifications(_db(), load_config()) == 0
+    row = _row(dev)
+    assert r.calls == [] and row["verify_next_at"] is None
+    assert row["verify_code_hash"] == "the-winner"
+
+
 def test_a_delivery_anyone_can_make_does_not_reset_a_junk_tokens_ceiling(client, monkeypatch):
     """Refusals without evidence were forgiven once the platform delivered
     to anyone after them: the attacker's own phone (or an FCM token minted
@@ -1025,6 +1083,32 @@ def test_a_misconfiguration_that_spent_the_ceiling_is_forgiven_once_the_config_c
     with patch("app.push._post", Relay()) as fixed:
         _register(fixed_client, verified=False)
     assert len(fixed.calls) == 1 and _attempts() == ["open"]
+
+
+def test_after_a_config_fix_held_testers_get_their_code_within_the_hour(client, monkeypatch):
+    """Several TestFlight testers each at the ceiling under a wrong topic,
+    nobody verified. After the fix the hold they were given (up to a day,
+    computed under the old settings) must not outlast the settings: the
+    sweep looks again within the hour, with nothing for the operator to do."""
+    from app.web import create_app
+    _enable_push(monkeypatch)
+    monkeypatch.setenv("APNS_TOPIC", "app.example.wrong")
+    wrong_app = create_app()
+    wrong_app.config["TESTING"] = True
+    testers = []
+    with patch("app.push._post", Relay(status=400, reason="DeviceTokenNotForTopic")):
+        for name in ("tester-1", "tester-2", "tester-3"):
+            for _ in range(_ceiling() + 2):
+                _time_passes()
+                r = wrong_app.test_client().post(
+                    "/api/v1/devices", json={"platform": "apns", "token": tok(name)})
+            testers.append(r.get_json()["device_id"])
+    assert all(_row(d)["retired_at"] is None for d in testers)     # held, not gone
+    monkeypatch.setenv("APNS_TOPIC", _APNS_ENV["APNS_TOPIC"])        # the fix
+    _time_passes(minutes=61)
+    with patch("app.push._post", Relay()) as fixed:
+        assert send_verifications(_db(), load_config()) == 3
+    assert len(fixed.calls) == 3
 
 
 def test_junk_on_one_platform_cannot_crowd_out_the_other(client, monkeypatch):

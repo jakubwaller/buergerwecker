@@ -56,6 +56,9 @@ SWEEP_GRACE_SECONDS = 30
 # them up. The rest wait their turn, in due order
 # (repo.devices_awaiting_verification).
 MAX_SWEEP_DEVICES = 50
+# The longest the sweep leaves a device alone before it looks again whether
+# its budget or ceiling has freed, which costs no relay call.
+MAX_HOLD_SECONDS = 3600
 
 
 class PushAuthError(Exception):
@@ -261,7 +264,7 @@ def send_verifications(conn: sqlite3.Connection, cfg, *,
     items: list[OutgoingPush] = []
     # idem_key -> (device_id, code hash, token key, request kind, config, token)
     sent: dict[str, tuple[int, str, str, str, str, str]] = {}
-    # Devices this pass tried to send to (claimed or not).
+    # Devices this pass claimed and tried to send to.
     touched: list[int] = []
     for row in candidates:
         kind = row["verify_kind"] or "open"
@@ -270,16 +273,28 @@ def send_verifications(conn: sqlite3.Connection, cfg, *,
         wait = max(token_verify_wait(conn, tkey, kind, config),
                    device_verify_wait(conn, row["id"]))
         if wait > 0:
-            defer_verification(conn, row["id"], wait)
+            # At most an hour: a hold computed under the old settings ends
+            # with them (config_fingerprint), and the check costs no relay
+            # call, so a fixed misconfiguration is not waited out for a day.
+            defer_verification(conn, row["id"], min(wait, MAX_HOLD_SECONDS))
+            if wait > 60:
+                # Past the minute rules: a daily budget or the ceiling. After
+                # a misconfiguration was fixed outside our settings, this line
+                # for devices that tried during it is the cue for the runbook.
+                print(f"push: {row['platform']} verification for device "
+                      f"{row['id']} held {wait}s: its token's daily budget "
+                      f"or ceiling is spent", flush=True)
             continue
-        touched.append(row["id"])
         lang = "en" if row["language"] == "en" else "de"
         code = secrets.token_urlsafe(16)
         code_hash = _hash(code)
         # Storing the hash is the claim (see set_verify_code): only the sender
-        # that stored the code sends it.
+        # that stored the code sends it, and a sender that lost it leaves the
+        # device alone: the winner delivers, or sets its own, maybe longer,
+        # not-before.
         if not set_verify_code(conn, row["id"], code_hash):
             continue
+        touched.append(row["id"])
         key = f"verify|{row['id']}|{_verify_minute()}"
         # No subscription is involved, and OutgoingPush has no sub_id
         # field: the `sub` key of a slots or check-in push is simply
@@ -312,8 +327,7 @@ def send_verifications(conn: sqlite3.Connection, cfg, *,
         # Refused with evidence, a device is retired as dead or given up on
         # after MAX_VERIFY_FAILURES; without, it would only ever be retried.
         retired = retire_unconfirmed(conn, [(s[0], s[5]) for s in unconfirmed])
-        # Undeliverable, deferred, or claimed by another sender: a minute at
-        # the back of the queue.
+        # Undeliverable or deferred: a minute at the back of the queue.
         for d in touched:
             if d not in settled:
                 defer_verification(conn, d, 60)

@@ -73,6 +73,37 @@ def db_rate_hit(conn: sqlite3.Connection, bucket: str, limit: int,
         (bucket, window)).fetchone()[0]
     return max(1, int(window_seconds) - int(age or 0))
 
+def db_rate_hit_all(conn: sqlite3.Connection,
+                    hits: list[tuple[str, int, int]]) -> int:
+    """`db_rate_hit` for several (bucket, limit, window_seconds) at once, all
+    or nothing: an event is recorded in every bucket only when every one has
+    room, so a request one limit refuses does not use up another's. Returns
+    0, or the longest wait among the full buckets. Under the write lock
+    (BEGIN IMMEDIATE), so workers cannot both take a last place."""
+    hits = [(b, int(limit), int(w)) for b, limit, w in hits if limit > 0]
+    if not hits:
+        return 0
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        wait = 0
+        for bucket, limit, window_seconds in hits:
+            window = f"-{window_seconds} seconds"
+            n, age = conn.execute(
+                "SELECT COUNT(*), "
+                "CAST(strftime('%s','now') - strftime('%s', MIN(at)) AS INTEGER) "
+                "FROM rate_events WHERE bucket=? AND at > datetime('now', ?)",
+                (bucket, window)).fetchone()
+            if n >= limit:
+                wait = max(wait, 1, window_seconds - int(age or 0))
+        if not wait:
+            conn.executemany("INSERT INTO rate_events (bucket) VALUES (?)",
+                             [(b,) for b, _, _ in hits])
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    return wait
+
 def email_rate_limit_ok(conn: sqlite3.Connection, email: str,
                         per_day_limit: int) -> bool:
     """DB-backed per-email rate limit (shared across workers).

@@ -442,8 +442,11 @@ person.
 `APNS_SANDBOX` must match the build. Only a development-signed build straight
 from Xcode uses the sandbox; **TestFlight and App Store builds use
 production**, so the VPS stays at `0` from the first beta on. A mismatch, like
-a wrong `APNS_TOPIC`, answers `BadDeviceToken` for every device; the
-retirement rule below keeps that from retiring anyone.
+a wrong `APNS_TOPIC`, answers `BadDeviceToken` (or `DeviceTokenNotForTopic`)
+for every device. The rules below keep that from ending anyone's
+subscriptions or spending any token's daily verification budget; what it
+does do is retire, after three refused codes, a phone that registers
+meanwhile and holds nothing yet, which registers again by itself.
 
 ### What the poller does with a relay's answer
 
@@ -460,14 +463,26 @@ retirement rule below keeps that from retiring anyone.
   against every TestFlight device, which is the other reason the VPS never
   points at the sandbox. Until then the poller logs
   `push: … answered dead-token … has delivered nothing since; not retiring`
-  every cycle a slot matches. That line on every cycle with no `retired`
-  line ever is the misconfiguration signature; fix the knob it names. A
-  retired device's `retire_reason` says which answer did it, and the app
-  re-registers on next launch. The rule holds for a device that never
-  verified too: a junk registration costs a verification request a minute
-  until anyone else gets a push, while under a misconfiguration nobody who
-  registers in that window is retired. A device is retired (and `dead_since`
-  stamped) only while it still holds the token that answered.
+  every cycle a slot matches or a verification code is due.
+
+  **The misconfiguration signature** is that line, cycle after cycle, with
+  no delivery on the platform at all:
+  - no new `sent_idempotency` row for it
+    (`sqlite3 ~/buergerwecker/data/app.db "SELECT MAX(sent_at) FROM
+    sent_idempotency WHERE provider='apns'"`, or `fcm`, stays put);
+  - no `push: apns retired device N: <reason>` line, which needs a delivery
+    as evidence.
+
+  Lines `push: retired unverified device N after 3 refused verification
+  pushes` (`retire_reason` `unconfirmed_refusals`) do **not** rule it out:
+  they need no evidence and appear under a misconfiguration too, for phones
+  that registered and hold nothing yet. Fix the knob the dead-token line
+  names. A retired device's `retire_reason` says which answer did it, and
+  the app re-registers on its next call. A device that never verified gets
+  the same evidence rule for being retired as dead. Without evidence, it is
+  retired only after three refused codes and only if it holds nothing.
+  A device is retired (and `dead_since` stamped) only while it still holds
+  the token that answered.
 - `5xx`, FCM `429` (project quota), relay unreachable (a timeout, a refused
   or reset connection): released, the next cycle retries, and the platform is
   not tried again this cycle (an outage must not hold the poller for a timeout
@@ -566,26 +581,52 @@ junk token costs at most that much even on a platform that delivers to
 nobody (FCM before any Android phone gets pushes). A refusal without
 evidence counts toward it only while the platform's settings are the ones it
 was made under (`push.config_fingerprint`: APNs team, key, topic and sandbox;
-the FCM project and service account), so fixing `APNS_TOPIC`, `APNS_SANDBOX`,
-the key or the FCM JSON forgives what the misconfiguration refused. A
-delivery does not forgive anything: anyone can make one (an attacker's own
-phone, other users' digests). A misconfiguration fixed somewhere else, in
-the Apple developer account say, leaves the settings unchanged; after such a
-fix, `DELETE FROM verify_attempts WHERE credited=0` clears it.
+the FCM project and service account). A delivery does not forgive anything:
+anyone can make one (an attacker's own phone, other users' digests).
+
+**After fixing a push misconfiguration**, whatever the size of the fleet:
+
+- Fixed in our own settings (`APNS_TOPIC`, `APNS_SANDBOX`, `APNS_KEY_ID`,
+  `APNS_TEAM_ID`, or the FCM JSON's project or service account) and deployed
+  with `up -d`: nothing to do. The changed settings forgive every refusal
+  made under the old ones, in web and poller alike, and a phone held at the
+  ceiling is looked at again within the hour (`push.MAX_HOLD_SECONDS`) and
+  gets its code; at once if it registers or resends.
+- Fixed anywhere else (the Apple developer account, the Firebase console),
+  so the env is unchanged: the refusals still count, and every phone that
+  reached the ceiling during the window stays held for up to a day. You
+  recognise the case in the poller log: the platform delivers again (new
+  `sent_idempotency` rows for it), while the phones that tried during the
+  window log `push: apns verification for device N held …s: its token's
+  daily budget or ceiling is spent`, hourly, instead of getting their code.
+  Then clear the refusals (deliveries and refusals with evidence stay
+  counted) and the holds:
+
+  ```bash
+  sqlite3 ~/buergerwecker/data/app.db \
+    "DELETE FROM verify_attempts WHERE credited=0; UPDATE push_devices SET verify_next_at=NULL;"
+  ```
+
+  The next sweeps send the waiting phones their codes, 25 or 50 a minute; a
+  phone retired meanwhile gets its code when its app next calls and
+  registers again.
+
 Register and token change
 never refuse, they stamp the request and the sender decides when it goes out
 (resend answers 429 with `retry_after`); a device over its budget or the
 ceiling is left alone until it frees (`push_devices.verify_next_at`). A
 request refused three times with evidence (`verify_failures`) is given up
-until the next one. An unverified device with no subscription that is
-refused three times without evidence (`verify_tries`) is retired
-(`retire_reason` `unconfirmed_refusals`); the app answers the 410 by
-registering afresh. The poller's sweep sends to at most 50 devices a cycle
+until the next one. An unverified device with no subscription whose token
+has been refused three times without evidence since it last delivered or
+changed (`verify_tries`, which registering again or resending does not
+reset) is retired (`retire_reason` `unconfirmed_refusals`); the app answers
+the 410 by registering afresh, and a revived row that is refused again is
+retired again at once. The poller's sweep sends to at most 50 devices a cycle
 (`push.MAX_SWEEP_DEVICES`), split evenly between the platforms it has
-credentials for, in due order: every device a pass tried and did not deliver
-to goes to the back of the queue, a minute after an outage or a claim
-another sender holds, and after a refusal twice as long as after the one
-before, up to an hour. A junk backlog on one platform cannot hold up the
+credentials for, in due order: every device a pass claimed and did not
+deliver to goes to the back of the queue, a minute after an outage, and
+after a refusal twice as long as after the one before, up to an hour (a
+sender that lost the claim to another leaves the device alone). A junk backlog on one platform cannot hold up the
 other, and a real device waits behind at most the rows that fell due before
 it, 25 or 50 a minute. The minute is also an atomic claim on the
 idempotency key `verify|<device_id>|<UTC minute>`. The operator dashboard counts only subscriptions that run. `GET /device` shows an unverified device no subscriptions. A device that never verified and
@@ -631,9 +672,15 @@ are missing or wrong on the VPS: check `docker compose logs poller | grep
   form, but apart from it, so app traffic behind a carrier NAT does not use
   up the form). Across workers, in the database: at most
   `MAX_NEW_DEVICES_PER_IP_PER_DAY` new devices (a token no row holds yet) per
-  client network per rolling day, `429 rate_limited` with `retry_after`
-  beyond it (`rate_events`, under a keyed hash of the network, no address
-  stored; everyone behind one carrier-NAT IPv4 shares it); a device holds at
+  client network per rolling day, and on top at most
+  `MAX_NEW_DEVICES_PER_IP6_48_PER_DAY` per IPv6 /48 (default 50; a /56 home
+  delegation is 256 /64s and a server's /48 65,536, each /64 with its own
+  count), `429 rate_limited` with `retry_after` beyond either; a device
+  counts only if both have room (`rate_events`, under a keyed hash of the
+  network or prefix, no address stored). The trade-offs: everyone behind one
+  carrier-NAT IPv4 shares its count, and phones a mobile carrier numbers out
+  of one shared /48 share the /48's, hence its generous default; raise it if
+  real users behind one carrier get 429 on registering. A device holds at
   most 10 live subscriptions (`api.MAX_SUBSCRIPTIONS_PER_DEVICE`).
 - The still-looking check-in reaches app subscriptions as a push
   (`push.checkin_*` in the i18n bundles) in the same window as the mail,

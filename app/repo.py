@@ -270,12 +270,14 @@ def record_verify_refusals(conn: sqlite3.Connection, device_ids: list[int], *,
 
 def retire_unconfirmed(conn: sqlite3.Connection,
                        refused: list[tuple[int, str]]) -> list[int]:
-    """Retire each (device_id, token) refused MAX_UNCONFIRMED_REFUSALS times
-    on its outstanding request that is unverified and holds no subscription:
-    without evidence the platform works it is never retired as dead, and a
-    junk registration would otherwise be retried for its whole day. Nothing
-    is lost: the app's next call answers 410 and it registers afresh. The
-    ids retired."""
+    """Retire each (device_id, token) whose token has been refused
+    MAX_UNCONFIRMED_REFUSALS times since it last delivered or changed
+    (`verify_tries`, which re-registering and resending do not reset) and
+    that is unverified and holds no subscription: without evidence the
+    platform works it is never retired as dead, and a junk registration would
+    otherwise be retried for its whole day. Nothing is lost: the app's next
+    call answers 410 and it registers afresh, and a revived row that is
+    refused again is retired again at once. The ids retired."""
     retired = []
     for device_id, token in refused:
         row = conn.execute(
@@ -310,9 +312,10 @@ def mark_verification_sent(conn: sqlite3.Connection,
     """Stamp the delivery of each (device_id, code_hash), only while the row
     still holds that code: a resend or a token change that replaced it in the
     meantime has a push of its own to deliver, and stamping would stop the
-    sweep from ever sending it."""
+    sweep from ever sending it. A delivery shows the token works: its refusal
+    count (`verify_tries`) starts over."""
     conn.executemany(
-        "UPDATE push_devices SET verify_sent_at=CURRENT_TIMESTAMP "
+        "UPDATE push_devices SET verify_sent_at=CURRENT_TIMESTAMP, verify_tries=0 "
         "WHERE id=? AND verify_code_hash=?", sent)
 
 
@@ -320,7 +323,7 @@ def request_verification(conn: sqlite3.Connection, device_id: int, *,
                          kind: str, code: str = "drop") -> None:
     """Stamp a new verification request: `verify_requested_at` restarts (so
     the poller's sweep grace always covers the web request's own send),
-    `verify_sent_at`, the refusal counts and the not-before clear, whatever
+    `verify_sent_at`, the failure count and the not-before clear, whatever
     the sender's rules then decide. `kind` is whose request it is ("owner",
     the device's main credential; "open", anyone else) and picks the budget
     the push is counted against; an owner request still waiting for its push
@@ -351,11 +354,13 @@ def request_verification(conn: sqlite3.Connection, device_id: int, *,
     # count and not-before included, or re-registering would reset them.
     joins_owner = ("(:kind='open' AND verify_kind='owner' "
                    "AND verify_sent_at IS NULL)")
+    # verify_tries is not touched: it counts refusals of the token, not of the
+    # request, and only a delivery or a token change starts it over. Reset by
+    # every re-registration, it kept a junk row out of retire_unconfirmed.
     conn.execute(
         "UPDATE push_devices SET verify_requested_at=CURRENT_TIMESTAMP, "
         f"verify_kind=CASE WHEN {joins_owner} THEN 'owner' ELSE :kind END, "
         f"verify_failures=CASE WHEN {joins_owner} THEN verify_failures ELSE 0 END, "
-        f"verify_tries=CASE WHEN {joins_owner} THEN verify_tries ELSE 0 END, "
         f"verify_next_at=CASE WHEN {joins_owner} THEN verify_next_at ELSE NULL END, "
         f"verify_sent_at=NULL, {clear}WHERE id=:id",
         {"kind": kind, "id": device_id})
@@ -517,7 +522,8 @@ def update_device(conn: sqlite3.Connection, device_id: int, *,
     if new_token != row["token"]:
         conn.execute(
             "UPDATE push_devices SET verified_at=NULL, pending_secret_hash=NULL, "
-            "verify_code_hash=NULL, verify_sent_at=NULL WHERE id=?", (device_id,))
+            "verify_code_hash=NULL, verify_sent_at=NULL, verify_tries=0 "
+            "WHERE id=?", (device_id,))
         request_verification(conn, device_id, kind="owner")
     return "ok"
 

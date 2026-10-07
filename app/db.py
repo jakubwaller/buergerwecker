@@ -109,9 +109,10 @@ CREATE TABLE IF NOT EXISTS push_devices (
   -- each refusal: verify_tries), or when the budget says wait, so the sweep
   -- rotates through the queue instead of retrying its head.
   verify_next_at       TIMESTAMP,
-  -- Refusals of the outstanding request, with evidence or without: the
-  -- sweep's backoff, and an unverified device with no subscription is
-  -- retired at repo.MAX_UNCONFIRMED_REFUSALS. A new request starts over.
+  -- Refusals of the token since it last delivered or changed, with evidence
+  -- or without: the sweep's backoff, and an unverified device with no
+  -- subscription is retired at repo.MAX_UNCONFIRMED_REFUSALS. Re-registering
+  -- and resending do not start it over, or a junk row would never retire.
   verify_tries         INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_push_devices_token
