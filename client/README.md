@@ -412,8 +412,9 @@ token. Every review here assumes scripted, unlimited verified Android devices.
         stopped at 8 (`cap // 2`), and a new service was still open to mail and closed to the
         app. A city is polled for at most `cap + cap // 2` services, whatever the fleet does.
       - The ceiling: 34 devices fill a city's 100 app places (`MAX_APP_SUBSCRIPTIONS_PER_CITY`),
-        about half an hour from one IPv4 address and at once from one /48; all 38 tenants take about
-        1,290 devices, a day from one address or two hours from one /48. After that, new app
+        about half an hour from one IPv4 address and at once from one /48. A device holds ten
+        alerts across cities, so all 38 tenants' 3,800 places take about 380 devices, some six
+        hours from one address or forty minutes from one /48. After that, new app
         sign-ups there get 503 `waitlist_full`. A subscriber who renews within the term keeps
         the place, and the website is not affected.
       - The client: nothing found. CSP, push URLs on the site's own origin only, the credential
@@ -428,9 +429,13 @@ token. Every review here assumes scripted, unlimited verified Android devices.
       before the first `play` run, since a build without it cannot register against a server
       that requires it.
 - [ ] **Hardening, not urgent**: the `testflight` job sets the App Store Connect key in the job's
-      `env`, so `npm ci`, `npx cap sync` and the archive all run with it. No package in the
-      lockfile has an install script today, but `cap sync` runs the Capacitor CLI and its
-      dependencies all the same; only moving the key to the steps that use it closes that.
+      `env`, so `npm ci`, `npx cap sync` and the archive all run with it, and it writes the key
+      file for xcodebuild before the archive, which does not need it. No package in the lockfile
+      has an install script today, but `cap sync` runs the Capacitor CLI and its dependencies
+      all the same. Closing it takes both: the key in the env of only the steps that use it, and
+      the key file written just before the export, its one user.
+- [ ] **Firebase**: accept the Data Processing and Security Terms in the Firebase project, then
+      add Google to the privacy page's list of processors with a DPA.
 
 ## Not in this version
 
