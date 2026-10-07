@@ -664,24 +664,38 @@ are missing or wrong on the VPS: check `docker compose logs poller | grep
   opt-in, so a push subscription is live at once.
 - A retired device (the relay reported its token dead) gets `410
   device_retired` on every authenticated call, and the app registers afresh.
-- Rate limits: registration and every write, `DELETE /device` included
-  (counted, never refused: erasure does not wait), count against
-  `SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR` per client network, an IPv4 address
-  or an IPv6 /64 (an IPv6 address that carries an IPv4 one, IPv4-mapped,
-  6to4 or Teredo, counts as that IPv4), in the API's own bucket (`api:`; per process, like the
-  form, but apart from it, so app traffic behind a carrier NAT does not use
-  up the form). Across workers, in the database: at most
-  `MAX_NEW_DEVICES_PER_IP_PER_DAY` new devices (a token no row holds yet) per
-  client network per rolling day, and on top at most
-  `MAX_NEW_DEVICES_PER_IP6_48_PER_DAY` per IPv6 /48 (default 50; a /56 home
-  delegation is 256 /64s and a server's /48 65,536, each /64 with its own
-  count), `429 rate_limited` with `retry_after` beyond either; a device
-  counts only if both have room (`rate_events`, under a keyed hash of the
-  network or prefix, no address stored). The trade-offs: everyone behind one
-  carrier-NAT IPv4 shares its count, and phones a mobile carrier numbers out
-  of one shared /48 share the /48's, hence its generous default; raise it if
-  real users behind one carrier get 429 on registering. A device holds at
-  most 10 live subscriptions (`api.MAX_SUBSCRIPTIONS_PER_DEVICE`).
+- Rate limits. The rule: nothing keyed on a client network may let a
+  stranger on the same network (behind a carrier NAT, thousands of phones
+  share one IPv4; a carrier numbers many phones out of one /48) lock the
+  real phones there out for long. A client network is an IPv4 address or an
+  IPv6 /64; an IPv6 address that carries an IPv4 one (IPv4-mapped, 6to4,
+  Teredo) counts as that IPv4.
+  - Registrations, per process (soft, like the form, but in the API's own
+    buckets): a sixth of `SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR` per client
+    network over ten minutes, ten times that per IPv6 /48 (`apireg:`,
+    `apireg48:`), counted only if both have room; `429 rate_limited` with a
+    `retry_after` of at most ten minutes. The only per-network refusal there
+    is, and the ten minutes are its worst case once a stranger stops.
+  - Every write of a registered device, `DELETE /device` included (counted,
+    never refused: erasure does not wait): `SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR`
+    per device credential per hour (`apidev:<id>:main` or `:pending`), so no
+    one else can use up a device's count.
+  - New devices (a token no row holds yet) that have not verified, across
+    workers in the database: `MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR` per
+    client network and `MAX_UNVERIFIED_DEVICES_PER_IP6_48_PER_HOUR` per /48
+    (defaults 5 and 50). Past either, the device still registers, and its
+    verification push comes from the poller's sweep a minute later instead
+    of at once: junk from one network cannot make the relay calls at request
+    speed, and a real phone behind it waits a minute, never a day. A device
+    that verifies drops out of the count; one deleted or retired before it
+    did stays in (`rate_events`, under a keyed hash of the network or
+    prefix with the device id, no address stored, dropped after the hour).
+    The web container logs `api: device N registered from a network over its
+    unverified-device limit` for each.
+
+  These are speed bumps; the walls against minted devices are what a device
+  may hold: at most 10 live subscriptions (`api.MAX_SUBSCRIPTIONS_PER_DEVICE`)
+  under the per-city plan cap.
 - The still-looking check-in reaches app subscriptions as a push
   (`push.checkin_*` in the i18n bundles) in the same window as the mail,
   `RENEWAL_REMINDER_DAYS_BEFORE` days before the term ends; the app answers

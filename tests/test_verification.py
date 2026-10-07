@@ -1111,6 +1111,94 @@ def test_after_a_config_fix_held_testers_get_their_code_within_the_hour(client, 
     assert len(fixed.calls) == 3
 
 
+NAT = {"X-Forwarded-For": "192.0.2.50"}      # one carrier-NAT IPv4, many phones
+
+
+def test_junk_behind_a_shared_ipv4_cannot_lock_real_phones_out(client, monkeypatch):
+    """Five junk registrations behind a carrier NAT refused every new phone
+    there for a day. Now junk only moves the network's verification pushes
+    to the sweep: the real phone registers, gets its code a minute later,
+    and verifies."""
+    monkeypatch.setenv("MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR", "5")
+    app_client = _relay_client(monkeypatch)
+    relay = ByToken([f"junk-{i}" for i in range(10)], status=400,
+                    reason="BadDeviceToken")
+    with patch("app.push._post", relay):
+        for i in range(10):                         # the attacker, never verified
+            app_client.post("/api/v1/devices", json={"platform": "apns",
+                                                     "token": tok(f"junk-{i}")},
+                            headers=NAT)
+        junk_pushes = len(relay.calls)
+        assert junk_pushes == 5                     # the rest wait for the sweep
+        r = app_client.post("/api/v1/devices", json={"platform": "apns",
+                                                     "token": tok("real-phone")},
+                            headers=NAT)
+        assert r.status_code == 201
+        dev, secret = r.get_json()["device_id"], r.get_json()["secret"]
+        assert len(relay.calls) == junk_pushes      # its code comes from the sweep
+        _backdate(dev, "verify_requested_at", "-1 minutes")
+        send_verifications(_db(), load_config())
+        assert relay.to("real-phone")
+    code = relay.to("real-phone")[0]["json"]["code"]
+    assert _post_code(app_client, _auth(dev, secret), code).status_code == 200
+    # A phone on another network gets its code at once, as ever.
+    with patch("app.push._post", Relay()) as other:
+        app_client.post("/api/v1/devices", json={"platform": "apns",
+                                                 "token": tok("elsewhere")},
+                        headers={"X-Forwarded-For": "198.51.100.7"})
+    assert len(other.calls) == 1
+
+
+def test_junk_on_a_carrier_48_cannot_lock_real_phones_out(client, monkeypatch):
+    monkeypatch.setenv("MAX_UNVERIFIED_DEVICES_PER_IP6_48_PER_HOUR", "3")
+    app_client = _relay_client(monkeypatch)
+    with patch("app.push._post", ByToken([f"j48-{i}" for i in range(6)], status=400,
+                                         reason="BadDeviceToken")) as relay:
+        for i in range(6):
+            app_client.post("/api/v1/devices", json={"platform": "apns",
+                                                     "token": tok(f"j48-{i}")},
+                            headers={"X-Forwarded-For": f"2001:db8:77:{i}::1"})
+        r = app_client.post("/api/v1/devices", json={"platform": "apns",
+                                                     "token": tok("real-48")},
+                            headers={"X-Forwarded-For": "2001:db8:77:99::1"})
+        assert r.status_code == 201
+        assert not relay.to("real-48")              # the sweep sends it
+        _backdate(r.get_json()["device_id"], "verify_requested_at", "-1 minutes")
+        send_verifications(_db(), load_config())
+        assert relay.to("real-48")
+
+
+def test_a_stranger_on_the_same_network_cannot_block_existing_phones(client, monkeypatch):
+    """Every write counted in one per-network bucket, so a stranger behind
+    the same NAT could keep everyone's code posts, resends and alerts at 429
+    for an hour. Writes of an existing device count per device; only
+    registrations count per network, and over ten minutes."""
+    monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR", "6")
+    app_client = _relay_client(monkeypatch)
+    with patch("app.push._post", Relay()) as relay:
+        dev, secret = _register(app_client, verified=False)   # the real phone
+        auth = _auth(dev, secret)
+        refused = [app_client.post("/api/v1/devices", json={"platform": "apns",
+                                                            "token": tok(f"s{i}")},
+                                   headers=NAT)
+                   for i in range(20)]
+        assert refused[-1].status_code == 429
+        assert 0 < refused[-1].get_json()["retry_after"] <= 600
+        # The real phone, behind the same NAT, is not touched by any of it.
+        ok = _post_code(app_client, {**auth, **NAT}, relay.codes()[0])
+        assert ok.status_code == 200
+        assert _subscribe(app_client, {**auth, **NAT}).status_code == 201
+    # And registrations there open again within ten minutes.
+    import time
+    later = time.time() + 601
+    with patch("app.ratelimit.time.time", return_value=later), \
+            patch("app.push._post", Relay()):
+        r = app_client.post("/api/v1/devices", json={"platform": "apns",
+                                                     "token": tok("after-the-attack")},
+                            headers=NAT)
+    assert r.status_code == 201
+
+
 def test_junk_on_one_platform_cannot_crowd_out_the_other(client, monkeypatch):
     """Sixty refused FCM rows, older than three APNs ones: the APNs rows
     still all go out in the first sweep."""

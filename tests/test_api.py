@@ -4,6 +4,8 @@ relay: nothing here sends a push (the devices are verified straight in the
 database; see tests/test_verification.py)."""
 import hashlib
 import json
+import re
+import time
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
@@ -22,7 +24,7 @@ SBGG_SVC = "2471"                                         # Münster Standesamt,
 _ENV = {
     "TOKEN_SECRET_PRIMARY": "x" * 32, "TOKEN_SECRET_PREVIOUS": "",
     "SUBSCRIPTION_TTL_DAYS": "90", "SENSITIVE_SUBSCRIPTION_TTL_DAYS": "30",
-    "SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR": "99",
+    "SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR": "600",
     "SUBSCRIBE_RATELIMIT_PER_EMAIL_PER_DAY": "99",
     "MAILJET_API_KEY": "m", "MAILJET_API_SECRET": "m", "MAILJET_FROM_EMAIL": "x@x",
     "MAILJET_FROM_NAME": "x", "MAILJET_DAILY_QUOTA": "6000",
@@ -31,8 +33,9 @@ _ENV = {
     "RENEWAL_REMINDER_DAYS_BEFORE": "10", "MAX_PLANS_PER_CITY": "10",
     "PARSER_CANARY_THRESHOLD_HOURS": "2", "DEVELOPER_EMAIL": "dev@x",
     "KOFI_URL": "https://k", "APP_API_ENABLED": "1",
-    # Every test client is one address; the tests of the limit lower it.
-    "MAX_NEW_DEVICES_PER_IP_PER_DAY": "999",
+    # Every test client is one address; the tests of the limits lower them.
+    "MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR": "999",
+    "MAX_UNVERIFIED_DEVICES_PER_IP6_48_PER_HOUR": "999",
 }
 
 
@@ -261,143 +264,175 @@ def test_every_authenticated_call_restarts_the_purge_clock(client):
     assert datetime.fromisoformat(seen) > datetime.utcnow() - timedelta(minutes=1)
 
 
-def test_registration_is_rate_limited_per_ip(client, monkeypatch):
-    monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR", "2")
+def _reg(c, name, addr=None):
+    headers = {"X-Forwarded-For": addr} if addr else {}
+    return c.post("/api/v1/devices", json={"platform": "apns", "token": tok(name)},
+                  headers=headers)
+
+
+def _device(c, name, addr):
+    """A verified device registered from `addr`."""
+    r = _reg(c, name, addr)
+    assert r.status_code == 201, r.data
+    body = r.get_json()
+    _db().execute("UPDATE push_devices SET verified_at=CURRENT_TIMESTAMP WHERE id=?",
+                  (body["device_id"],))
+    return body["device_id"], body["secret"]
+
+
+def _left_to_the_sweep(capsys):
+    """The devices whose code a registration left to the sweep, from the log."""
+    return [int(d) for d in re.findall(
+        r"api: device (\d+) registered from a network over", capsys.readouterr().out)]
+
+
+def test_registration_is_rate_limited_per_network_over_ten_minutes(client, monkeypatch):
+    monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR", "12")    # 2 per ten minutes
     c = create_app().test_client()
-    assert c.post("/api/v1/devices", json={"platform": "apns", "token": tok("a")}).status_code == 201
-    assert c.post("/api/v1/devices", json={"platform": "apns", "token": tok("b")}).status_code == 201
-    r = c.post("/api/v1/devices", json={"platform": "apns", "token": tok("c")})
+    assert _reg(c, "a").status_code == 201
+    assert _reg(c, "b").status_code == 201
+    r = _reg(c, "c")
     assert r.status_code == 429 and r.get_json()["error"] == "rate_limited"
+    assert 0 < r.get_json()["retry_after"] <= 600
     # Reads are not counted: the app lists its subscriptions on every launch.
     assert c.get("/api/v1/cities").status_code == 200
-    # The API has its own bucket: app traffic behind a carrier NAT does not
+    # The API has its own buckets: app traffic behind a carrier NAT does not
     # use up the sign-up form's budget for everyone there.
-    keys = set(GLOBAL_IP_LIMITER._events)
-    assert keys and all(k.startswith("api:") for k in keys)
+    assert set(GLOBAL_IP_LIMITER._events) == {"apireg:127.0.0.1"}
+    # Ten minutes on, the network registers again: a stranger who filled the
+    # count holds real phones off for that long, not an hour.
+    with patch("app.ratelimit.time.time", return_value=time.time() + 601):
+        assert _reg(c, "d").status_code == 201
 
 
-def test_new_devices_are_also_limited_per_ipv6_48(client, monkeypatch):
-    """A /56 or /48 delegation is 256 to 65,536 /64s, each with its own
-    new-device count: the /48 has a coarser one of its own."""
-    monkeypatch.setenv("MAX_NEW_DEVICES_PER_IP_PER_DAY", "1")
-    monkeypatch.setenv("MAX_NEW_DEVICES_PER_IP6_48_PER_DAY", "3")
+def test_a_devices_own_writes_count_per_device_not_per_network(client, monkeypatch):
+    """Behind one carrier NAT, a stranger who used up the network's count
+    kept everyone's code posts, resends and alerts at 429 for an hour."""
+    monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR", "3")     # 1 registration / 10 min
     c = create_app().test_client()
+    mine, secret = _device(c, "mine", "192.0.2.80")
+    nat = {"X-Forwarded-For": "192.0.2.80"}
+    assert _reg(c, "stranger", "192.0.2.80").status_code == 429       # the NAT's count is spent
+    auth = {**_auth(mine, secret), **nat}
+    for _ in range(3):
+        assert _subscribe(c, auth).status_code == 201                  # the device's own three
+    assert _subscribe(c, auth).status_code == 429
+    other, osecret = _device(c, "other", "192.0.2.81")
+    assert _subscribe(c, {**_auth(other, osecret), **nat}).status_code == 201
+    # Erasure never waits on a count.
+    assert c.delete("/api/v1/device", headers=auth).status_code == 204
+    keys = set(GLOBAL_IP_LIMITER._events)
+    assert f"apidev:{mine}:main" in keys and not any(k.startswith("api:") for k in keys)
 
-    def reg(name, addr):
-        return c.post("/api/v1/devices", json={"platform": "apns", "token": tok(name)},
-                      headers={"X-Forwarded-For": addr})
-    assert reg("s1", "2001:db8:5:1::1").status_code == 201
-    # The /64 is spent; refusing it must not use up the /48 too.
-    assert reg("s2", "2001:db8:5:1::2").status_code == 429
-    assert reg("s3", "2001:db8:5:2::1").status_code == 201
-    assert reg("s4", "2001:db8:5:3::1").status_code == 201
-    r = reg("s5", "2001:db8:5:4::1")             # a fresh /64, but the /48 is spent
-    assert r.status_code == 429 and r.get_json()["retry_after"] > 3600
-    assert reg("s6", "2001:db8:6:1::1").status_code == 201        # another /48
-    assert reg("s7", "192.0.2.9").status_code == 201              # IPv4 has none
-    assert reg("s8", "2002:c000:20a::1").status_code == 201       # 6to4: IPv4 too
-    # The table holds neither address nor prefix.
+
+def test_registrations_are_counted_by_ipv6_64_and_48(client, monkeypatch):
+    monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR", "6")     # 1 per /64, 10 per /48
+    c = create_app().test_client()
+    assert _reg(c, "v6-a", "2001:db8:1:2::1").status_code == 201
+    assert _reg(c, "v6-b", "2001:db8:1:2:ffff::9").status_code == 429  # same /64
+    assert _reg(c, "v6-c", "2001:db8:1:3::1").status_code == 201      # next /64
+    codes = [_reg(c, f"v6-{i}", f"2001:db8:1:{i + 10:x}::1").status_code for i in range(10)]
+    assert codes == [201] * 8 + [429] * 2                              # the /48's ten
+    assert _reg(c, "v6-z", "2001:db8:2:1::1").status_code == 201      # another /48
+    # IPv4 stays the full address, and an IPv4-mapped one counts as it.
+    assert _reg(c, "v4-a", "192.0.2.1").status_code == 201
+    assert _reg(c, "v4-b", "::ffff:192.0.2.1").status_code == 429
+    assert _reg(c, "v4-c", "192.0.2.2").status_code == 201
+    assert {"apireg:2001:db8:1:2::/64", "apireg48:2001:db8:1::/48"} <= set(
+        GLOBAL_IP_LIMITER._events)
+
+
+def test_addresses_that_embed_an_ipv4_address_count_as_it(client, monkeypatch, capsys):
+    """A 6to4 address carries its IPv4 address, and 2002:<v4>::/48 is 65,536
+    /64s for whoever holds that one IPv4: counted by the /64, every one was a
+    fresh count. Teredo names its client's IPv4 the same way."""
+    monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR", "6")
+    monkeypatch.setenv("MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR", "2")
+    c = create_app().test_client()
+    assert _reg(c, "e1", "192.0.2.1").status_code == 201
+    assert _reg(c, "e2", "2002:c000:201:1::1").status_code == 429          # 6to4 of it
+    assert _reg(c, "e3", "2001:0:4136:e378:8000:63bf:3fff:fdfe").status_code == 429  # Teredo
+    assert _reg(c, "e4", "2002:c000:202::1").status_code == 201            # 6to4 of .2
+    assert set(GLOBAL_IP_LIMITER._events) == {"apireg:192.0.2.1", "apireg:192.0.2.2"}
+    # The database count is shared the same way, across workers.
+    capsys.readouterr()
+    GLOBAL_IP_LIMITER._events.clear()
+    assert _reg(c, "e5", "2002:c000:201:3::1").status_code == 201
+    GLOBAL_IP_LIMITER._events.clear()
+    r = _reg(c, "e6", "2002:c000:201:4::1")
+    assert r.status_code == 201
+    assert _left_to_the_sweep(capsys) == [r.get_json()["device_id"]]
+
+
+def test_unverified_devices_per_network_hold_across_workers_and_never_refuse(
+        client, monkeypatch, capsys):
+    monkeypatch.setenv("MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR", "2")
+    c = create_app().test_client()
+    nat = "192.0.2.10"
+    n1 = _reg(c, "n1", nat).get_json()
+    n2 = _reg(c, "n2", nat).get_json()
+    # The per-process limiter forgets (another worker, a restart); the
+    # database does not.
+    GLOBAL_IP_LIMITER._events.clear()
+    n3 = _reg(c, "n3", nat)
+    assert n3.status_code == 201                       # never a refusal
+    assert _left_to_the_sweep(capsys) == [n3.get_json()["device_id"]]
+    # A device that verifies drops out of the count...
+    _db().execute("UPDATE push_devices SET verified_at=CURRENT_TIMESTAMP WHERE id IN (?, ?)",
+                  (n1["device_id"], n3.get_json()["device_id"]))
+    n4 = _reg(c, "n4", nat).get_json()
+    assert _left_to_the_sweep(capsys) == []
+    # ...one deleted before it verified does not.
+    assert c.delete("/api/v1/device", headers=_auth(n2["device_id"], n2["secret"])
+                    ).status_code == 204
+    n5 = _reg(c, "n5", nat).get_json()
+    assert _left_to_the_sweep(capsys) == [n5["device_id"]]
+    # A token that already has a row is not a new device.
+    _reg(c, "n4", nat)
+    assert _left_to_the_sweep(capsys) == [] and n4
+    # Another network has its own count, and the table holds no address.
+    _reg(c, "n6", "198.51.100.7")
+    assert _left_to_the_sweep(capsys) == []
+    buckets = [r[0] for r in _db().execute("SELECT bucket FROM rate_events")]
+    assert buckets and not any("192.0.2" in b or "198.51" in b for b in buckets)
+    # The hour passes.
+    _db().execute("UPDATE rate_events SET at=datetime('now','-61 minutes')")
+    _reg(c, "n7", nat)
+    assert _left_to_the_sweep(capsys) == []
+
+
+def test_unverified_devices_are_also_counted_per_ipv6_48(client, monkeypatch, capsys):
+    """A /56 or /48 delegation is 256 to 65,536 /64s, each with its own
+    count: the /48 has a coarser one of its own."""
+    monkeypatch.setenv("MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR", "1")
+    monkeypatch.setenv("MAX_UNVERIFIED_DEVICES_PER_IP6_48_PER_HOUR", "3")
+    c = create_app().test_client()
+    ids = [_reg(c, f"s{i}", f"2001:db8:5:{i}::1").get_json()["device_id"] for i in range(5)]
+    assert _left_to_the_sweep(capsys) == ids[3:]       # fresh /64s, the /48 is full
+    _reg(c, "s6", "2001:db8:6:1::1")                    # another /48
+    _reg(c, "s7", "192.0.2.9")                          # IPv4 has none
+    _reg(c, "s8", "2002:c000:20a::1")                   # 6to4: IPv4 too
+    assert _left_to_the_sweep(capsys) == []
     buckets = [b for (b,) in _db().execute("SELECT bucket FROM rate_events")]
     assert not any("2001" in b or "192.0" in b for b in buckets)
 
 
 @pytest.mark.parametrize("limit", ["0", "1"])
-def test_the_ipv6_48_limit_can_be_switched_off(client, monkeypatch, limit):
-    monkeypatch.setenv("MAX_NEW_DEVICES_PER_IP6_48_PER_DAY", limit)
+def test_the_ipv6_48_count_can_be_switched_off(client, monkeypatch, capsys, limit):
+    monkeypatch.setenv("MAX_UNVERIFIED_DEVICES_PER_IP6_48_PER_HOUR", limit)
     c = create_app().test_client()
-    codes = [c.post("/api/v1/devices", json={"platform": "apns", "token": tok(f"o{i}")},
-                    headers={"X-Forwarded-For": f"2001:db8:9:{i}::1"}).status_code
-             for i in range(3)]
-    assert codes == ([201, 201, 201] if limit == "0" else [201, 429, 429])
+    ids = [_reg(c, f"o{i}", f"2001:db8:9:{i}::1").get_json()["device_id"] for i in range(3)]
+    assert _left_to_the_sweep(capsys) == ([] if limit == "0" else ids[1:])
 
 
-def test_addresses_that_embed_an_ipv4_address_count_as_it(client, monkeypatch):
-    """A 6to4 address carries its IPv4 address, and 2002:<v4>::/48 is 65,536
-    /64s for whoever holds that one IPv4: counted by the /64, every one was a
-    fresh budget. Teredo names its client's IPv4 the same way."""
-    monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR", "2")
-    monkeypatch.setenv("MAX_NEW_DEVICES_PER_IP_PER_DAY", "3")
+def test_deleting_a_device_is_counted_per_device_and_never_refused(client, monkeypatch):
+    monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR", "1")
     c = create_app().test_client()
-
-    def reg(name, addr):
-        return c.post("/api/v1/devices", json={"platform": "apns", "token": tok(name)},
-                      headers={"X-Forwarded-For": addr})
-    assert reg("e1", "192.0.2.1").status_code == 201
-    assert reg("e2", "2002:c000:201:1::1").status_code == 201         # 6to4 of 192.0.2.1
-    assert reg("e3", "2002:c000:201:2::1").status_code == 429         # another /64 of it
-    assert reg("e4", "2001:0:4136:e378:8000:63bf:3fff:fdfe").status_code == 429  # Teredo
-    assert reg("e5", "2002:c000:202::1").status_code == 201           # 6to4 of 192.0.2.2
-    assert set(GLOBAL_IP_LIMITER._events) == {"api:192.0.2.1", "api:192.0.2.2"}
-    # The database count is shared the same way, across workers.
-    GLOBAL_IP_LIMITER._events.clear()
-    assert reg("e6", "2002:c000:201:3::1").status_code == 201
-    GLOBAL_IP_LIMITER._events.clear()
-    r = reg("e7", "2002:c000:201:4::1")
-    assert r.status_code == 429 and r.get_json()["retry_after"] > 0
-
-
-def test_ipv6_clients_are_counted_by_their_slash_64(client, monkeypatch):
-    monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR", "2")
-    c = create_app().test_client()
-
-    def reg(name, addr):
-        return c.post("/api/v1/devices", json={"platform": "apns", "token": tok(name)},
-                      headers={"X-Forwarded-For": addr})
-    assert reg("v6-a", "2001:db8:1:2::1").status_code == 201
-    assert reg("v6-b", "2001:db8:1:2:ffff::9").status_code == 201
-    assert reg("v6-c", "2001:db8:1:2:abcd::5").status_code == 429     # same /64
-    assert reg("v6-d", "2001:db8:1:3::1").status_code == 201         # next /64
-    # IPv4 stays the full address, and an IPv4-mapped one counts as it.
-    assert reg("v4-a", "192.0.2.1").status_code == 201
-    assert reg("v4-b", "::ffff:192.0.2.1").status_code == 201
-    assert reg("v4-c", "192.0.2.1").status_code == 429
-    assert reg("v4-d", "192.0.2.2").status_code == 201
-    assert "api:2001:db8:1:2::/64" in GLOBAL_IP_LIMITER._events
-
-
-def test_new_devices_per_network_per_day_hold_across_workers(client, monkeypatch):
-    monkeypatch.setenv("MAX_NEW_DEVICES_PER_IP_PER_DAY", "2")
-    c = create_app().test_client()
-
-    def reg(name, addr="192.0.2.10"):
-        return c.post("/api/v1/devices", json={"platform": "apns", "token": tok(name)},
-                      headers={"X-Forwarded-For": addr})
-    first = reg("n1")
-    assert first.status_code == 201
-    assert reg("n2").status_code == 201
-    # The per-process limiter forgets (another worker, a restart); the
-    # database does not.
-    GLOBAL_IP_LIMITER._events.clear()
-    over = reg("n3")
-    assert over.status_code == 429 and over.get_json()["error"] == "rate_limited"
-    assert 0 < over.get_json()["retry_after"] <= 86400
-    # Deleting a device does not give its place back.
-    dev, secret = first.get_json()["device_id"], first.get_json()["secret"]
-    assert c.delete("/api/v1/device", headers=_auth(dev, secret)).status_code == 204
-    assert reg("n4").status_code == 429
-    # A token that already has a row is not a new device: re-registering works.
-    assert reg("n2").status_code == 201
-    # Another network has its own count, and the table holds no address.
-    assert reg("n5", "198.51.100.7").status_code == 201
-    buckets = [r[0] for r in _db().execute("SELECT bucket FROM rate_events")]
-    assert len(buckets) == 3 and not any("192.0.2" in b or "198.51" in b for b in buckets)
-    # The window frees after a day.
-    _db().execute("UPDATE rate_events SET at=datetime('now','-25 hours')")
-    assert reg("n6").status_code == 201
-
-
-def test_deleting_a_device_counts_against_the_network_but_is_never_refused(client, monkeypatch):
-    monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR", "2")
-    c = create_app().test_client()
-    dev, secret = _register(c, token="del-1")
-    assert c.delete("/api/v1/device", headers=_auth(dev, secret)).status_code == 204
-    # Register (1) and delete (2) used the budget up.
-    r = c.post("/api/v1/devices", json={"platform": "apns", "token": tok("del-2")})
-    assert r.status_code == 429
-    GLOBAL_IP_LIMITER._events.clear()
-    dev, secret = _register(c, token="del-3")
-    _register(c, token="del-4")
-    assert c.delete("/api/v1/device", headers=_auth(dev, secret)).status_code == 204
+    dev, secret = _device(c, "del-1", "192.0.2.30")
+    auth = _auth(dev, secret)
+    assert _subscribe(c, auth).status_code == 201       # the device's one write this hour
+    assert _subscribe(c, auth).status_code == 429
+    assert c.delete("/api/v1/device", headers=auth).status_code == 204
 
 
 # ---------------------------------------------------------------------------

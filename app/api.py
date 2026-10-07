@@ -15,14 +15,16 @@ still-looking question before it ends (as a push, see housekeeping). The one
 difference is the opt-in: the OS permission prompt the app had to pass is
 the opt-in, so a push subscription is live at once.
 
-Rate limits. Registration and every write, `DELETE /device` included, are
-counted per client network (an IPv4 address, an IPv6 /64) in the API's own
-bucket of the per-process limiter (soft, see `IPRateLimiter`), at the
-subscribe form's allowance but apart from it, so app traffic behind a
-carrier NAT does not use up the form for everyone there. Held across workers,
-in the database: new devices per client network per day
-(MAX_NEW_DEVICES_PER_IP_PER_DAY), slot-overview reads per device per hour,
-verification pushes per token (see repo.token_verify_wait), and the
+Rate limits. Nothing keyed on a client network may let a stranger on the same
+network (a carrier NAT, a carrier /48) lock the real phones there out. Per
+process (soft, see `IPRateLimiter`), in the API's own buckets, apart from the
+sign-up form's: registrations per client network (an IPv4 address, an IPv6
+/64, and ten times that per /48) over ten minutes, and every write of a
+registered device, `DELETE /device` included, per credential. Held across
+workers, in the database: new devices that have not verified per client
+network per hour (MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR; past it the push
+comes from the sweep, never a refusal), slot-overview reads per device per
+hour, verification pushes per token (see repo.token_verify_wait), and the
 MAX_SUBSCRIPTIONS_PER_DEVICE live subscriptions a device may hold.
 
 A device is not trusted until it has proven it receives our pushes. Registering
@@ -81,7 +83,8 @@ from app.config import ttl_days_for
 from app.db import connect, transaction
 from app.models import Filter
 from app.planning import would_exceed_cap
-from app.ratelimit import GLOBAL_IP_LIMITER, db_rate_hit, db_rate_hit_all
+from app.ratelimit import (GLOBAL_IP_LIMITER, db_rate_hit, record_new_device,
+                           unverified_devices)
 from app.repo import (active_subscriptions, delete_device, device_by_id,
                       insert_push_subscription, live_subscription_count,
                       register_device, renew_subscription,
@@ -330,13 +333,42 @@ def _network_bucket(prefix: str, network: str | None = None) -> str:
     return f"{prefix}:{mac.hexdigest()[:32]}"
 
 
-def _rate_limited() -> bool:
-    """Registration and every write are counted per client network in the
-    API's own bucket, at the subscribe form's allowance but apart from it:
-    behind one carrier NAT, app traffic must not use up the form for
-    everyone. Reads are not counted: the app polls its subscription list on
-    every launch and a rate limit on that is a self-inflicted outage."""
-    return not GLOBAL_IP_LIMITER.hit(f"api:{_client_network()}",
+# The registration window of the per-process limiter: short, so a stranger
+# who fills a shared network's count (a carrier NAT, a carrier /48) holds
+# real phones there off for minutes, not an hour.
+_REGISTRATION_WINDOW = 600
+# New devices recorded per client network in the database: the window of
+# MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR.
+_UNVERIFIED_WINDOW = 3600
+
+
+def _registration_limited() -> int:
+    """0, or the seconds until a registration from this client network may
+    try again. Per process (soft, see `IPRateLimiter`), in the API's own
+    buckets, apart from the sign-up form's: the form's hourly allowance per
+    ten minutes, per network (IPv4 address or IPv6 /64) and ten times that
+    per IPv6 /48. The only per-network refusal there is: everything else a
+    device does counts per device (`_device_rate_limited`)."""
+    per_hour = _cfg().subscribe_ratelimit_per_ip_per_hour
+    allowance = max(1, -(-per_hour // 6))
+    keys = [(f"apireg:{_client_network()}", allowance)]
+    ip6_48 = _client_ip6_48()
+    if ip6_48 is not None:
+        keys.append((f"apireg48:{ip6_48}", 10 * allowance))
+    full = GLOBAL_IP_LIMITER.hit_all(keys, _REGISTRATION_WINDOW)
+    return GLOBAL_IP_LIMITER.retry_after(full, _REGISTRATION_WINDOW) if full else 0
+
+
+def _device_rate_limited() -> bool:
+    """Every write of a registered device counts per credential (per
+    process, soft), at the sign-up form's hourly allowance: not per network,
+    where a stranger behind the same carrier NAT could keep everyone's code
+    posts, resends and alerts at 429. A pending credential has a count of its
+    own, apart from the device's main one. Reads are not counted: the app
+    polls its subscription list on every launch and a rate limit on that is a
+    self-inflicted outage."""
+    which = "pending" if g.credential_pending else "main"
+    return not GLOBAL_IP_LIMITER.hit(f"apidev:{g.device['id']}:{which}",
                                      _cfg().subscribe_ratelimit_per_ip_per_hour,
                                      3600)
 
@@ -473,14 +505,22 @@ def register():
     answer for a phone that changed hands). On a never-verified device the
     secret is simply rotated. See repo.register_device.
 
-    A token no row holds yet is a new device, and a client network may add
-    MAX_NEW_DEVICES_PER_IP_PER_DAY of those a rolling day, and a whole IPv6
-    /48 MAX_NEW_DEVICES_PER_IP6_48_PER_DAY, across workers (429
-    `rate_limited` with `retry_after`; one counts only if both have room).
-    The counts outlive the rows, so deleting and registering again does not
-    reset them."""
-    if _rate_limited():
-        return _error("rate_limited", 429)
+    Limits, none of which a stranger on a shared network (a carrier NAT, a
+    carrier /48) can turn into a lockout of the real phones there:
+
+    - Registrations per network per ten minutes (`_registration_limited`,
+      429 `rate_limited` with `retry_after` of at most ten minutes).
+    - New devices (a token no row holds yet) that have not verified, per
+      network per hour across workers (MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR,
+      and ..._PER_IP6_48_PER_HOUR for a whole IPv6 /48). Past either, the
+      registration still succeeds, and its verification push comes from the
+      poller's sweep a minute later instead of at once: junk from one network
+      cannot make the relay calls at request speed, and a real phone waits a
+      minute, never a day. A device that verifies drops out of the count; one
+      deleted or retired does not."""
+    wait = _registration_limited()
+    if wait:
+        return _error("rate_limited", 429, retry_after=wait)
     body = _json()
     platform = str(body.get("platform", "")).strip().lower()
     lang = _lang(body.get("language"))
@@ -494,20 +534,28 @@ def register():
     conn = connect(cfg.db_path)
     known = conn.execute("SELECT 1 FROM push_devices WHERE platform=? AND token=?",
                          (platform, token)).fetchone()
+    networks: list[tuple[str, int]] = []
     if known is None:
-        hits = [(_network_bucket("newdev"), cfg.max_new_devices_per_ip_per_day, 86400)]
+        networks.append((_network_bucket("newdev"),
+                         cfg.max_unverified_devices_per_ip_per_hour))
         ip6_48 = _client_ip6_48()
         if ip6_48 is not None:
-            hits.append((_network_bucket("newdev48", ip6_48),
-                         cfg.max_new_devices_per_ip6_48_per_day, 86400))
-        wait = db_rate_hit_all(conn, hits)
-        if wait:
-            return _error("rate_limited", 429, lang, retry_after=wait)
+            networks.append((_network_bucket("newdev48", ip6_48),
+                             cfg.max_unverified_devices_per_ip6_48_per_hour))
+    over = any(limit > 0 and unverified_devices(conn, bucket, _UNVERIFIED_WINDOW) >= limit
+               for bucket, limit in networks)
     secret = secrets.token_urlsafe(32)
     with transaction(conn):
         device_id = register_device(conn, platform=platform, token=token,
                                     secret_hash=_hash(secret), language=lang)
-    _send_verification(conn, device_id)
+        if networks:
+            record_new_device(conn, [bucket for bucket, _ in networks], device_id,
+                              _UNVERIFIED_WINDOW)
+    if over:
+        print(f"api: device {device_id} registered from a network over its "
+              f"unverified-device limit; its code comes from the sweep", flush=True)
+    else:
+        _send_verification(conn, device_id)
     return jsonify({"device_id": device_id, "secret": secret,
                     "language": lang, "verified": False}), 201
 
@@ -542,7 +590,7 @@ def device_status():
 def device_update():
     """A rotated push token (the platforms do that) or a new language."""
     lang = g.device["language"]
-    if _rate_limited():
+    if _device_rate_limited():
         return _error("rate_limited", 429, lang)
     body = _json()
     token = body.get("token")
@@ -571,11 +619,12 @@ def device_update():
 @device_owner
 def device_delete():
     """Delete my data. The row goes, the subscriptions cascade, and the
-    secret in the request stops working with this response. Counted against
-    the network's write budget, so registering and deleting in a loop runs
-    out twice as fast, but never refused for it: erasure does not wait on a
-    rate limit."""
-    _rate_limited()
+    secret in the request stops working with this response. Counted like
+    every write of the device, but never refused for it: erasure does not
+    wait on a rate limit. A register-and-delete loop is held by the
+    registration count, and a deleted device that never verified keeps its
+    place in its network's unverified count."""
+    _device_rate_limited()
     with transaction(g.conn):
         deleted = delete_device(g.conn, g.device["id"], g.secret_hash)
     if not deleted:
@@ -598,7 +647,7 @@ def device_verify():
             with transaction(g.conn):
                 verify_device(g.conn, g.device["id"], code.strip())
         return jsonify({"verified": True})
-    if _rate_limited():
+    if _device_rate_limited():
         return _error("rate_limited", 429, lang)
     code = _json().get("code")
     with transaction(g.conn):
@@ -620,7 +669,7 @@ def device_verify_resend():
     lang = g.device["language"]
     if g.credential_verified:
         return jsonify({"verified": True})
-    if _rate_limited():
+    if _device_rate_limited():
         return _error("rate_limited", 429, lang)
     kind = "open" if g.credential_pending else "owner"
     from app.push import config_fingerprint
@@ -795,7 +844,7 @@ def create_subscription():
     time_start, time_end, max_days_ahead, consent_special, language}`.
     Live at once; the first matching slot arrives as a push."""
     lang = g.device["language"]
-    if _rate_limited():
+    if _device_rate_limited():
         return _error("rate_limited", 429, lang)
     body = _json()
     slug = str(body.get("city", "")).strip()
@@ -843,7 +892,7 @@ def update_subscription(sub_id):
     form, and the same reset of the cadence state, which was measured
     against the old filter."""
     lang = g.device["language"]
-    if _rate_limited():
+    if _device_rate_limited():
         return _error("rate_limited", 429, lang)
     sub = _own(sub_id)
     if sub is None:
@@ -900,7 +949,7 @@ def renew(sub_id):
     an expired subscription too, for as long as it exists (EXPIRED_GRACE_DAYS
     after expiry, then housekeeping deletes it)."""
     lang = g.device["language"]
-    if _rate_limited():
+    if _device_rate_limited():
         return _error("rate_limited", 429, lang)
     sub = _own(sub_id)
     if sub is None:

@@ -140,14 +140,17 @@ CREATE TABLE IF NOT EXISTS verify_attempts (
 );
 CREATE INDEX IF NOT EXISTS idx_verify_attempts_key ON verify_attempts(token_key, at);
 
--- Rate-limit events that must hold across the web workers
--- (ratelimit.db_rate_hit): new devices per client network, slot-overview
--- reads per device. `bucket` names the limit and its subject; a client
--- network appears only as a keyed hash, never as an address. Housekeeping
--- prunes rows older than a day, the longest window.
+-- Rate-limit events that must hold across the web workers: slot-overview
+-- reads per device (ratelimit.db_rate_hit), and new devices per client
+-- network (ratelimit.unverified_devices, `device_id` set: only the ones that
+-- never verified count). `bucket` names the limit and its subject; a client
+-- network appears only as a keyed hash, never as an address. A network's
+-- events are dropped once they leave its hour; housekeeping prunes anything
+-- older than a day, the longest window.
 CREATE TABLE IF NOT EXISTS rate_events (
-  bucket  TEXT NOT NULL,
-  at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+  bucket     TEXT NOT NULL,
+  at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  device_id  INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_rate_events_bucket ON rate_events(bucket, at);
 
@@ -440,6 +443,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
         "config": "TEXT NOT NULL DEFAULT ''",
         "credited": "INTEGER NOT NULL DEFAULT 1",
     })
+    _add_missing_columns(conn, "rate_events", {"device_id": "INTEGER"})
     # best_time: the earliest time told under a day key. Existing day-key rows
     # get NULL, which has_seen_slot reads as "told at an unknown time" and
     # keeps suppressing the whole day exactly as before the column existed —
