@@ -56,15 +56,64 @@ def build_plans(subscriptions: list[tuple[str, Filter]],
             out.append(PollPlan(city=city, appointment_type=atype, locations="all"))
     return out
 
-def would_exceed_cap(existing: list[tuple[str, Filter]],
-                     new_city: str, new_filter: Filter,
-                     *, max_plans_per_city: int) -> bool:
-    """Predict whether adding (new_city, new_filter) would exceed the cap
-    EVEN AFTER the per-type "all" collapse. Used by /subscribe to return 503."""
-    augmented = existing + [(new_city, new_filter)]
-    plans = build_plans(augmented, max_plans_per_city=max_plans_per_city)
-    per_city: dict[str, int] = {}
-    for p in plans:
-        per_city[p.city] = per_city.get(p.city, 0) + 1
-    return any(count > cap_for_city(city, max_plans_per_city)
-               for city, count in per_city.items())
+def app_share(cap: int) -> int:
+    """How many of a city's services app subscriptions may hold on their own:
+    half the plan cap, rounded down."""
+    return cap // 2
+
+
+def cap_refuses(mail_services: set[str], app_services: set[str],
+                wanted: list[str], *, cap: int, push: bool) -> bool:
+    """Would a subscription to `wanted` be turned away by the city's plan cap?
+
+    The cap counts services, not plans: past the cap build_plans collapses a
+    service's office variants into one "all" plan, so what is left over is one
+    plan per distinct service. `mail_services` are the services at least one
+    live mail subscription watches (*mail-held*), `app_services` those at
+    least one live app subscription watches; a service watched by app
+    subscriptions and by no mail subscription is *app-held*. See
+    `app.repo.city_services` for "live". The caller leaves out the
+    subscription being edited or renewed.
+
+    Mail: refused only for a service nobody polls yet, and only when the
+    mail-held services would then exceed the cap. App-held services never
+    count against a mail subscriber, so a mail subscriber is never turned
+    away because of devices, however many there are, and a service with a
+    mail subscriber on it (or any polled service) is never refused to one.
+
+    App: refused when
+    - the service is not polled yet and everything polled would then exceed
+      the cap (the app never gets a plan the website would be refused), or
+    - the service is not mail-held and the app-held services, counting it,
+      would exceed `app_share(cap)`. Joining or renewing on an app-held
+      service is judged too, not only adding one: a service turns app-held
+      when its last mail subscriber leaves, and without that check app-held
+      services could pile up past the share and be renewed there for ever.
+      Over the share, they drain at the end of their terms.
+    Joining a mail-held service is never refused to the app.
+
+    The price of never locking mail out: in the worst case (the app holds
+    its full share and mail then fills its own cap) a city is polled for
+    cap + cap // 2 services, and the app gets no new plan there until it is
+    back under the cap."""
+    wanted_set = set(wanted)
+    polled = mail_services | app_services
+    new = wanted_set - polled
+    if not push:
+        return bool(new) and len(mail_services) + len(new) > cap
+    not_mail_held = wanted_set - mail_services
+    app_held_after = (app_services - mail_services) | not_mail_held
+    if not_mail_held and len(app_held_after) > app_share(cap):
+        return True
+    return bool(new) and len(polled) + len(new) > cap
+
+
+def refused_by_plan_cap(conn, city: str, f: Filter, *, max_plans_per_city: int,
+                        push: bool, exclude_id: int | None = None) -> bool:
+    """`cap_refuses` against the database, for a sign-up (or an edit or a
+    renewal, leaving out the subscription itself: `exclude_id`) of `f` in
+    `city`. The counts are database rows, so they hold across workers."""
+    from app.repo import city_services
+    mail, app = city_services(conn, city, exclude_id=exclude_id)
+    return cap_refuses(mail, app, list(f.appointment_types),
+                       cap=cap_for_city(city, max_plans_per_city), push=push)

@@ -298,8 +298,8 @@ def render_summary_email(s: dict, *, now: datetime, anomalies: list[str],
     if s.get("subscriber_cap"):
         d = s.get("digests_per_sub_24h") or {}
         if s.get("mail_cap_tightened"):
-            lines.append(f"  Mail pool under pressure: mail subscribers capped "
-                         f"at {s.get('mail_cap')}/24h")
+            lines.append(f"  Mail pool under pressure: every subscriber, mail and "
+                         f"app, capped at {s.get('mail_cap')}/24h")
         lines.append(f"  Sub cap {s['subscriber_cap']}/24h  held today "
                      f"{s.get('cap_holds_today', 0)} · capped now "
                      f"{s.get('capped_now', 0)} · {d.get('digests', 0)} digests "
@@ -504,10 +504,12 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
     # notified subscriber over the last 24h (was 4.6 with 57 of 103 at 5+
     # when it was introduced).
     sub_cap = getattr(cfg, "max_digests_per_subscriber_per_day", 0) or 0
-    # Whether the mail pool's pressure has tightened the mail cap right now
-    # (cycle.subscriber_caps): the same number the poller applies this cycle.
-    from app.cycle import subscriber_caps
-    _push_cap, mail_cap, mail_cap_tightened = subscriber_caps(conn, cfg)
+    # Whether the mail pool's pressure has tightened the cap right now, for
+    # every subscriber (cycle.subscriber_cap): the same number the poller
+    # applies this cycle. The keys keep their mail_ names: the mail pool is
+    # what trips it.
+    from app.cycle import subscriber_cap
+    mail_cap, mail_cap_tightened = subscriber_cap(conn, cfg)
     capped_now = scalar(
         "SELECT COUNT(*) FROM (SELECT subscription_id FROM digest_deliveries "
         "WHERE sent_at > datetime('now','-24 hours') "

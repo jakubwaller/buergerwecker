@@ -218,20 +218,37 @@ failing:
   the cap exists to move; the ops summary carries the same line. Deliveries
   are counted in `digest_deliveries` (7-day prune), seeded once at migration
   from `seen_slots` so the cap binds from the first cycle.
-- **Under pressure the mail cap tightens for everyone before anyone is
+- **Under pressure the cap tightens for everyone before anyone is
   deferred** (`MAIL_POOL_PRESSURE_PCT`, default 80, and
   `MAIL_CAP_UNDER_PRESSURE`, default 1; `0` turns it off, and so does
   turning the ordinary cap off). The pool is the
   free provider chain and there is no paid capacity behind it, so when the
-  combined rolling-24h usage reaches the percentage, every mail subscriber's
-  daily cap drops to the tightened value for as long as the pressure lasts.
-  A thinner day for everyone is the fair degradation; a deferral is one
-  person not told at all. App (push) subscribers have no pool and keep
-  `MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY`: the same cap on both channels is the
-  rule, and the app is what relieves the mail pool, since every subscriber
-  who moves to it frees their mails for those who stay. The poller logs
-  `mail pool under pressure` on each cycle it applies, and `/admin` and the
-  ops summary show the tightened cap while it is on.
+  combined rolling-24h usage reaches the percentage, every subscriber's
+  daily cap, **mail and app alike**, drops to the tightened value for as
+  long as the pressure lasts. A thinner day for everyone is the fair
+  degradation; a deferral is one person not told at all. App (push)
+  subscribers have no pool of their own and are tightened all the same: the
+  same cap on both channels is the rule, and a tighter day for mail alone
+  would make the app the way to more notifications. The poller logs
+  `mail pool under pressure, every subscriber (mail and app) capped` on each
+  cycle it applies, and `/admin` and the ops summary show the tightened cap
+  while it is on.
+- **When mail is out of quota, push waits behind it: one queue, one wall**
+  (`digest._behind_the_mail_wall`). Every digest of a cycle, mail and push,
+  stands in one queue, longest-waiting first. Before either batch starts,
+  the pool's remaining room (each provider's headroom, the same numbers
+  `send_batch` fills) says how far down the queue mail gets; the first mail
+  digest past it is the wall. It and the mail behind it are deferred for
+  quota, and the push digests behind it wait with them, unrecorded, so they
+  lead the next cycle in the same order. Push digests ahead of the wall go
+  out: they waited longer than anyone the quota turned away. Neither channel
+  gets ahead of the other. A mail digest to a dead address takes no room;
+  an outage defers more mail than predicted without holding push back (the
+  wall is the quota's). The poller logs `push: N digest(s) wait behind the
+  mail quota` when it holds any. The push budget (*Push delivery* below)
+  does **not** hold mail back: devices are free to mint, and a push queue
+  that held the mail queue would hand them a lever over the website's
+  subscribers.
 - **The deferred tail rotates.** Batches are filled in list order, so without
   care the same subscribers land at the back of every saturated cycle.
   `flush_digests` sorts by `last_notified_at` (never-notified first), and a
@@ -419,7 +436,21 @@ APNS_TOPIC=<bundle id of the app>
 APNS_SANDBOX=0                              # 1 only for Xcode development builds
 FCM_SERVICE_ACCOUNT_JSON_FILE=/run/secrets/fcm.json   # or ..._JSON=<inline>
 PUSH_TTL_SECONDS=1800                       # how long a relay holds a push
+PUSH_BUDGET_PER_CYCLE=200                   # digest pushes tried per cycle (0 = no bound)
+PUSH_BUDGET_SECONDS=20                      # no new push after this many seconds (0 = no bound)
 ```
+
+**The push budget.** Push goes out one relay request per device, serially, in
+the poller's single loop: without a bound a few thousand app subscriptions
+held every city's polling for minutes. Per cycle the poller tries at most
+`PUSH_BUDGET_PER_CYCLE` digest pushes, longest-waiting first, and starts no
+new one once `PUSH_BUDGET_SECONDS` have passed (the one in flight can still
+take its 10 s relay timeout); the rest are released like a quota deferral
+(unrecorded, they lead the next cycle). Verification and check-in pushes are
+not counted. `push: cycle budget spent (…); N digest(s) wait for the next
+cycle` in the poller log means it bound: once in a while is a burst, every
+cycle means the app outgrew the defaults (raise them as far as a cycle still
+finishes inside its minute).
 
 Both `web` and `poller` need them: the poller sends the digests, and the web
 container sends the verification push inside the register request (the
@@ -659,9 +690,10 @@ are missing or wrong on the VPS: check `docker compose logs poller | grep
 - `GET/POST /api/v1/subscriptions`, `GET/PUT/DELETE
   /api/v1/subscriptions/<id>`, `POST /api/v1/subscriptions/<id>/renew`: the
   website's rules over JSON. Same validation against the catalog, same
-  per-city plan cap, same Art. 9 consent for a special-category service,
-  same term, same renewal. No double opt-in: the OS permission prompt is the
-  opt-in, so a push subscription is live at once.
+  Art. 9 consent for a special-category service, same term, same renewal,
+  and the per-city plan cap with the app limited to its share (below). No
+  double opt-in: the OS permission prompt is the opt-in, so a push
+  subscription is live at once.
 - A retired device (the relay reported its token dead) gets `410
   device_retired` on every authenticated call, and the app registers afresh.
 - Rate limits. The rule: nothing keyed on a client network may let a
@@ -722,7 +754,50 @@ are missing or wrong on the VPS: check `docker compose logs poller | grep
 Mail and push digests of one cycle are sent side by side, in two threads on
 two connections (`digest._send_both`): a slow mail provider does not hold
 the push batch, and neither channel is scheduled ahead of the other. Push is
-not a fast lane.
+not a fast lane: the same daily cap, tightened for both under pressure, and
+when mail is out of quota push waits behind it (*Email delivery & quotas*,
+"one queue, one wall").
+
+### The app's share of a city
+
+Devices cost nothing to mint (Android needs no more than a headless FCM
+receiver and the public `google-services.json`), so no limit here rests on
+how many devices a person has; the per-IP and per-day registration limits are
+speed bumps, not ceilings. Each limit below is a count in the database,
+checked inside the write's transaction, so it holds across gunicorn workers.
+Measured before this existed: two verified devices with 16 Bonn
+subscriptions made every website visitor get `waitlist_full` for any other
+Bonn service, and a renew per term kept it that way.
+
+- **The plan cap is split, and mail is never locked out by devices**
+  (`planning.cap_refuses`). A service is *mail-held* when a live mail
+  subscription watches it, *app-held* when only live app subscriptions do. A
+  website sign-up or edit is judged against mail-held services alone:
+  refused only for a service nobody polls yet, when mail-held services would
+  then exceed `MAX_PLANS_PER_CITY` (or the tenant's `max_plans`). A service
+  already polled is never refused to anyone. The app gets a new service only
+  if everything polled stays within the cap (never what the website would be
+  refused), and app-held services never exceed **half the cap** (8 of 16).
+  Worst case, a city is polled for cap + cap/2 services (Bonn: 24): the app
+  took its half first, mail then filled its own whole cap; from then on the
+  app gets no new service there until the city is back under the cap.
+- **At most 3 distinct services per city per device**
+  (`api.MAX_SERVICES_PER_DEVICE_PER_CITY`), over the same rows as the
+  10-subscriptions ceiling: `409 too_many_services` with `limit` and a
+  `message` the app shows as is.
+- **At most `MAX_APP_SUBSCRIPTIONS_PER_CITY` live app subscriptions per
+  city** (default 100, `0` = no ceiling), all devices together: `503
+  waitlist_full` for the app only. The website never sees this count. For
+  scale: about 200 live mail subscriptions across all 38 tenants today.
+- "Live" for the app counts a paused subscription (a device that changed its
+  token and has not verified again) because it resumes without passing a
+  check, and does not count an expired one, which can come back only
+  through `/renew`.
+- **`/renew` is judged like a sign-up** at that moment, leaving the
+  subscription itself out; refused (`409`/`503`), it keeps the term it has.
+  A service turns app-held when its last mail subscriber leaves; past the
+  app's half, renewals on app-held services are refused, so they drain at the
+  end of their terms instead of being held for ever.
 
 ### Verifying after deploy
 
@@ -881,6 +956,22 @@ Measured on muenster-kfz on 2026-08-25: 557 of 557 rows recovered, 231 day keys
 written, first-cycle burst 35 digests → 2 (those 2 being subscribers genuinely
 never told about that date). If you deploy *without* the backfill anyway, do it
 when the pool has headroom and check `/admin` → Email quota first.
+
+### The horizon: the soonest 50 matching slots
+
+Per subscription and cycle the poller looks only at the soonest
+`cycle.MAX_SLOTS_PER_CYCLE` (50) slots the filter matches, seen or not. Those
+are checked against `seen_slots`, make the digest and are recorded on
+delivery; nothing past them is checked, mentioned or recorded. A slot past
+the horizon is treated like one past the filter's `max_days_ahead`: news the
+cycle it moves within reach (a booking ahead of it), which is the first time
+the subscriber hears of it. Before this a cycle cost one `seen_slots` lookup
+per subscriber per matching slot and one row per slot delivered (2000
+subscriptions on a 1000-slot calendar: 12.6 s a cycle, 2M rows); now at most
+50 of each per subscriber. Capping only what a digest *records* would have
+been the check/record mismatch CLAUDE.md warns about (a digest per interval
+about the same inventory). Deploying it re-notifies nobody: the rows the old
+code wrote cover everything inside the new horizon.
 
 ## Load testing
 

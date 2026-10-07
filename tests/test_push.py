@@ -64,7 +64,9 @@ def _cfg(**over):
                 apns_key_p8=EC_PEM, apns_topic="de.buergerwecker.app",
                 apns_sandbox=False, fcm_service_account_json=SERVICE_ACCOUNT,
                 push_ttl_seconds=1800,
-                # what flush_digests / send_digest read
+                # what flush_digests / send_digest read (the mail quotas for
+                # the room ahead of the mail wall, see digest._behind_the_mail_wall)
+                mailjet_hourly_quota=10, mailjet_daily_quota=200,
                 token_secret_primary="x" * 32, token_secret_previous="",
                 public_base_url="https://x", kofi_url="https://k",
                 developer_email="dev@example.com")
@@ -817,6 +819,90 @@ def test_the_cycle_binds_a_digest_to_the_token_it_found_verified(db):
 
 
 # ---------------------------------------------------------------------------
+# The per-cycle push budget (security review 2026-10-07: one serial relay
+# request per push, so a few thousand app subscriptions held the poller, and
+# every city's polling, for minutes)
+
+def _devices(db, n):
+    return [_device(db, token=f"tok-{i}") for i in range(n)]
+
+
+def test_the_push_budget_caps_the_attempts_and_releases_the_rest(db):
+    devs = _devices(db, 5)
+    items = [_item(d, f"k{i}") for i, d in enumerate(devs)]
+    relay = FakeRelay([(200, {})] * 5)
+    with patch("app.push._post", relay):
+        res = send_push_batch(db, items, _cfg(), max_items=2)
+    assert len(relay.calls) == 2
+    assert res.delivered == {"k0", "k1"} and res.deferred == 3
+    # Released like a deferral: no claim left, so the next cycle sends them
+    # under its own key, and the caller records nothing for them.
+    assert [k for k in ("k2", "k3", "k4") if _claimed(db, k)] == []
+    assert _claimed(db, "k0")["provider"] == "apns"
+
+
+def test_the_push_budget_stops_on_the_clock(db):
+    """A slow relay: each request takes 6 s of a 10 s budget, so the third
+    push is not tried."""
+    devs = _devices(db, 4)
+    items = [_item(d, f"k{i}") for i, d in enumerate(devs)]
+    now = [100.0]
+    inner = FakeRelay([(200, {})] * 4)
+
+    def slow(*a, **kw):
+        now[0] += 6
+        return inner(*a, **kw)
+
+    with patch("app.push._post", slow), patch("app.push._clock", lambda: now[0]):
+        res = send_push_batch(db, items, _cfg(), max_seconds=10)
+    assert res.delivered == {"k0", "k1"} and res.deferred == 2
+
+
+def test_no_budget_means_no_bound(db):
+    devs = _devices(db, 3)
+    relay = FakeRelay([(200, {})] * 3)
+    with patch("app.push._post", relay):
+        res = send_push_batch(db, [_item(d, f"k{i}") for i, d in enumerate(devs)],
+                              _cfg(), max_items=0, max_seconds=0)
+    assert len(res.delivered) == 3
+
+
+def _push_digest(db, dev, last_notified_at, key):
+    sid = _push_sub(db, dev)
+    if last_notified_at:
+        db.execute("UPDATE subscriptions SET last_notified_at=? WHERE id=?",
+                   (last_notified_at, sid))
+    return sid, QueuedDigest(
+        item=_item(dev, key),
+        subscription=SimpleNamespace(id=sid, last_notified_at=last_notified_at),
+        slots=[Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")], match_count=1)
+
+
+def test_the_push_budget_rotates_who_goes_first(db):
+    """Longest-waiting first, as mail under its quota: whoever the budget
+    leaves out is not stamped, so leads the next cycle."""
+    a, b = _devices(db, 2)
+    sid_a, qa = _push_digest(db, a, "2026-06-01 10:00:00", "ka")
+    sid_b, qb = _push_digest(db, b, "2026-06-01 08:00:00", "kb")     # waited longer
+    relay = FakeRelay([(200, {})] * 2)
+    with patch("app.push._post", relay), patch("app.digest.maybe_quota_alert"):
+        flush_digests(db, [qa, qb], _cfg(push_budget_per_cycle=1))
+    assert [c["url"].rsplit("/", 1)[1] for c in relay.calls] == ["tok-1"]   # b's
+    recorded = {r[0] for r in db.execute("SELECT subscription_id FROM seen_slots")}
+    assert recorded == {sid_b}
+    # Next cycle: b was just served, a was not and now leads.
+    stamp = db.execute("SELECT last_notified_at FROM subscriptions WHERE id=?",
+                       (sid_b,)).fetchone()[0]
+    qa2 = QueuedDigest(item=_item(a, "ka2"), subscription=SimpleNamespace(
+        id=sid_a, last_notified_at="2026-06-01 10:00:00"), slots=qa.slots, match_count=1)
+    qb2 = QueuedDigest(item=_item(b, "kb2"), subscription=SimpleNamespace(
+        id=sid_b, last_notified_at=stamp), slots=qb.slots, match_count=1)
+    with patch("app.push._post", relay), patch("app.digest.maybe_quota_alert"):
+        flush_digests(db, [qb2, qa2], _cfg(push_budget_per_cycle=1))
+    assert [c["url"].rsplit("/", 1)[1] for c in relay.calls] == ["tok-1", "tok-0"]
+
+
+# ---------------------------------------------------------------------------
 # flush_digests routes mail and push and records both the same way
 
 def test_flush_records_seen_slots_for_delivered_push_and_mail_alike(db):
@@ -907,7 +993,7 @@ def test_flush_sends_mail_and_push_side_by_side(db):
         seen["push_ran_during_mail"] = push_started.wait(5)
         return BatchResult(delivered={"km"})
 
-    def push(conn, items, cfg):
+    def push(conn, items, cfg, **budget):
         assert conn is not db          # its own connection
         conn.execute("SELECT 1").fetchone()
         push_started.set()
@@ -1001,7 +1087,7 @@ def test_flush_on_an_in_memory_database_runs_the_batches_in_turn():
     ]
     conns = []
 
-    def push(c, items, cfg):
+    def push(c, items, cfg, **budget):
         conns.append(c)
         return PushResult(delivered={"kp"})
 

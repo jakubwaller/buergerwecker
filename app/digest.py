@@ -302,6 +302,57 @@ def _database_path(conn: sqlite3.Connection) -> str | None:
     return None
 
 
+def _behind_the_mail_wall(conn: sqlite3.Connection, sink: list, cfg) -> set[str]:
+    """The idem_keys of the push digests that wait this cycle because mail
+    is out of quota: one queue, one wall.
+
+    Every digest of the cycle stands in one queue, longest-waiting first
+    (`sink`, sorted). The mail pool's room right now (`mail.pool_room`,
+    measured before either batch starts, the same numbers `send_batch`
+    fills) says how far down that queue mail gets; the first mail digest
+    past it is the wall, and it and every mail digest behind it are deferred
+    for quota. The push digests behind the wall wait with them: unrecorded,
+    they lead the next cycle in the same order. The push digests ahead of it
+    go out, because they waited longer than anyone the quota turned away. So
+    neither channel gets ahead of the other: whoever the quota passes over,
+    on either channel, has waited less than everyone served. A mail digest to
+    a dead address takes no room (send_batch never sends it), and an outage
+    defers more mail than predicted without holding push: the wall is the
+    quota's, which is what fairness is about.
+
+    One-sided on purpose. The push budget (PUSH_BUDGET_*) also leaves
+    digests for the next cycle, but it holds no mail back: devices are free
+    to mint, and a push queue that held the mail queue would give them a
+    lever over the website's subscribers."""
+    from app.mail import _dead_addresses, pool_room
+    if (all(isinstance(q.item, Outgoing) for q in sink)
+            or not any(isinstance(q.item, Outgoing) for q in sink)):
+        return set()
+    room = pool_room(conn, cfg)
+    dead = _dead_addresses(conn, cfg)
+    walled = False
+    held: set[str] = set()
+    for q in sink:
+        if not isinstance(q.item, Outgoing):
+            if walled:
+                held.add(q.item.idem_key)
+        elif q.item.to not in dead:
+            if room > 0:
+                room -= 1
+            else:
+                walled = True
+    if held:
+        print(f"push: {len(held)} digest(s) wait behind the mail quota this "
+              f"cycle, with the mail behind it", flush=True)
+    return held
+
+
+def _push_budget(cfg) -> dict:
+    """The digest flush's push budget, see push.send_push_batch."""
+    return {"max_items": getattr(cfg, "push_budget_per_cycle", 0) or 0,
+            "max_seconds": getattr(cfg, "push_budget_seconds", 0) or 0}
+
+
 def _send_both(conn: sqlite3.Connection, mail_items: list, push_items: list,
                cfg) -> tuple[BatchResult, set[str], BaseException | None]:
     """Deliver the mail batch and the push batch of one cycle. Returns the
@@ -315,7 +366,10 @@ def _send_both(conn: sqlite3.Connection, mail_items: list, push_items: list,
     hold the push batch for the length of the mail batch. Concurrent, not
     ahead: both batches start in the same cycle, after the same polls, and
     neither is scheduled before the other (push is not a fast lane; the
-    service's promise is fairness). The push module is imported only when
+    service's promise is fairness). When mail is out of quota, the push
+    digests queued behind the first mail digest it turns away are not in
+    `push_items` at all (`_behind_the_mail_wall`). The push batch runs under
+    the cycle's push budget. The push module is imported only when
     there is a push digest to send, so a deploy without app users never
     loads the relay clients. A push batch that raises is logged and counted
     as delivering nothing: its claims, if any are left pending, are taken
@@ -326,12 +380,15 @@ def _send_both(conn: sqlite3.Connection, mail_items: list, push_items: list,
         return (send_batch(conn, mail_items, cfg) if mail_items
                 else BatchResult()), set(), None
     from app.push import send_push_batch
+    budget = _push_budget(cfg)
     if not mail_items:
-        return BatchResult(), send_push_batch(conn, push_items, cfg).delivered, None
+        return (BatchResult(),
+                send_push_batch(conn, push_items, cfg, **budget).delivered, None)
     path = _database_path(conn)
     if path is None:
         result = send_batch(conn, mail_items, cfg)
-        return result, send_push_batch(conn, push_items, cfg).delivered, None
+        return (result,
+                send_push_batch(conn, push_items, cfg, **budget).delivered, None)
     push_delivered: set[str] = set()
 
     def _push():
@@ -340,7 +397,8 @@ def _send_both(conn: sqlite3.Connection, mail_items: list, push_items: list,
             push_conn = connect(path)
             try:
                 push_delivered.update(
-                    send_push_batch(push_conn, push_items, cfg).delivered)
+                    send_push_batch(push_conn, push_items, cfg,
+                                    **budget).delivered)
             finally:
                 push_conn.close()
         except Exception as exc:
@@ -373,7 +431,8 @@ def flush_digests(conn: sqlite3.Connection, sink: list, cfg) -> None:
     first, which is also the right answer on the merits.
 
     Mail and push take different roads to the same bookkeeping, side by side
-    (see `_send_both`).
+    (see `_send_both`), and in one queue: when mail is out of quota, push
+    does not get past the wall (see `_behind_the_mail_wall`).
     """
     if not sink:
         return
@@ -381,8 +440,10 @@ def flush_digests(conn: sqlite3.Connection, sink: list, cfg) -> None:
     from app.repo import (record_digest_delivery, record_seen_slot,
                           set_last_notified)
     sink = sorted(sink, key=lambda q: str(q.subscription.last_notified_at or ""))
+    held = _behind_the_mail_wall(conn, sink, cfg)
     mail_items = [q.item for q in sink if isinstance(q.item, Outgoing)]
-    push_items = [q.item for q in sink if not isinstance(q.item, Outgoing)]
+    push_items = [q.item for q in sink if not isinstance(q.item, Outgoing)
+                  and q.item.idem_key not in held]
     result, push_delivered, mail_error = _send_both(conn, mail_items,
                                                     push_items, cfg)
     delivered = set(result.delivered) | push_delivered

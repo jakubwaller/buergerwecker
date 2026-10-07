@@ -555,6 +555,67 @@ def live_subscription_count(conn: sqlite3.Connection, device_id: int) -> int:
         "AND deleted_at IS NULL", (device_id,)).fetchone()[0]
 
 
+# What "live" means for the city-wide counts below. A mail subscription is
+# live once confirmed, until deleted or its term ends: what the poller polls.
+# An app subscription is live until deleted or its term ends *whether or not
+# its device is verified right now*. A paused one (a device that changed its
+# token and has not posted the new code yet) does not poll, but it resumes
+# the moment the device verifies, without passing any check again; leaving
+# it out would let one device pause its subscriptions, make room for
+# another's, and verify again. An expired one does not count: it can only
+# come back through /renew, which judges it again.
+_LIVE_MAIL = ("device_id IS NULL AND confirmed_at IS NOT NULL "
+              "AND deleted_at IS NULL AND expires_at > CURRENT_TIMESTAMP")
+_LIVE_APP = ("device_id IS NOT NULL "
+             "AND deleted_at IS NULL AND expires_at > CURRENT_TIMESTAMP")
+
+
+def _types_in(rows) -> set[str]:
+    out: set[str] = set()
+    for r in rows:
+        out.update(Filter.from_json(r["filters_json"]).appointment_types)
+    return out
+
+
+def city_services(conn: sqlite3.Connection, city: str, *,
+                  exclude_id: int | None = None) -> tuple[set[str], set[str]]:
+    """(services a live mail subscription watches, services a live app
+    subscription watches) in `city`, leaving out subscription `exclude_id`
+    (the one being edited or renewed). The plan cap's inputs, see
+    `app.planning.cap_refuses`."""
+    skip = -1 if exclude_id is None else exclude_id
+    mail = conn.execute(
+        f"SELECT filters_json FROM subscriptions WHERE city=? AND id<>? "
+        f"AND {_LIVE_MAIL}", (city, skip)).fetchall()
+    app = conn.execute(
+        f"SELECT filters_json FROM subscriptions WHERE city=? AND id<>? "
+        f"AND {_LIVE_APP}", (city, skip)).fetchall()
+    return _types_in(mail), _types_in(app)
+
+
+def app_subscriptions_in_city(conn: sqlite3.Connection, city: str, *,
+                              exclude_id: int | None = None) -> int:
+    """Live app subscriptions in `city`, every device together, leaving out
+    `exclude_id`: what MAX_APP_SUBSCRIPTIONS_PER_CITY caps."""
+    return conn.execute(
+        f"SELECT COUNT(*) FROM subscriptions WHERE city=? AND id<>? "
+        f"AND {_LIVE_APP}",
+        (city, -1 if exclude_id is None else exclude_id)).fetchone()[0]
+
+
+def device_services_in_city(conn: sqlite3.Connection, device_id: int,
+                            city: str, *,
+                            exclude_id: int | None = None) -> set[str]:
+    """The distinct services one device watches in `city`, leaving out
+    `exclude_id`. Counted over the same rows as MAX_SUBSCRIPTIONS_PER_DEVICE
+    (not deleted, an expired one included: it is renewable)."""
+    rows = conn.execute(
+        "SELECT filters_json FROM subscriptions WHERE device_id=? AND city=? "
+        "AND id<>? AND deleted_at IS NULL",
+        (device_id, city, -1 if exclude_id is None else exclude_id)).fetchall()
+    return _types_in(rows)
+
+
 def renew_subscription(conn: sqlite3.Connection, sub_id: int,
                        ttl_days: int) -> bool:
     """Start a new term from now. reminder_sent_at is the once-per-term latch

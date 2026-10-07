@@ -18,12 +18,12 @@ from app.catalog import (load_catalog, available_cities, booking_start_url,
                          city_display_name, CatalogError)
 from app.models import Filter
 from app.signup import FormError as _FormError, build_filter
-from app.repo import (insert_pending, active_subscriptions, confirm,
+from app.repo import (insert_pending, confirm,
                       soft_delete, suppression_reason, clear_delivery_block)
 from app.ratelimit import GLOBAL_IP_LIMITER, email_rate_limit_ok
 from app.tokens import sign, verify, InvalidToken
 from app.i18n import format_date
-from app.planning import would_exceed_cap
+from app.planning import refused_by_plan_cap
 from app.mail import send as mail_send, _idem_key
 from app.webhooks import (PARSERS, apply_events, check_secret,
                           verify_sweego_signature)
@@ -944,9 +944,10 @@ def create_app() -> Flask:
         # 5. plan-cap overflow check + insert atomically (spec 3.2.6).
         conn = connect(cfg.db_path)
         with transaction(conn):
-            existing = [(s.city, s.sub_filter) for s in active_subscriptions(conn)]
-            if would_exceed_cap(existing, city, f,
-                                max_plans_per_city=cfg.max_plans_per_city):
+            # Judged against mail-held services only: no number of app
+            # devices can fill a city's cap for the website (planning.cap_refuses).
+            if refused_by_plan_cap(conn, city, f, push=False,
+                                   max_plans_per_city=cfg.max_plans_per_city):
                 return _result_page("waitlist_full", lang, status=503)
             sub_id = insert_pending(conn, email=email, city=city,
                                     language=lang, filter_=f,
@@ -1095,10 +1096,9 @@ def create_app() -> Flask:
                 # own current plan, which the new filter replaces. Without it
                 # the manage form was a way past the wait-list: a sign-up for
                 # a plan already being polled, then an edit to any other.
-                existing = [(s.city, s.sub_filter)
-                            for s in active_subscriptions(conn) if s.id != sub_id]
-                if would_exceed_cap(existing, owner["city"], f,
-                                    max_plans_per_city=cfg.max_plans_per_city):
+                if refused_by_plan_cap(conn, owner["city"], f, push=False,
+                                       max_plans_per_city=cfg.max_plans_per_city,
+                                       exclude_id=sub_id):
                     return _result_page("waitlist_full", lang, status=503)
                 # Clear the cadence state along with the filter: both signals
                 # were measured against the OLD filter, and keeping them would

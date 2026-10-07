@@ -571,9 +571,23 @@ def _fcm_verdict(resp: httpx.Response) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 # Delivery
 
+# The push budget's clock (send_push_batch), a name of its own so a test can
+# move time without touching the time module.
+_clock = time.monotonic
+
+
 def send_push_batch(conn: sqlite3.Connection, items: list[OutgoingPush],
-                    cfg) -> PushResult:
+                    cfg, *, max_items: int = 0,
+                    max_seconds: float = 0) -> PushResult:
     """Deliver `items`, one relay request each. Returns what went out.
+
+    The digest flush passes a budget (PUSH_BUDGET_PER_CYCLE attempts, none
+    started after PUSH_BUDGET_SECONDS; 0 = no bound): one serial request per
+    push, so without one a few thousand app subscriptions held the poller,
+    and every city's polling, for minutes. Items are tried in list order,
+    longest-waiting first (flush_digests sorts them), and whatever the budget
+    does not reach is released like a deferral: unrecorded, it leads the next
+    cycle, the way a quota deferral rotates the mail queue.
 
     Claims every idempotency row first (one transaction, as `send_batch`
     does); an already-claimed key is skipped as already-sent. A device that is
@@ -627,11 +641,19 @@ def send_push_batch(conn: sqlite3.Connection, items: list[OutgoingPush],
     # Refused payloads and throttles, judged after the loop like dead tokens:
     # (item, platform, refused here rather than by the relay)
     refusals: list[tuple[OutgoingPush, str, bool]] = []
+    started = _clock()
+    attempts = over_budget = 0
     for it, dev in pending:
         platform = dev.platform
         if platform in unusable:
             released.append(it)
             continue
+        if ((max_items and attempts >= max_items)
+                or (max_seconds and _clock() - started >= max_seconds)):
+            released.append(it)
+            over_budget += 1
+            continue
+        attempts += 1
         verdict, reason = _attempt(cfg, platform, it, it.token)
         if verdict == OK:
             with transaction(conn):
@@ -742,6 +764,10 @@ def send_push_batch(conn: sqlite3.Connection, items: list[OutgoingPush],
                   f"device(s) ({hold[0][1]}) and has delivered nothing since; "
                   f"not retiring. If every cycle says this, check APNS_TOPIC "
                   f"and APNS_SANDBOX, or the FCM project", flush=True)
+    if over_budget:
+        print(f"push: cycle budget spent ({attempts} tried in "
+              f"{_clock() - started:.0f}s); {over_budget} digest(s) wait for the "
+              f"next cycle, longest-waiting first", flush=True)
     if released:
         with transaction(conn):
             conn.executemany("DELETE FROM sent_idempotency WHERE idem_key=?",

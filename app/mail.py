@@ -723,6 +723,15 @@ def _daily_usage(conn: sqlite3.Connection, cfg) -> list[tuple[str, int, int]]:
             usage.append((name, _window_used(conn, name, 86400), cap))
     return usage
 
+def pool_room(conn: sqlite3.Connection, cfg) -> int:
+    """Mail the provider chain can still take right now: every provider's
+    headroom (the tighter of its rolling windows), summed. The same numbers
+    `send_batch` fills before it defers, so a digest past this many is one it
+    will defer for quota (barring an outage, which defers more)."""
+    return sum(_headroom(conn, limits, name)
+               for name, _send_fn, _batch_size, limits in _providers(cfg))
+
+
 def pool_usage(conn: sqlite3.Connection, cfg) -> tuple[int, int]:
     """(sends in the rolling 24h, summed daily cap) across every provider that
     can actually send: the number that gates mail delivery. (0, 0) when no
