@@ -59,7 +59,9 @@ route `404 not_available`) the app shows one "not released yet" screen.
 Errors: every API error body has `error` (a key) and usually `message`, a sentence in the
 device's language; the app shows `message` whenever there is one (a waitlist full for this city
 or for this device, too many new devices from one place in a day, a body too large) and its own
-fallback per key otherwise (`errorText` in `api.js`). Every request with a body sends
+fallback per key otherwise (`errorText` in `api.js`). The one exception is `rate_limited`: the
+server words every 429 with the website's "too many sign-ups" sentence, so the app always shows
+its own neutral text there. Every request with a body sends
 `Content-Type: application/json`; the server refuses a body that is not JSON.
 
 ## Layout
@@ -219,7 +221,8 @@ push, no account, and a widget. The widget only shows; it never books and a tap 
   refused, the device unverified or retired), or no credential at all (the app not opened since
   this version moved it, "Delete my data"): only "open the app", and the cached answers are
   deleted, so nothing stale can later pass for live; the next answer that proves the credential
-  works lifts it. `403 not_subscribed` for one city: that city drops out until the app sends a new
+  works lifts it, and so does a credential with an empty list (nothing to fetch, so "set up an
+  alert" instead). `403 not_subscribed` for one city: that city drops out until the app sends a new
   list. `429` (the route's per-device budget, about 60 an hour shared with the app), `404` while
   `APP_API_ENABLED` is off, or no network: the last answer with its "as of" time; with none, "no
   data yet".
@@ -230,8 +233,12 @@ push, no account, and a widget. The widget only shows; it never books and a tap 
   time and office to anyone who looks at the phone, which the push for such an alert withholds
   (`app/push.py`). It writes that through the local `WidgetBridge` plugin (`setConfig` / `clear`)
   after the alert list loads or changes, after a language change, and on "Delete my data", and
-  skips a write that would change nothing (each one costs a fetch per city). No alerts: the widget
-  asks the person to open the app.
+  skips a write that would change nothing (each one costs a fetch per city) unless the device was
+  re-registered or its verification changed. No alerts: the widget asks the person to open the
+  app. The list carries `v` (`CONFIG_VERSION`, 3 since special-category alerts were taken out);
+  both widgets treat a lower or missing `v` as no list, so whatever an older app version left
+  behind never shows, and their cache moved to a new key (`widget_cache_v3`, the old one is
+  deleted) for the same reason.
 - **iOS.** `BuergerweckerWidget` (bundle id `de.buergerwecker.app.widget`), SwiftUI, small and
   medium; timeline refresh about every 20 minutes (WidgetKit decides). The plugin
   (`App/WidgetBridgePlugin.swift`) writes the JSON into the App Group `group.de.buergerwecker.app`'s

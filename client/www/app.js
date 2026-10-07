@@ -5,6 +5,7 @@ import { h, banner, toast, errorMessage } from "./ui.js";
 import { plugin, openExternal } from "./native.js";
 import * as push from "./push.js";
 import * as store from "./store.js";
+import * as widget from "./widget.js";
 import {
   state, TABS, onRender, render, currentTab, stack, top, back, switchTab,
   refreshSubs, forgetCaches,
@@ -168,6 +169,10 @@ async function boot() {
       const flipped = verified !== knownVerified;
       knownDeviceId = id;
       knownVerified = verified;
+      // The widget fetches with the credential: a new device, or one that
+      // just got verified (or lost it), changes what it may see even when the
+      // city list stays the same, so the next sync goes through regardless.
+      if (newId || flipped) widget.invalidate();
       if (!ready) return;
       if (flipped) render();
       if (id && (newId || (flipped && verified !== false))) refreshSubs();

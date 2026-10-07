@@ -59,7 +59,15 @@ import java.util.concurrent.TimeUnit;
 public class EarliestSlotWidget extends AppWidgetProvider {
     static final String PREFS = "buergerwecker_widget";
     static final String KEY_CONFIG = "widget_config";
-    static final String KEY_CACHE = "widget_cache";
+    /**
+     * www/widget.js CONFIG_VERSION. A list without `v`, or with a lower one,
+     * comes from an app version that still put special-category (Art. 9)
+     * alerts in it, and counts as no list at all.
+     */
+    static final int CONFIG_VERSION = 3;
+    static final String KEY_CACHE = "widget_cache_v3";
+    /** The cache before CONFIG_VERSION 3, which may hold such an alert's slot: never read, deleted. */
+    static final String KEY_LEGACY_CACHE = "widget_cache";
     static final String KEY_LOCKED = "widget_locked";
     private static final String API_BASE = "https://buergerwecker.de/api/v1";
     private static final int TIMEOUT_MS = 8_000;
@@ -145,8 +153,13 @@ public class EarliestSlotWidget extends AppWidgetProvider {
 
     private static void refresh(Context context, AppWidgetManager manager, int[] ids) throws Exception {
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        prefs.edit().remove(KEY_LEGACY_CACHE).apply();
         JSONObject config = readConfig(prefs);
-        if (config != null) {
+        if (config == null) {
+            // No list, or one from an older app version: "set up an alert",
+            // and nothing kept from before.
+            prefs.edit().remove(KEY_CACHE).remove(KEY_LOCKED).apply();
+        } else {
             JSONArray cities = config.optJSONArray("cities");
             String lang = config.optString("lang", "de");
             SecureStore.Bearer bearer = SecureStore.bearer(context);
@@ -156,10 +169,14 @@ public class EarliestSlotWidget extends AppWidgetProvider {
             JSONObject next = auth == null ? cache : new JSONObject();
             // No credential, or one the server refused: "open the app" and
             // nothing else, and the cache goes. An answer that proves the
-            // credential works lifts that; a run with only failures (offline,
-            // 429, a Keystore that would not answer) keeps the last decision.
+            // credential works lifts that, and so does a credential with
+            // nothing to ask about (an empty list: the app has been opened and
+            // wrote both, and "set up an alert" is the right text). A run with
+            // only failures (offline, 429, a Keystore that would not answer)
+            // keeps the last decision.
             boolean refused = auth == null && !bearer.unreadable;
-            boolean accepted = false;
+            boolean nothingToAsk = auth != null && (cities == null || cities.length() == 0);
+            boolean accepted = nothingToAsk;
             if (auth != null) {
                 ExecutorService pool = Executors.newFixedThreadPool(5);
                 try {
@@ -388,10 +405,13 @@ public class EarliestSlotWidget extends AppWidgetProvider {
 
     // --- Draw ----------------------------------------------------------------
 
+    /** The page's list, or null: none, unreadable, or older than CONFIG_VERSION. */
     private static JSONObject readConfig(SharedPreferences prefs) {
         try {
             String raw = prefs.getString(KEY_CONFIG, null);
-            return raw == null ? null : new JSONObject(raw);
+            if (raw == null) return null;
+            JSONObject config = new JSONObject(raw);
+            return config.optInt("v", 0) >= CONFIG_VERSION ? config : null;
         } catch (JSONException e) {
             return null;
         }

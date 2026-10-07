@@ -23,7 +23,8 @@ public class WidgetBridgePlugin: CAPPlugin, CAPBridgedPlugin {
 
     private static let group = "group.de.buergerwecker.app"
     private static let configKey = "widget_config"
-    private static let cacheKey = "widget_cache"
+    private static let cacheKey = "widget_cache_v3"
+    private static let legacyCacheKey = "widget_cache"
     private static let lockedKey = "widget_locked"
 
     @objc func setConfig(_ call: CAPPluginCall) {
@@ -39,6 +40,7 @@ public class WidgetBridgePlugin: CAPPlugin, CAPBridgedPlugin {
         let defaults = UserDefaults(suiteName: Self.group)
         defaults?.removeObject(forKey: Self.configKey)
         defaults?.removeObject(forKey: Self.cacheKey)
+        defaults?.removeObject(forKey: Self.legacyCacheKey)
         defaults?.removeObject(forKey: Self.lockedKey)
         WidgetCenter.shared.reloadAllTimelines()
         call.resolve()

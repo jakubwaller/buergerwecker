@@ -25,12 +25,18 @@ test("what a person reads: the server's sentence whenever there is one", () => {
   assert.deepEqual(errorText({ status: 503, error: "waitlist_full", message: "Dieses Gerät hat schon …" }), { text: "Dieses Gerät hat schon …" });
   assert.deepEqual(errorText({ status: 409, error: "too_many_subscriptions", message: "Schon 10.", limit: 10 }), { text: "Schon 10." });
   assert.deepEqual(errorText({ status: 413, error: "too_large", message: "Die Anfrage ist zu groß." }), { text: "Die Anfrage ist zu groß." });
-  assert.deepEqual(errorText({ status: 429, error: "rate_limited", message: "Heute schon zu viele Geräte.", retryAfter: 3600 }), {
-    text: "Heute schon zu viele Geräte.",
-  });
   assert.deepEqual(errorText({ status: 415, error: "unsupported_media_type", message: "Nur JSON." }), { text: "Nur JSON." });
   assert.deepEqual(errorText({ status: 400, error: "invalid_token", message: "Kein Push-Token." }), { text: "Kein Push-Token." });
   assert.deepEqual(errorText({ status: 400, error: "invalid_time", message: "Ungültige Uhrzeit." }), { text: "Ungültige Uhrzeit." });
+});
+
+test("rate_limited always reads the app's own neutral sentence, never the website's sign-up one", () => {
+  // What the server sends with every 429, the slots route's included.
+  const website = "Too many sign-ups were made in a short time. Please wait a moment and try again.";
+  for (const message of [website, "Es wurden in kurzer Zeit zu viele Anmeldungen vorgenommen.", null]) {
+    assert.deepEqual(errorText({ status: 429, error: "rate_limited", message, retryAfter: 600 }), { key: "err.rate_limited", vars: {} });
+  }
+  for (const lang of ["de", "en"]) assert.doesNotMatch(STRINGS[lang]["err.rate_limited"], /Anmeldung|sign-up/i, lang);
 });
 
 test("what a person reads without one: our own fallback per key, else the generic sentence", () => {

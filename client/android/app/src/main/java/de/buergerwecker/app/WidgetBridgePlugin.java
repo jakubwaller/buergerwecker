@@ -41,7 +41,7 @@ public class WidgetBridgePlugin extends Plugin {
     public void clear(PluginCall call) {
         getContext().getSharedPreferences(EarliestSlotWidget.PREFS, Context.MODE_PRIVATE)
             .edit().remove(EarliestSlotWidget.KEY_CONFIG).remove(EarliestSlotWidget.KEY_CACHE)
-            .remove(EarliestSlotWidget.KEY_LOCKED).apply();
+            .remove(EarliestSlotWidget.KEY_LEGACY_CACHE).remove(EarliestSlotWidget.KEY_LOCKED).apply();
         requestUpdate(getContext());
         call.resolve();
     }

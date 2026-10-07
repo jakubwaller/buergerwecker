@@ -17,7 +17,12 @@ import { plugin } from "./native.js";
 import { STRINGS } from "./i18n.js";
 
 export const MAX_CITIES = 5;
-export const CONFIG_VERSION = 2;
+// 3: the first list without special-category alerts. Both native widgets treat
+// a list with a lower `v`, or none, as no list at all (Shared.configVersion in
+// BuergerweckerWidget.swift, CONFIG_VERSION in EarliestSlotWidget.java), so a
+// list an older app version left behind can never put such an alert's slot on
+// the home screen, whatever runs first after the update.
+export const CONFIG_VERSION = 3;
 
 // Every i18n key whose text the native widget needs, by prefix.
 const PREFIXES = ["widget.", "date.", "weekday.", "month."];
@@ -75,6 +80,13 @@ export async function sync(subs, cityList, lang) {
   if (config === lastSent) return;
   await w.setConfig({ config });
   lastSent = config;
+}
+
+// The next sync goes through even with the same list: the device changed (a
+// new registration, verification won or lost), and with it what the widget's
+// own fetch may see.
+export function invalidate() {
+  lastSent = null;
 }
 
 export async function clear() {

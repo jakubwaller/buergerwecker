@@ -25,7 +25,14 @@ import Security
 enum Shared {
     static let group = "group.de.buergerwecker.app"
     static let configKey = "widget_config"
-    static let cacheKey = "widget_cache"
+    // www/widget.js CONFIG_VERSION. A list without `v`, or with a lower one,
+    // comes from an app version that still put special-category (Art. 9)
+    // alerts in it, and counts as no list at all.
+    static let configVersion = 3
+    static let cacheKey = "widget_cache_v3"
+    // The cache before configVersion 3, which may hold such an alert's slot:
+    // never read, deleted on every load.
+    static let legacyCacheKey = "widget_cache"
     static let lockedKey = "widget_locked"
     static let apiBase = "https://buergerwecker.de/api/v1"
     static let openURL = URL(string: "buergerwecker://")!
@@ -96,14 +103,18 @@ struct Config: Decodable {
             if let ids = try? c.decode([String].self) { self = .list(ids) } else { self = .all }
         }
     }
+    let v: Int?
     let lang: String?
     let strings: [String: String]?
     let cities: [City]
 
+    // nil for no list, and for a list older than Shared.configVersion.
     static func load() -> Config? {
         guard let raw = Shared.defaults?.string(forKey: Shared.configKey),
-              let data = raw.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(Config.self, from: data)
+              let data = raw.data(using: .utf8),
+              let config = try? JSONDecoder().decode(Config.self, from: data),
+              (config.v ?? 0) >= Shared.configVersion else { return nil }
+        return config
     }
 }
 
@@ -355,7 +366,14 @@ struct SlotProvider: TimelineProvider {
     }
 
     private func load() async -> SlotEntry {
-        guard let config = Config.load() else { return SlotEntry(date: Date(), words: Words(nil), rows: []) }
+        Shared.defaults?.removeObject(forKey: Shared.legacyCacheKey)
+        // No list, or one from an older app version: "set up an alert", and
+        // nothing kept from before.
+        guard let config = Config.load() else {
+            Shared.defaults?.removeObject(forKey: Shared.cacheKey)
+            Shared.defaults?.removeObject(forKey: Shared.lockedKey)
+            return SlotEntry(date: Date(), words: Words(nil), rows: [])
+        }
         let lang = config.lang ?? "de"
         let cities = config.cities
         let credential = Credential.read()
@@ -378,13 +396,17 @@ struct SlotProvider: TimelineProvider {
         let words = Words(current.strings)
         // No credential, or one the server refused: "open the app" and nothing
         // else, and the cache goes, so no answer in it can later pass for a
-        // live one. An answer that proves the credential works lifts that; a
-        // run with only failures (offline, 429, an unreadable Keychain) keeps
-        // whatever the last run decided.
+        // live one. An answer that proves the credential works lifts that, and
+        // so does a credential with nothing to ask about (an empty list: the
+        // app has been opened and wrote both, and "set up an alert" is the
+        // right text). A run with only failures (offline, 429, an unreadable
+        // Keychain) keeps whatever the last run decided.
         var absent = false
+        var nothingToAsk = false
         if case .absent = credential { absent = true }
+        if case .bearer = credential, cities.isEmpty { nothingToAsk = true }
         let refused = absent || outcomes.values.contains { if case .refused = $0 { return true }; return false }
-        let accepted = outcomes.values.contains {
+        let accepted = nothingToAsk || outcomes.values.contains {
             switch $0 {
             case .ok, .gone: return true
             case .refused, .failed: return false

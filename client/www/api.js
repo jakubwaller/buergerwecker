@@ -51,12 +51,18 @@ export const isUnavailable = (e) => isApiError(e) && e.status === 404 && e.error
 
 // Which i18n key and variables explain an error to a person. The server's
 // own sentence, in the device's language, wins whenever it sent one: it knows
-// the actual cause (a waitlist full for this city, or for this device; too many
-// new devices from here today; a body too large), where the app only has a
-// fallback per key. Our own errors (no network, a timeout) carry no sentence.
+// the actual cause (a waitlist full for this city, or for this device; a body
+// too large), where the app only has a fallback per key. Our own errors (no
+// network, a timeout) carry no sentence.
+//
+// Except rate_limited: the server words every one of those with the website's
+// sign-up sentence ("too many sign-ups …"), which is wrong for a slot overview,
+// a resend or a registration in the app. The app's own neutral text instead.
+const OWN_WORDING = new Set(["rate_limited"]);
+
 export function errorText(err) {
   if (!isApiError(err)) return { key: "err.generic", vars: {} };
-  if (typeof err.message === "string" && err.message.trim()) return { text: err.message };
+  if (typeof err.message === "string" && err.message.trim() && !OWN_WORDING.has(err.error)) return { text: err.message };
   switch (err.error) {
     case "waitlist_full":
     case "network":

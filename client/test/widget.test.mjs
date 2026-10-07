@@ -21,7 +21,7 @@ globalThis.Capacitor = {
   },
 };
 
-const { buildConfig, sync, clear, widgetStrings, MAX_CITIES } = await import("../www/widget.js");
+const { buildConfig, sync, clear, invalidate, widgetStrings, MAX_CITIES, CONFIG_VERSION } = await import("../www/widget.js");
 const { STRINGS } = await import("../www/i18n.js");
 const { BUNDLE_IDS, APP_GROUP, KEYCHAIN_GROUP } = await import("../ios/asc.mjs");
 
@@ -45,7 +45,8 @@ const cityList = [
 
 test("the config lists the cities of the active alerts, each alert with its own filter", () => {
   const c = buildConfig([sub("leipzig", "a"), sub("leipzig", "b"), sub("bonn", "c"), sub("leipzig", "x", false)], cityList, "de");
-  assert.equal(c.v, 2);
+  assert.equal(c.v, 3);
+  assert.equal(c.v, CONFIG_VERSION);
   assert.equal(c.lang, "de");
   assert.deepEqual(c.cities, [
     { slug: "leipzig", name: "Leipzig", office: "Bürgeramt", alerts: [{ service: "a", ...open }, { service: "b", ...open }] },
@@ -125,7 +126,21 @@ test("an unchanged list is not handed over twice: every setConfig costs the widg
   await clear();
   await sync([sub("leipzig", "a"), sub("bonn", "c")], cityList, "en");
   assert.deepEqual(calls.map((c) => c[0]), ["setConfig", "setConfig", "setConfig", "clear", "setConfig"], "after a clear it goes again");
+  // A new or newly verified device changes what the widget may fetch: the
+  // same list goes over again, which reloads the widget.
+  invalidate();
+  await sync([sub("leipzig", "a"), sub("bonn", "c")], cityList, "en");
+  assert.equal(calls.length, 6, "after invalidate() it goes again");
+  await sync([sub("leipzig", "a"), sub("bonn", "c")], cityList, "en");
+  assert.equal(calls.length, 6, "and then dedupes as before");
   await clear();
+});
+
+test("the app invalidates the widget's last list whenever the device or its verification changes", () => {
+  const app = read("www/app.js");
+  const changed = app.slice(app.indexOf("changed: (d) =>"), app.indexOf("error: (e) =>"));
+  assert.match(changed, /if \(newId \|\| flipped\) widget\.invalidate\(\);/);
+  assert.ok(changed.indexOf("widget.invalidate()") < changed.indexOf("if (!ready) return;"), "also before start-up finished");
 });
 
 test("without the plugin (web, an older build) sync and clear do nothing", async () => {
@@ -191,6 +206,44 @@ test("the two Swift targets agree on the storage keys, Android on one preference
   // "Delete my data" forgets the lock with the rest.
   assert.match(read(IOS_PLUGIN), /removeObject\(forKey: Self\.lockedKey\)/);
   assert.match(read(`${JAVA}/WidgetBridgePlugin.java`), /remove\(EarliestSlotWidget\.KEY_LOCKED\)/);
+});
+
+test("a list older than CONFIG_VERSION is no list on either platform, and the old cache is never read", () => {
+  const swift = read(IOS);
+  const java = read(`${JAVA}/EarliestSlotWidget.java`);
+  assert.equal(Number(/static let configVersion = (\d+)/.exec(swift)[1]), CONFIG_VERSION, "iOS");
+  assert.equal(Number(/static final int CONFIG_VERSION = (\d+);/.exec(java)[1]), CONFIG_VERSION, "Android");
+  assert.match(swift, /\(config\.v \?\? 0\) >= Shared\.configVersion else \{ return nil \}/);
+  assert.match(java, /config\.optInt\("v", 0\) >= CONFIG_VERSION \? config : null/);
+  // The cache written under the old list may hold a special-category slot: a
+  // new key, the old one deleted on every load and on "Delete my data".
+  const legacy = "widget_cache";
+  assert.notEqual(/cacheKey = "(\w+)"/.exec(swift)[1], legacy);
+  assert.equal(/legacyCacheKey = "(\w+)"/.exec(swift)[1], legacy);
+  assert.equal(/legacyCacheKey = "(\w+)"/.exec(read(IOS_PLUGIN))[1], legacy);
+  assert.equal(/KEY_LEGACY_CACHE = "(\w+)"/.exec(java)[1], legacy);
+  const load = swift.slice(swift.indexOf("private func load()"));
+  assert.ok(load.indexOf("removeObject(forKey: Shared.legacyCacheKey)") < load.indexOf("guard let config = Config.load()"));
+  assert.match(load, /guard let config = Config\.load\(\) else \{\s*Shared\.defaults\?\.removeObject\(forKey: Shared\.cacheKey\)\s*Shared\.defaults\?\.removeObject\(forKey: Shared\.lockedKey\)/);
+  const refresh = java.slice(java.indexOf("private static void refresh"), java.indexOf("static JSONObject keepOnly"));
+  assert.ok(refresh.indexOf("remove(KEY_LEGACY_CACHE)") < refresh.indexOf("readConfig(prefs)"));
+  assert.match(refresh, /if \(config == null\) \{[\s\S]*?remove\(KEY_CACHE\)\.remove\(KEY_LOCKED\)/);
+  assert.match(read(IOS_PLUGIN), /removeObject\(forKey: Self\.legacyCacheKey\)/);
+  assert.match(read(`${JAVA}/WidgetBridgePlugin.java`), /remove\(EarliestSlotWidget\.KEY_LEGACY_CACHE\)/);
+});
+
+test("a credential with nothing to ask about lifts the lock on both platforms", () => {
+  // An empty list (no alert, or only special-category ones) never fetches,
+  // so no answer could ever lift a lock set while the credential was missing.
+  const swift = read(IOS);
+  const java = read(`${JAVA}/EarliestSlotWidget.java`);
+  assert.match(swift, /if case \.bearer = credential, cities\.isEmpty \{ nothingToAsk = true \}/);
+  assert.match(swift, /let accepted = nothingToAsk \|\| outcomes\.values\.contains/);
+  assert.match(java, /boolean nothingToAsk = auth != null && \(cities == null \|\| cities\.length\(\) == 0\);/);
+  assert.match(java, /boolean accepted = nothingToAsk;/);
+  // And the lock still only stands when nothing proved the credential works.
+  assert.match(swift, /let locked = refused \|\| \(!accepted && /);
+  assert.match(java, /boolean locked = refused \|\| \(!accepted && /);
 });
 
 test("every string key native code reads is one the page sends", () => {
