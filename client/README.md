@@ -162,8 +162,8 @@ letting `PushNotifications.register()` crash on an uninitialised FirebaseApp.
 every PR push that touches `client/`, and on request archives, signs and uploads the iOS app to
 App Store Connect (TestFlight): *Run workflow → testflight* in the Actions tab, or the label
 `testflight` on a pull request to get that branch onto a phone. `ios/asc.mjs` talks to the App
-Store Connect API for it. The macOS minutes count against the plan here (private repository),
-so the Mac jobs run only when `client/` changes.
+Store Connect API for it. The repository is public, so anyone signed in to GitHub can download a
+run's artifacts; the Mac jobs run only when `client/` changes.
 
 Once per Apple account (task or label `apple-setup`, safe to repeat):
 
@@ -411,25 +411,26 @@ token. Every review here assumes scripted, unlimited verified Android devices.
       - The share: 60 devices in Bonn (62 services, cap 16) got 26 alerts; app-held services
         stopped at 8 (`cap // 2`), and a new service was still open to mail and closed to the
         app. A city is polled for at most `cap + cap // 2` services, whatever the fleet does.
-      - The ceiling: 33 devices fill a city's 100 app places (`MAX_APP_SUBSCRIPTIONS_PER_CITY`),
+      - The ceiling: 34 devices fill a city's 100 app places (`MAX_APP_SUBSCRIPTIONS_PER_CITY`),
         about half an hour from one IPv4 address and at once from one /48; all 38 tenants take about
-        1,250 devices, a day from one address or two hours from one /48. After that, new app
+        1,290 devices, a day from one address or two hours from one /48. After that, new app
         sign-ups there get 503 `waitlist_full`. A subscriber who renews within the term keeps
         the place, and the website is not affected.
       - The client: nothing found. CSP, push URLs on the site's own origin only, the credential
         in Keystore and Keychain (`ThisDeviceOnly`) and out of backups, the widget's fixed API
-        base and encoded slug, no HTML sinks, and no handler for the `buergerwecker://` scheme.
-- [ ] **Before production, decide on the fleet residual** above: anyone can keep new app users
-      out of every city for as long as they keep renewing. The only fix that makes a verified
-      device a real phone is attestation at registration (Play Integrity on Android, App Attest
-      on iOS). Short of that, a city at its ceiling shows only as a log line (`api: <city> is
-      at MAX_APP_SUBSCRIPTIONS_PER_CITY`), and nothing alerts on it.
+        base (the slug comes from the server; only Android percent-encodes it), no HTML sinks,
+        and no handler for the `buergerwecker://` scheme.
+- [ ] **Play Integrity at registration**, decided 2026-10-07 for the fleet residual above, which
+      let anyone keep new app users out of every city for as long as they kept renewing. A new
+      FCM device, or an FCM device's new token, needs a Play Integrity verdict: the app as Google
+      Play recognises it, on a device that meets device integrity, bound to that push token. The
+      server fails closed, and iOS is unchanged (an APNs token needs a real phone). It goes in
+      before the first `play` run, since a build without it cannot register against a server
+      that requires it.
 - [ ] **Hardening, not urgent**: the `testflight` job sets the App Store Connect key in the job's
-      `env`, so `npm ci` and `npx cap sync` run with it. No package in the lockfile has an
-      install script today. Moving the key to the steps that use it, or `npm ci --ignore-scripts`,
-      keeps it that way.
-- [ ] **Firebase**: accept the Data Processing and Security Terms in the Firebase project, then
-      add Google to the privacy page's list of processors with a DPA.
+      `env`, so `npm ci`, `npx cap sync` and the archive all run with it. No package in the
+      lockfile has an install script today, but `cap sync` runs the Capacitor CLI and its
+      dependencies all the same; only moving the key to the steps that use it closes that.
 
 ## Not in this version
 
