@@ -98,6 +98,10 @@ Nothing rebuilds if no source changed, so this is quick. It is what makes a chan
 ssh vps 'cd ~/buergerwecker && git checkout <last-good-sha> && docker compose up -d --build'
 ```
 
+A `<last-good-sha>` from before the `./secrets` mount (PR #105) brings back a `docker-compose.yml`
+without it, so comment the `*_FILE` lines out of `.env` first, or `web` and `poller` stop at start
+on the missing key file (see "Push delivery").
+
 The database is not versioned with the code. Schema changes are additive — `_add_missing_columns`
 in `app/db.py` only ever runs `ALTER TABLE … ADD COLUMN` — so an older image tolerates a newer
 database, and rolling back the code is safe on its own. Restoring a snapshot from `/mnt/backup` is
@@ -417,9 +421,19 @@ FCM_SERVICE_ACCOUNT_JSON_FILE=/run/secrets/fcm.json   # or ..._JSON=<inline>
 PUSH_TTL_SECONDS=1800                       # how long a relay holds a push
 ```
 
-Only the poller needs them. Mount the two key files read-only into the poller
-container and point the `_FILE` variants at them; inline values work too but a
-multi-line PEM in `.env` is fragile. The APNs key is downloadable once from
+Both `web` and `poller` need them: the poller sends the digests, and the web
+container sends the verification push inside the register request (the
+poller's once-a-minute sweep is only the fallback). Put the key files in
+`~/buergerwecker/secrets/` (gitignored, `chmod 600`); `docker-compose.yml`
+mounts that directory read-only at `/run/secrets` in both containers, so the
+`_FILE` paths above work as written. Both must see the files, because
+`load_config` reads every `_FILE` at start and a path it cannot open stops the
+container — the website included. Hence the order on a host that has no keys
+yet: `mkdir -m 700 ~/buergerwecker/secrets` (left to Compose, it is created
+root-owned), deploy the mount, and only then copy the files in, add the `_FILE`
+lines and `docker compose up -d web poller`. A `_FILE` line in `.env` ahead of
+the mount stops whichever container is recreated next. Inline values work too,
+but a multi-line PEM in `.env` is fragile. The APNs key is downloadable once from
 Apple; the FCM file is Firebase → Project settings → Service accounts →
 Generate new private key, for a project whose Cloud Messaging API (v1) is
 enabled. Both are credentials for *sending*: they name the app, not any

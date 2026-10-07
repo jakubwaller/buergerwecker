@@ -2,6 +2,8 @@
 .env.*
 !.env.example
 data/
+# Push key files on the host, mounted at /run/secrets (docker-compose.yml)
+secrets/
 *.db
 *.db-shm
 *.db-wal
