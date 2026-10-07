@@ -123,3 +123,39 @@ def test_wal_mode_enabled(tmp_path):
     init_schema(conn)
     cur = conn.execute("PRAGMA journal_mode")
     assert cur.fetchone()[0].lower() == "wal"
+
+
+def test_schema_16_migrates_a_device_table_and_indexes_subscriptions(tmp_path):
+    """A database from before schema 16: push_devices without the
+    verification bookkeeping, subscriptions without device_id at all."""
+    conn = connect(str(tmp_path / "old.db"))
+    conn.executescript("""
+        CREATE TABLE subscriptions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL,
+          city TEXT NOT NULL DEFAULT 'leipzig', language TEXT NOT NULL DEFAULT 'de',
+          filters_json TEXT NOT NULL,
+          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          confirmed_at TIMESTAMP, last_notified_at TIMESTAMP,
+          expires_at TIMESTAMP NOT NULL, reminder_sent_at TIMESTAMP,
+          heartbeat_30d_at TIMESTAMP, heartbeat_60d_at TIMESTAMP,
+          deleted_at TIMESTAMP);
+        CREATE TABLE push_devices (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, platform TEXT NOT NULL,
+          token TEXT NOT NULL, secret_hash TEXT NOT NULL,
+          language TEXT NOT NULL DEFAULT 'de',
+          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          last_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          retired_at TIMESTAMP, retire_reason TEXT, dead_since TIMESTAMP);
+        INSERT INTO push_devices (platform, token, secret_hash) VALUES ('apns','t','h');
+    """)
+    init_schema(conn)
+    init_schema(conn)                                   # idempotent
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(push_devices)")}
+    assert {"verify_kind", "verify_failures", "verify_next_at"} <= cols
+    assert conn.execute("SELECT verify_failures FROM push_devices").fetchone()[0] == 0
+    indexes = {r["name"] for r in conn.execute("PRAGMA index_list(subscriptions)")}
+    assert "idx_subs_device" in indexes
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"verify_attempts", "rate_events"} <= tables
+    assert SCHEMA_VERSION == 16

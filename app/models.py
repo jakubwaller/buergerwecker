@@ -138,6 +138,10 @@ class Subscription:
     # The separate Art. 9 consent, when the subscription is to a
     # special-category service (consent_special_at in the row).
     consent_special: bool = False
+    # The device's push token as of loading, set by `active_subscriptions`
+    # only: the verified token this cycle serves. A digest is bound to it, so
+    # a token changed before the flush gets nothing (see push.send_push_batch).
+    push_token: str | None = None
 
     @property
     def is_push(self) -> bool:

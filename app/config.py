@@ -58,6 +58,23 @@ class Config:
     # registration endpoint lets anyone create subscriptions without a
     # confirmation step.
     app_api_enabled: bool = False
+    # New unverified push tokens (a registration of an unknown token, or a
+    # device's token change) from one client network (an IPv4 address, an
+    # IPv6 /64), per rolling hour, across all web workers; past it every
+    # verification push the network asks for comes from the poller's sweep
+    # instead of at once. Never a refusal: behind a carrier NAT a stranger's
+    # junk must not lock real phones out. 0 disables.
+    max_unverified_devices_per_ip_per_hour: int = 5
+    # The same for a whole IPv6 /48, on top: a /56 or /48 delegation is 256 to
+    # 65,536 /64s, each with its own count above. 0 disables.
+    max_unverified_devices_per_ip6_48_per_hour: int = 50
+    # The cross-worker bound on what one client network can make the API do
+    # with push tokens: requests that mint a token or ask for a verification
+    # push (registration, PUT /device with a new token, resend) per network
+    # per ten minutes, in the database, ten times that per IPv6 /48; past it
+    # 429 with a retry_after of at most ten minutes, the longest a stranger
+    # can hold real phones on that network off. 0 disables.
+    max_token_requests_per_ip_per_10_min: int = 10
     # The mail pool is the free provider chain (about 600/day). When its
     # rolling-24h usage reaches `mail_pool_pressure_pct` of the summed caps,
     # every mail subscriber's daily cap drops to `mail_cap_under_pressure`
@@ -222,6 +239,12 @@ def load_config() -> Config:
         # in minutes; a notification delivered an hour late is noise.
         push_ttl_seconds=int(os.environ.get("PUSH_TTL_SECONDS", "1800")),
         app_api_enabled=os.environ.get("APP_API_ENABLED", "0") == "1",
+        max_unverified_devices_per_ip_per_hour=int(
+            os.environ.get("MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR", "5")),
+        max_unverified_devices_per_ip6_48_per_hour=int(
+            os.environ.get("MAX_UNVERIFIED_DEVICES_PER_IP6_48_PER_HOUR", "50")),
+        max_token_requests_per_ip_per_10_min=int(
+            os.environ.get("MAX_TOKEN_REQUESTS_PER_IP_PER_10_MIN", "10")),
         mail_pool_pressure_pct=int(os.environ.get("MAIL_POOL_PRESSURE_PCT", "80")),
         mail_cap_under_pressure=int(
             os.environ.get("MAIL_CAP_UNDER_PRESSURE", "1")),

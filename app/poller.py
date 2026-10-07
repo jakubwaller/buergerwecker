@@ -22,6 +22,7 @@ def main() -> None:
         cycle_id = datetime.utcnow().strftime("%Y%m%dT%H%M")
         try:
             _maybe_housekeeping(conn)
+            _prune_rate_events(conn)
             _sweep_verifications(conn, cfg)
             run_cycle(conn,
                       max_plans_per_city=cfg.max_plans_per_city,
@@ -41,9 +42,21 @@ def main() -> None:
             if consecutive_failures >= 3:
                 _maybe_alert(conn, cfg, str(exc))
 
+def _prune_rate_events(conn) -> None:
+    """Drop the API's rate events past their window, every cycle: the ones
+    that name a (hashed) client network live their window and at most a
+    minute more. Never breaks the cycle."""
+    try:
+        from app.ratelimit import prune_rate_events
+        prune_rate_events(conn)
+    except Exception as exc:
+        print(f"rate event prune failed: {exc!r}", flush=True)
+
 def _sweep_verifications(conn, cfg) -> None:
     """Send the verification pushes the web process could not (no credentials
-    there, relay down, or a resend request). Never breaks the cycle."""
+    there, relay down, or a budget that said wait), at most
+    push.MAX_SWEEP_DEVICES a cycle, least recently tried first. Never breaks
+    the cycle."""
     try:
         from app.push import send_verifications
         send_verifications(conn, cfg)

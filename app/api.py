@@ -15,29 +15,47 @@ still-looking question before it ends (as a push, see housekeeping). The one
 difference is the opt-in: the OS permission prompt the app had to pass is
 the opt-in, so a push subscription is live at once.
 
-Rate limits: registration and every write are counted against the
-subscribe-form limit per IP (soft, per process, see `IPRateLimiter`); a
-device may hold MAX_SUBSCRIPTIONS_PER_DEVICE live subscriptions (hard, in
-the database).
+Rate limits. Nothing keyed on a client network may let a stranger on the same
+network (a carrier NAT, a carrier /48) lock the real phones there out for
+longer than ten minutes. Every request that mints a verifiable token or asks
+for a verification push (registration, PUT /device with a new token, resend)
+goes through one gate, `_token_gate`, held across workers in the database:
+such requests per client network (an IPv4 address or IPv6 /64; ten times as
+many per /48) per ten minutes, then new unverified tokens per network per
+hour, past which the push comes from the sweep instead of at once. Also in the
+database: slot-overview reads per device per hour, verification pushes per
+token (see repo.token_verify_wait), and the MAX_SUBSCRIPTIONS_PER_DEVICE live
+subscriptions a device may hold. Per process (soft, see `IPRateLimiter`):
+every write of a registered device, `DELETE /device` included, per
+credential, in the API's own buckets apart from the sign-up form's.
 
 A device is not trusted until it has proven it receives our pushes. Registering
 (or registering the same token again) triggers a push
 carrying a one-time code; the app posts the code to `/device/verify`. The code
-is stored hashed, lives 24 hours and is replaced by a resend.
+is stored hashed, lives 24 hours and is replaced by a resend. A push token is
+checked against its platform's format (`normalize_push_token`): anything
+else could name the same phone under another row.
 
 Who may call what. The device's main credential (its `secret_hash`) may always
 call `GET /device`, `PUT /device`, `DELETE /device` and the two verify routes,
 verified or not, so a device waiting for its code can still report a rotated
-token or delete its data (`device_owner`); every subscription route also
-needs it to be verified (`authenticated`, the default; else 403
-`device_unverified`). A pending credential (a re-registration of a verified
-token, see repo.register_device) may call only `GET /device` and the two
-verify routes (`any_credential`).
+token or delete its data (`device_owner`); every subscription route and the
+slot overview also need it to be verified (`authenticated`, the default; else
+403 `device_unverified`). A pending credential (a re-registration of a known
+token, see repo.register_device) may call only `GET /device`, which tells it
+nothing but `{"verified": false}`, and the two verify routes
+(`any_credential`).
 
-The whole blueprint, public catalog routes included, answers 404 until
-APP_API_ENABLED=1. An open registration endpoint lets anyone create
-subscriptions without a confirmation step, so it stays closed until the app
-ships; device verification (above) is what the open endpoint rests on.
+Every POST and PUT must be `application/json` (else 415): a cross-site form
+or a `text/plain` fetch is sent without a CORS preflight, and would let any
+web page register devices from its visitors' addresses. Every response but
+the public catalog's is `Cache-Control: no-store`.
+
+All of /api/v1, the public catalog routes and routing errors included,
+answers 404 `not_available` until APP_API_ENABLED=1 (`register_cors` installs
+the gate). An open registration endpoint lets anyone create subscriptions
+without a confirmation step, so it stays closed until the app ships; device
+verification (above) is what the open endpoint rests on.
 
 CORS. The app's WebView calls this API cross-origin, so every response under
 /api/v1 (routing errors such as an unknown path's 404 or a wrong method's 405
@@ -54,6 +72,8 @@ released yet" screen. The preflight reveals nothing the gate protects.
 from __future__ import annotations
 import hashlib
 import hmac
+import ipaddress
+import re
 import secrets
 from datetime import datetime
 from functools import wraps
@@ -65,7 +85,8 @@ from app.config import ttl_days_for
 from app.db import connect, transaction
 from app.models import Filter
 from app.planning import would_exceed_cap
-from app.ratelimit import GLOBAL_IP_LIMITER
+from app.ratelimit import (GLOBAL_IP_LIMITER, db_rate_hit, db_rate_hit_all,
+                           record_new_device, unverified_devices)
 from app.repo import (active_subscriptions, delete_device, device_by_id,
                       insert_push_subscription, live_subscription_count,
                       register_device, renew_subscription,
@@ -83,13 +104,27 @@ api = Blueprint("api", __name__, url_prefix="/api/v1")
 # costs nothing, so the ceiling is what keeps a looping client from filling
 # a city's plan cap on its own.
 MAX_SUBSCRIPTIONS_PER_DEVICE = 10
-# A push token is a few hundred characters on either platform; anything
-# longer is not one.
-_TOKEN_MAX = 4096
+# What a push token looks like, per platform (after normalize_push_token's
+# lowercasing for APNs). APNs: the device token in hex, 32 bytes today, and
+# Apple reserves the right to make it longer (up to 100 bytes). FCM: a
+# registration token, URL-safe base64 with a ':' after the installation id,
+# about 150 to 165 characters in every format so far (the older GCM-era ones
+# started at about 140); the lower bound only keeps out what is plainly not
+# one, since junk can be any length, and 64 is far enough below every known
+# format not to refuse a real token.
+_TOKEN_PATTERNS = {
+    "apns": re.compile(r"[0-9a-f]{64,200}"),
+    "fcm": re.compile(r"[A-Za-z0-9_:\-]{64,4096}"),
+}
 # Request body ceiling for /api/v1 (see _body_limit): the largest request the
 # app makes is under 1 kB.
 MAX_BODY_BYTES = 16 * 1024
+# Slot-overview reads one device may make per hour, across workers. The app
+# reads it when the overview opens and the widget on its refresh schedule.
+MAX_SLOT_READS_PER_DEVICE_PER_HOUR = 60
 _LANGS = ("de", "en")
+# Endpoints whose answer is the same for everyone and carries no credential.
+_PUBLIC_ENDPOINTS = frozenset({"api.cities", "api.city"})
 
 # Sentences for the errors only the API has (the website's come from
 # app.web._RESULT_MESSAGES), keyed like them: {key: {lang: sentence}}.
@@ -105,6 +140,14 @@ _API_MESSAGES = {
     "too_large": {
         "de": "Die Anfrage ist zu groß.",
         "en": "The request is too large.",
+    },
+    "unsupported_media_type": {
+        "de": "Die Anfrage muss JSON sein.",
+        "en": "The request must be JSON.",
+    },
+    "not_subscribed": {
+        "de": "Du beobachtest in dieser Stadt noch nichts. Lege zuerst einen Alarm an.",
+        "en": "You aren't watching anything in this city yet. Set up an alert first.",
     },
 }
 
@@ -159,19 +202,25 @@ def _cors(resp):
     return resp
 
 
-def register_cors(app):
-    """Install the CORS hooks on the app, keyed on the path prefix rather than
-    on the blueprint: a routing error (unknown path, wrong method) matches no
-    blueprint, and the app must still be able to read it."""
-    app.before_request(_preflight)
-    app.after_request(_cors)
-
-
-@api.before_request
 def _gate():
-    if not _cfg().app_api_enabled:
+    """APP_API_ENABLED, for every /api/v1 path: a routing error (an unknown
+    path, a wrong method) would otherwise answer Flask's HTML 404 or 405 and
+    show the API is there. Runs after the preflight and before routing's
+    errors are raised."""
+    if _in_api() and not _cfg().app_api_enabled:
         return jsonify({"error": "not_available"}), 404
     return None
+
+
+def register_cors(app):
+    """Install the app-level hooks for /api/v1, keyed on the path prefix
+    rather than on the blueprint: a routing error (unknown path, wrong
+    method) matches no blueprint, and it must still be gated and readable by
+    the app. In order: the CORS preflight, the APP_API_ENABLED gate, and the
+    CORS headers on every response."""
+    app.before_request(_preflight)
+    app.before_request(_gate)
+    app.after_request(_cors)
 
 
 @api.before_request
@@ -185,6 +234,29 @@ def _body_limit():
     if request.content_length is not None and request.content_length > MAX_BODY_BYTES:
         return _error("too_large", 413)
     return None
+
+
+@api.before_request
+def _require_json():
+    """Every POST and PUT carries a JSON body (the app sends `{}` where it
+    has nothing to say). A cross-site form post or a `text/plain` fetch is a
+    "simple" request the browser sends without asking first; requiring
+    `application/json` forces the CORS preflight, which only the app's own
+    origins pass. Without it any web page could register devices from its
+    visitors' addresses, around every per-address limit."""
+    if request.method in ("POST", "PUT", "PATCH") and not request.is_json:
+        return _error("unsupported_media_type", 415)
+    return None
+
+
+@api.after_request
+def _no_store(resp):
+    """Nothing personal is stored on the way: every answer that depends on a
+    credential, or hands one out, is `no-store` (a view may set something
+    stricter, the slot overview does)."""
+    if request.endpoint not in _PUBLIC_ENDPOINTS:
+        resp.headers.setdefault("Cache-Control", "no-store")
+    return resp
 
 
 def _hash(secret: str) -> str:
@@ -214,19 +286,162 @@ def _client_ip() -> str:
     return web_client_ip()
 
 
-def _rate_limited() -> bool:
-    """Registration and every write share the subscribe form's per-IP
-    budget, the same bucket, so one address has one budget across the form
-    and the API. Reads are not counted: the app polls its subscription list
-    on every launch and a rate limit on that is a self-inflicted outage."""
-    return not GLOBAL_IP_LIMITER.hit(f"ip:{_client_ip()}",
+def _client_address():
+    """The client's address as an ipaddress object, or the raw string when
+    it is not one. An IPv6 address that carries an IPv4 address is that IPv4:
+    IPv4-mapped, 6to4 (2002:<v4>::/48, 65,536 /64s for whoever holds the one
+    IPv4) and Teredo (the client's IPv4)."""
+    raw = _client_ip()
+    try:
+        ip = ipaddress.ip_address(raw)
+    except ValueError:
+        return raw
+    if ip.version == 6:
+        embedded = ip.ipv4_mapped or ip.sixtofour or (ip.teredo or (None, None))[1]
+        if embedded is not None:
+            return embedded
+    return ip
+
+
+def _client_network() -> str:
+    """The client's address as the rate limits count it: an IPv4 address as
+    it is, an IPv6 address by its /64, the smallest network one subscriber
+    is handed (counting single IPv6 addresses would give each phone 2^64
+    budgets); see `_client_address` for the ones that carry an IPv4."""
+    ip = _client_address()
+    if isinstance(ip, ipaddress.IPv6Address):
+        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+    return str(ip)
+
+
+def _client_ip6_48() -> str | None:
+    """The client's IPv6 /48, the coarser count on top of the /64 one, or
+    None for an IPv4 client (an embedded IPv4 included)."""
+    ip = _client_address()
+    if isinstance(ip, ipaddress.IPv6Address):
+        return str(ipaddress.ip_network(f"{ip}/48", strict=False))
+    return None
+
+
+def _network_bucket(prefix: str, network: str | None = None) -> str:
+    """A database rate-limit bucket for a client network (by default the
+    client's, `_client_network`), keyed by an HMAC under a key derived from
+    TOKEN_SECRET_PRIMARY: the table holds no address or prefix, and a backup
+    without the .env cannot be searched for one."""
+    key = hashlib.sha256(
+        f"ratelimit|{_cfg().token_secret_primary}".encode("utf-8")).digest()
+    mac = hmac.new(key, (network or _client_network()).encode("utf-8"),
+                   hashlib.sha256)
+    return f"{prefix}:{mac.hexdigest()[:32]}"
+
+
+# The token-request window: short, so a stranger who fills a shared network's
+# count (a carrier NAT, a carrier /48) holds real phones there off for
+# minutes, not an hour (MAX_TOKEN_REQUESTS_PER_IP_PER_10_MIN).
+_TOKEN_REQUEST_WINDOW = 600
+# New unverified tokens recorded per client network in the database: the
+# window of MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR.
+_UNVERIFIED_WINDOW = 3600
+
+
+class _Gate:
+    """What `_token_gate` decided for a request: `wait` > 0 is a refusal
+    (429 with that retry_after); otherwise `defer` says the verification
+    push is left to the sweep, and `networks` are the unverified-token
+    buckets a new token is recorded in (`record_new_device`)."""
+
+    def __init__(self, wait: int, defer: bool, networks: list[str]):
+        self.wait, self.defer, self.networks = wait, defer, networks
+
+
+def _token_gate(conn) -> _Gate:
+    """The one gate in front of every request that mints a verifiable token
+    or asks for a verification push: registration (a new token or a known
+    one), PUT /device with a new token, and resend. All of them, so no
+    sibling route is the way around it; the per-token budget and ceiling
+    then apply to the push itself, on the request path and in the sweep
+    alike (push.send_verifications).
+
+    1. The cross-worker bound, in the database: such requests per client
+       network (an IPv4 address or IPv6 /64) per ten minutes,
+       MAX_TOKEN_REQUESTS_PER_IP_PER_10_MIN, ten times that per IPv6 /48, all
+       or nothing. Past it, a refusal with a retry_after of at most ten
+       minutes: the longest a stranger on a shared network can hold the real
+       phones there off, and it holds however many workers there are and
+       across restarts.
+    2. The network's new unverified tokens in the last hour
+       (MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR, ..._PER_IP6_48_PER_HOUR): past
+       either, the request is served but its push comes from the poller's
+       sweep, paced, instead of at once. A verified device drops out of the
+       count, so real phones never fill it."""
+    cfg = _cfg()
+    per_10_min = cfg.max_token_requests_per_ip_per_10_min
+    hits = [(_network_bucket("req"), per_10_min, _TOKEN_REQUEST_WINDOW)]
+    networks = [(_network_bucket("newdev"), cfg.max_unverified_devices_per_ip_per_hour)]
+    ip6_48 = _client_ip6_48()
+    if ip6_48 is not None:
+        hits.append((_network_bucket("req48", ip6_48), 10 * per_10_min,
+                     _TOKEN_REQUEST_WINDOW))
+        networks.append((_network_bucket("newdev48", ip6_48),
+                         cfg.max_unverified_devices_per_ip6_48_per_hour))
+    wait = db_rate_hit_all(conn, hits)
+    if wait:
+        return _Gate(wait, False, [])
+    defer = any(limit > 0 and unverified_devices(conn, bucket, _UNVERIFIED_WINDOW) >= limit
+                for bucket, limit in networks)
+    return _Gate(0, defer, [bucket for bucket, _ in networks])
+
+
+def _push_code(conn, device_id: int, gate: _Gate) -> None:
+    """Send the verification push at once, or leave it to the sweep when the
+    gate says the network is over its unverified-token count."""
+    if gate.defer:
+        print(f"api: device {device_id}: its network is over its unverified-token "
+              f"limit; the code comes from the sweep", flush=True)
+        return
+    _send_verification(conn, device_id)
+
+
+def _device_rate_limited() -> bool:
+    """Every write of a registered device counts per credential (per
+    process, soft), at the sign-up form's hourly allowance: not per network,
+    where a stranger behind the same carrier NAT could keep everyone's code
+    posts, resends and alerts at 429. A pending credential has a count of its
+    own, apart from the device's main one. Reads are not counted: the app
+    polls its subscription list on every launch and a rate limit on that is a
+    self-inflicted outage."""
+    which = "pending" if g.credential_pending else "main"
+    return not GLOBAL_IP_LIMITER.hit(f"apidev:{g.device['id']}:{which}",
                                      _cfg().subscribe_ratelimit_per_ip_per_hour,
                                      3600)
 
 
 def _json() -> dict:
-    body = request.get_json(force=True, silent=True)
+    """The JSON object in the body, or {} for anything else. The content
+    type was checked by `_require_json`."""
+    body = request.get_json(silent=True)
     return body if isinstance(body, dict) else {}
+
+
+def normalize_push_token(platform: str, raw) -> str | None:
+    """The push token as stored and sent, or None when `raw` is not one for
+    `platform`. Only the platform's own alphabet and length pass: the token
+    becomes a URL path segment at APNs, and `T#1`, `T?x`, `x/../T` or `./T`
+    all reached `/3/device/T`, one phone behind any number of rows, each
+    verifiable by the same phone. ASCII first: a lone surrogate does not
+    encode as UTF-8, which was a 500, and lowercasing some non-ASCII letters
+    yields ASCII ones. APNs hex is lowercased, so one token has one form."""
+    if not isinstance(raw, str):
+        return None
+    token = raw.strip()
+    if not token.isascii():
+        return None
+    if platform == "apns":
+        token = token.lower()
+    pattern = _TOKEN_PATTERNS.get(platform)
+    if pattern is None or not pattern.fullmatch(token):
+        return None
+    return token
 
 
 def _resolve_device():
@@ -251,6 +466,9 @@ def _resolve_device():
     # for 24 hours and is never verified.
     g.credential_pending = False
     g.pending_hash = None
+    # The hash that authenticated: a write on behalf of the main credential
+    # repeats it in its WHERE, so a secret promoted in between stops it.
+    g.secret_hash = digest
     if hmac.compare_digest(row["secret_hash"], digest):
         g.credential_verified = row["verified_at"] is not None
     elif (row["pending_secret_hash"]
@@ -328,24 +546,37 @@ def register():
     unverified routes, until its holder posts the code pushed to the token;
     then it replaces the old secret, which dies at that moment (the right
     answer for a phone that changed hands). On a never-verified device the
-    secret is simply rotated. See repo.register_device."""
-    if _rate_limited():
-        return _error("rate_limited", 429)
+    secret is simply rotated. See repo.register_device.
+
+    Limits: `_token_gate`, as for every route that mints a token or asks for
+    a push. A token no row holds yet is recorded as a new unverified token of
+    its network; a known one is not, but its push is left to the sweep all
+    the same when the network is over its count. None of it lets a stranger
+    on a shared network (a carrier NAT, a carrier /48) lock the real phones
+    there out for longer than ten minutes."""
+    cfg = _cfg()
+    conn = connect(cfg.db_path)
+    gate = _token_gate(conn)
+    if gate.wait:
+        return _error("rate_limited", 429, retry_after=gate.wait)
     body = _json()
     platform = str(body.get("platform", "")).strip().lower()
-    token = str(body.get("token", "")).strip()
     lang = _lang(body.get("language"))
     from app.push import PLATFORMS
     if platform not in PLATFORMS:
-        return _error("unknown_platform", 400)
-    if not token or len(token) > _TOKEN_MAX or any(c.isspace() for c in token):
-        return _error("invalid_push_token", 400)
+        return _error("unknown_platform", 400, lang)
+    token = normalize_push_token(platform, body.get("token"))
+    if token is None:
+        return _error("invalid_push_token", 400, lang)
+    known = conn.execute("SELECT 1 FROM push_devices WHERE platform=? AND token=?",
+                         (platform, token)).fetchone()
     secret = secrets.token_urlsafe(32)
-    conn = connect(_cfg().db_path)
     with transaction(conn):
         device_id = register_device(conn, platform=platform, token=token,
                                     secret_hash=_hash(secret), language=lang)
-    _send_verification(conn, device_id)
+        if known is None:
+            record_new_device(conn, gate.networks, device_id, _UNVERIFIED_WINDOW)
+    _push_code(conn, device_id, gate)
     return jsonify({"device_id": device_id, "secret": secret,
                     "language": lang, "verified": False}), 201
 
@@ -366,32 +597,53 @@ def _send_verification(conn, device_id: int) -> None:
 @api.route("/device", methods=["GET"])
 @any_credential
 def device_status():
+    """The device as the main credential sees it. A pending credential (a
+    re-registration of a known token that has not posted its code) learns
+    only that it is not verified: whoever re-registers somebody's token must
+    not read that device's id, age or language either."""
+    if g.credential_pending:
+        return jsonify({"verified": False})
     return jsonify(_device_json(g.device, g.credential_verified))
 
 
 @api.route("/device", methods=["PUT"])
 @device_owner
 def device_update():
-    """A rotated push token (the platforms do that) or a new language."""
-    if _rate_limited():
-        return _error("rate_limited", 429, g.device["language"])
+    """A rotated push token (the platforms do that) or a new language. A new
+    token is a new verifiable token like a registration's: it goes through
+    `_token_gate` (the network's cross-worker count, and the push left to the
+    sweep when the network is over its unverified-token count) and is
+    recorded as a new unverified token of its network."""
+    lang = g.device["language"]
+    if _device_rate_limited():
+        return _error("rate_limited", 429, lang)
     body = _json()
     token = body.get("token")
     language = body.get("language")
     if token is not None:
-        token = str(token).strip()
-        if not token or len(token) > _TOKEN_MAX or any(c.isspace() for c in token):
-            return _error("invalid_push_token", 400, g.device["language"])
+        token = normalize_push_token(g.device["platform"], token)
+        if token is None:
+            return _error("invalid_push_token", 400, lang)
     if language is not None and language not in _LANGS:
-        return _error("invalid_language", 400, g.device["language"])
+        return _error("invalid_language", 400, lang)
+    new_token = token is not None and token != g.device["token"]
+    gate = None
+    if new_token:
+        gate = _token_gate(g.conn)
+        if gate.wait:
+            return _error("rate_limited", 429, lang, retry_after=gate.wait)
     with transaction(g.conn):
-        ok = update_device(g.conn, g.device["id"], token=token, language=language)
-    if not ok:
-        return _error("token_in_use", 409, g.device["language"])
+        outcome = update_device(g.conn, g.device["id"], secret_hash=g.secret_hash,
+                                token=token, language=language)
+        if outcome == "ok" and gate is not None:
+            record_new_device(g.conn, gate.networks, g.device["id"], _UNVERIFIED_WINDOW)
+    if outcome == "unauthorized":
+        return _error("unauthorized", 401)
+    if outcome == "token_in_use":
+        return _error("token_in_use", 409, lang)
+    if gate is not None:
+        _push_code(g.conn, g.device["id"], gate)
     row = device_by_id(g.conn, g.device["id"])
-    if token is not None and token != g.device["token"]:
-        _send_verification(g.conn, row["id"])
-        row = device_by_id(g.conn, row["id"])
     return jsonify(_device_json(row, row["verified_at"] is not None))
 
 
@@ -399,9 +651,16 @@ def device_update():
 @device_owner
 def device_delete():
     """Delete my data. The row goes, the subscriptions cascade, and the
-    secret in the request stops working with this response."""
+    secret in the request stops working with this response. Counted like
+    every write of the device, but never refused for it: erasure does not
+    wait on a rate limit. A register-and-delete loop is held by the
+    registration count, and a deleted device that never verified keeps its
+    place in its network's unverified count."""
+    _device_rate_limited()
     with transaction(g.conn):
-        delete_device(g.conn, g.device["id"])
+        deleted = delete_device(g.conn, g.device["id"], g.secret_hash)
+    if not deleted:
+        return _error("unauthorized", 401)
     return "", 204
 
 
@@ -409,12 +668,18 @@ def device_delete():
 @any_credential
 def device_verify():
     """`{code}` → `{verified: true}`: the code from the verification push.
-    Posting it again once verified is still 200. A missing, wrong or expired
-    code is 400 `invalid_code`."""
+    Posting it again once verified is still 200, and a verified main
+    credential posting the current code drops any pending secret with it
+    (the phone answered its owner). A missing, wrong or expired code is 400
+    `invalid_code`."""
     lang = g.device["language"]
     if g.credential_verified:
+        code = _json().get("code")
+        if g.device["pending_secret_hash"] and isinstance(code, str):
+            with transaction(g.conn):
+                verify_device(g.conn, g.device["id"], code.strip())
         return jsonify({"verified": True})
-    if _rate_limited():
+    if _device_rate_limited():
         return _error("rate_limited", 429, lang)
     code = _json().get("code")
     with transaction(g.conn):
@@ -428,20 +693,30 @@ def device_verify():
 @api.route("/device/verify/resend", methods=["POST"])
 @any_credential
 def device_verify_resend():
-    """Ask for a new verification push, at most one a minute and
-    MAX_VERIFY_PUSHES_PER_DAY a day, both measured from actual deliveries in
-    the database (so they hold across workers). The old code stops working."""
+    """Ask for a new verification push: at most one a minute per token, and
+    a daily budget per token, the main credential's apart from everyone
+    else's (a pending credential's resend is a stranger's as far as the
+    budget knows), counted in the database across workers and rows (see
+    repo.token_verify_wait), and through `_token_gate` like every route that
+    asks for a push. The old code stops working."""
     lang = g.device["language"]
     if g.credential_verified:
         return jsonify({"verified": True})
-    if _rate_limited():
+    if _device_rate_limited():
         return _error("rate_limited", 429, lang)
-    wait = verify_push_wait(g.conn, g.device["id"])
+    kind = "open" if g.credential_pending else "owner"
+    from app.push import config_fingerprint
+    wait = verify_push_wait(g.conn, g.device["id"], kind=kind,
+                            config=config_fingerprint(_cfg(), g.device["platform"]))
     if wait > 0:
         return _error("rate_limited", 429, lang, retry_after=wait)
+    gate = _token_gate(g.conn)
+    if gate.wait:
+        return _error("rate_limited", 429, lang, retry_after=gate.wait)
     with transaction(g.conn):
-        request_verification(g.conn, g.device["id"], code="drop_if_stale")
-    _send_verification(g.conn, g.device["id"])
+        request_verification(g.conn, g.device["id"], code="drop_if_stale",
+                             kind=kind)
+    _push_code(g.conn, g.device["id"], gate)
     return jsonify({"verified": False}), 202
 
 
@@ -516,6 +791,7 @@ def city(slug):
 
 
 @api.route("/cities/<slug>/slots", methods=["GET"])
+@authenticated
 def city_slots(slug):
     """What the last polls found free in this city, per watched service:
     the app's live overview, and the widget's earliest slot. Read from the
@@ -523,19 +799,38 @@ def city_slots(slug):
     overview adds no upstream request. A service nobody watches is absent;
     the catalog endpoint lists every service, so the app can say "nobody is
     watching this one yet" for the difference. `?service=<id>` narrows the
-    answer to one service."""
+    answer to one service.
+
+    For a verified device that watches something in this city (a live
+    subscription, not deleted, not expired; else 403 `not_subscribed`), at
+    most MAX_SLOT_READS_PER_DEVICE_PER_HOUR times an hour across workers. A
+    special-category service (Art. 9) is shown only to a device that watches
+    that service itself: that somebody watches it is the sensitive fact, and
+    the overview was answering it for anyone who asked. `private, no-store`."""
     from app.snapshots import city_slots as snapshot_slots
     lang = _lang(request.args.get("lang"))
+    wait = db_rate_hit(g.conn, f"slots:{g.device['id']}",
+                       MAX_SLOT_READS_PER_DEVICE_PER_HOUR, 3600)
+    if wait:
+        return _error("rate_limited", 429, lang, retry_after=wait)
     try:
         cat = load_catalog(slug)
     except CatalogError:
         return _error("unknown_city", 404, lang)
+    now = datetime.utcnow()
+    watched = [s for s in subscriptions_for_device(g.conn, g.device["id"])
+               if s.city == slug and s.expires_at is not None and s.expires_at > now]
+    if not watched:
+        return _error("not_subscribed", 403, lang)
+    own_services = {u for s in watched for u in s.sub_filter.appointment_types}
     only = request.args.get("service")
-    conn = connect(_cfg().db_path)
     services = []
     newest = None
-    for entry in snapshot_slots(conn, slug):
+    for entry in snapshot_slots(g.conn, slug):
         if only and entry["service_uuid"] != only:
+            continue
+        if (cat.is_sensitive(entry["service_uuid"])
+                and entry["service_uuid"] not in own_services):
             continue
         slots = [{"date": d, "time": t, "location": loc,
                   "location_name": cat.location_label(loc, lang)}
@@ -551,7 +846,9 @@ def city_slots(slug):
         if newest is None or entry["polled_at"] > newest:
             newest = entry["polled_at"]
     services.sort(key=lambda e: e["name"].casefold())
-    return jsonify({"slug": slug, "polled_at": _iso_sql(newest), "services": services})
+    resp = jsonify({"slug": slug, "polled_at": _iso_sql(newest), "services": services})
+    resp.headers["Cache-Control"] = "private, no-store"
+    return resp
 
 
 def _iso_sql(ts: str | None) -> str | None:
@@ -583,7 +880,7 @@ def create_subscription():
     time_start, time_end, max_days_ahead, consent_special, language}`.
     Live at once; the first matching slot arrives as a push."""
     lang = g.device["language"]
-    if _rate_limited():
+    if _device_rate_limited():
         return _error("rate_limited", 429, lang)
     body = _json()
     slug = str(body.get("city", "")).strip()
@@ -631,7 +928,7 @@ def update_subscription(sub_id):
     form, and the same reset of the cadence state, which was measured
     against the old filter."""
     lang = g.device["language"]
-    if _rate_limited():
+    if _device_rate_limited():
         return _error("rate_limited", 429, lang)
     sub = _own(sub_id)
     if sub is None:
@@ -688,7 +985,7 @@ def renew(sub_id):
     an expired subscription too, for as long as it exists (EXPIRED_GRACE_DAYS
     after expiry, then housekeeping deletes it)."""
     lang = g.device["language"]
-    if _rate_limited():
+    if _device_rate_limited():
         return _error("rate_limited", 429, lang)
     sub = _own(sub_id)
     if sub is None:

@@ -31,6 +31,7 @@ def run_once(conn: sqlite3.Connection) -> None:
     _prune_email_failures(conn)
     _prune_suppressions(conn, cfg)
     _prune_push_devices(conn)
+    _prune_rate_records(conn)
     _prune_slots_cache(conn)
     _prune_availability(conn)
     _prune_slot_snapshots(conn)
@@ -143,7 +144,7 @@ def _send_push_checkins(conn, cfg):
     from app.push import render_checkin, send_push_batch
     from dataclasses import replace
     rows = conn.execute(
-        "SELECT s.id, s.device_id, s.language, s.city, s.expires_at "
+        "SELECT s.id, s.device_id, d.token, s.language, s.city, s.expires_at "
         "FROM subscriptions s JOIN push_devices d ON d.id = s.device_id "
         "WHERE s.deleted_at IS NULL AND s.confirmed_at IS NOT NULL "
         "AND s.reminder_sent_at IS NULL AND d.retired_at IS NULL "
@@ -161,7 +162,7 @@ def _send_push_checkins(conn, cfg):
                               expires_at=row["expires_at"])
         if item is None:
             continue
-        item = replace(item, device_id=row["device_id"])
+        item = replace(item, device_id=row["device_id"], token=row["token"])
         items.append(item)
         by_key[item.idem_key] = row["id"]
     try:
@@ -404,6 +405,14 @@ def _prune_push_devices(conn):
         "        WHERE s.device_id = push_devices.id "
         "        AND (s.deleted_at IS NULL "
         "             OR s.deleted_at > datetime('now','-30 days'))))")
+
+def _prune_rate_records(conn):
+    """The per-token verification record and the cross-worker rate events
+    are read over a day at most; older rows can never change a verdict. The
+    rate events hold a keyed hash of a client network, so they go as soon as
+    they are useless."""
+    conn.execute("DELETE FROM verify_attempts WHERE at < datetime('now','-1 day')")
+    conn.execute("DELETE FROM rate_events WHERE at < datetime('now','-1 day')")
 
 def _prune_slots_cache(conn):
     # Slots are short-lived in the upstream system; 14 days is generous.

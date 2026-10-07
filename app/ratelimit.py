@@ -22,20 +22,31 @@ class IPRateLimiter:
         self._max_window = 0
 
     def hit(self, key: str, limit: int, window_seconds: int) -> bool:
+        return self.hit_all([(key, limit)], window_seconds) is None
+
+    def hit_all(self, hits: list[tuple[str, int]], window_seconds: int) -> str | None:
+        """`hit` for several (key, limit) at once, all or nothing: an event is
+        recorded under every key only when every one has room, so a request
+        one key refuses does not use up another's. Returns the first full key,
+        or None when the request was counted."""
         now = time.time()
         self._max_window = max(self._max_window, window_seconds)
         self._hits += 1
         if self._hits % self.sweep_every == 0:
             self._sweep(now)
-        dq = self._events.get(key)
-        if dq is None:
-            dq = self._events[key] = deque()
-        while dq and now - dq[0] > window_seconds:
-            dq.popleft()
-        if len(dq) >= limit:
-            return False
-        dq.append(now)
-        return True
+        queues = []
+        for key, limit in hits:
+            dq = self._events.get(key)
+            if dq is None:
+                dq = self._events[key] = deque()
+            while dq and now - dq[0] > window_seconds:
+                dq.popleft()
+            if len(dq) >= limit:
+                return key
+            queues.append(dq)
+        for dq in queues:
+            dq.append(now)
+        return None
 
     def _sweep(self, now: float) -> None:
         stale = [k for k, dq in self._events.items()
@@ -47,6 +58,114 @@ class IPRateLimiter:
         return len(self._events)
 
 GLOBAL_IP_LIMITER = IPRateLimiter()
+
+def db_rate_hit(conn: sqlite3.Connection, bucket: str, limit: int,
+                window_seconds: int) -> int:
+    """DB-backed sliding-window limit, shared across workers (rate_events).
+
+    Records one event in `bucket` and returns 0 when fewer than `limit` are
+    already in the last `window_seconds`; otherwise records nothing and
+    returns the seconds until the oldest one ages out. The check and the
+    insert are one statement, so two workers cannot both take the last place.
+    `limit <= 0` disables the limit."""
+    if limit <= 0:
+        return 0
+    window = f"-{int(window_seconds)} seconds"
+    cur = conn.execute(
+        "INSERT INTO rate_events (bucket) SELECT ? WHERE "
+        "(SELECT COUNT(*) FROM rate_events WHERE bucket=? "
+        " AND at > datetime('now', ?)) < ?",
+        (bucket, bucket, window, int(limit)))
+    if cur.rowcount == 1:
+        return 0
+    age = conn.execute(
+        "SELECT CAST(strftime('%s','now') - strftime('%s', MIN(at)) AS INTEGER) "
+        "FROM rate_events WHERE bucket=? AND at > datetime('now', ?)",
+        (bucket, window)).fetchone()[0]
+    return max(1, int(window_seconds) - int(age or 0))
+
+def db_rate_hit_all(conn: sqlite3.Connection,
+                    hits: list[tuple[str, int, int]]) -> int:
+    """`db_rate_hit` for several (bucket, limit, window_seconds) at once, all
+    or nothing: an event is recorded in every bucket only when every one has
+    room, so a request one limit refuses does not use up another's. Returns
+    0, or the longest wait among the full buckets. Under the write lock
+    (BEGIN IMMEDIATE), so no two workers can both take a last place; the
+    buckets' events older than their window go on the way."""
+    hits = [(b, int(limit), int(w)) for b, limit, w in hits if limit > 0]
+    if not hits:
+        return 0
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        wait = 0
+        for bucket, limit, window_seconds in hits:
+            window = f"-{window_seconds} seconds"
+            conn.execute("DELETE FROM rate_events WHERE bucket=? "
+                         "AND at <= datetime('now', ?)", (bucket, window))
+            n, age = conn.execute(
+                "SELECT COUNT(*), "
+                "CAST(strftime('%s','now') - strftime('%s', MIN(at)) AS INTEGER) "
+                "FROM rate_events WHERE bucket=? AND at > datetime('now', ?)",
+                (bucket, window)).fetchone()
+            if n >= limit:
+                wait = max(wait, 1, window_seconds - int(age or 0))
+        if not wait:
+            conn.executemany("INSERT INTO rate_events (bucket) VALUES (?)",
+                             [(b,) for b, _, _ in hits])
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    return wait
+
+
+# How long each kind of rate event can matter, by bucket prefix: past it, no
+# verdict reads the row, and `prune_rate_events` drops it.
+RATE_EVENT_LIFETIMES = {
+    "req": 600,          # token requests per client network (api._token_gate)
+    "req48": 600,        # ...per IPv6 /48
+    "newdev": 3600,      # new unverified tokens per client network, with device id
+    "newdev48": 3600,    # ...per IPv6 /48
+    "slots": 3600,       # slot-overview reads per device
+}
+
+
+def prune_rate_events(conn: sqlite3.Connection) -> None:
+    """Drop every rate event past its lifetime (`RATE_EVENT_LIFETIMES`). The
+    poller runs this every cycle, so an event that names a hashed network
+    lives its window and at most a minute more."""
+    for prefix, seconds in RATE_EVENT_LIFETIMES.items():
+        conn.execute("DELETE FROM rate_events WHERE bucket >= ? AND bucket < ? "
+                     "AND at <= datetime('now', ?)",
+                     (f"{prefix}:", f"{prefix};", f"-{seconds} seconds"))
+
+
+def unverified_devices(conn: sqlite3.Connection, bucket: str,
+                       window_seconds: int) -> int:
+    """How many devices registered in `bucket` (a client network) in the last
+    `window_seconds` have not verified: still waiting, refused, retired or
+    deleted. A verified one drops out, so real phones, which verify within
+    seconds, never fill a shared network's count; only registrations that
+    never prove a working token do."""
+    return conn.execute(
+        "SELECT COUNT(*) FROM rate_events e "
+        "LEFT JOIN push_devices d ON d.id = e.device_id "
+        "WHERE e.bucket=? AND e.at > datetime('now', ?) "
+        "AND (d.id IS NULL OR d.verified_at IS NULL)",
+        (bucket, f"-{int(window_seconds)} seconds")).fetchone()[0]
+
+
+def record_new_device(conn: sqlite3.Connection, buckets: list[str],
+                      device_id: int, window_seconds: int) -> None:
+    """Note a new unverified token of `device_id` (a new device, or a device's
+    new token) in each network bucket, and drop the bucket's events older
+    than the window: they link a device to a hashed network, and no verdict
+    reads them any more."""
+    for bucket in buckets:
+        conn.execute("DELETE FROM rate_events WHERE bucket=? AND at <= datetime('now', ?)",
+                     (bucket, f"-{int(window_seconds)} seconds"))
+        conn.execute("INSERT INTO rate_events (bucket, device_id) VALUES (?, ?)",
+                     (bucket, device_id))
 
 def email_rate_limit_ok(conn: sqlite3.Connection, email: str,
                         per_day_limit: int) -> bool:

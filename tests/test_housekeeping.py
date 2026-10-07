@@ -303,3 +303,55 @@ def test_paused_subscription_gets_no_heartbeat(db):
     with patch("app.mail.send") as send:
         run_once(db)
     assert _mails_to(send, "a@x.com") == []
+
+
+def test_rate_records_are_pruned_once_no_verdict_can_read_them(db):
+    from app.housekeeping import _prune_rate_records
+    for table, col, value in (("verify_attempts", "token_key, kind", "'k', 'open'"),
+                              ("rate_events", "bucket", "'newdev:x'")):
+        db.execute(f"INSERT INTO {table} ({col}, at) VALUES ({value}, "
+                   "datetime('now','-25 hours'))")
+        db.execute(f"INSERT INTO {table} ({col}, at) VALUES ({value}, "
+                   "datetime('now','-23 hours'))")
+    _prune_rate_records(db)
+    for table in ("verify_attempts", "rate_events"):
+        assert db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 1
+
+
+def test_rate_records_prune_runs_inside_housekeeping(db):
+    db.execute("INSERT INTO rate_events (bucket, at) VALUES ('slots:1', "
+               "datetime('now','-2 days'))")
+    with patch("app.mail.send"):
+        run_once(db)
+    assert db.execute("SELECT COUNT(*) FROM rate_events").fetchone()[0] == 0
+
+
+def test_the_device_prune_uses_the_subscriptions_device_index(db):
+    """One NOT EXISTS per device row: without the index each was a scan of
+    every subscription."""
+    plan = " ".join(r["detail"] for r in db.execute(
+        "EXPLAIN QUERY PLAN SELECT 1 FROM subscriptions s "
+        "WHERE s.device_id = ? AND s.deleted_at IS NULL", (1,)))
+    assert "idx_subs_device" in plan
+
+
+def test_rate_events_live_their_window_and_no_longer(db):
+    """The poller prunes every cycle: an event that names a hashed network
+    outlives its window by at most a cycle."""
+    from app.ratelimit import prune_rate_events
+    rows = [("req:a", "-11 minutes", None), ("req:a", "-9 minutes", None),
+            ("req48:b", "-11 minutes", None), ("req48:b", "-9 minutes", None),
+            ("newdev:c", "-61 minutes", 1), ("newdev:c", "-59 minutes", 2),
+            ("newdev48:d", "-61 minutes", 1), ("slots:7", "-61 minutes", None),
+            ("slots:7", "-59 minutes", None)]
+    db.executemany("INSERT INTO rate_events (bucket, at, device_id) "
+                   "VALUES (?, datetime('now', ?), ?)", rows)
+    prune_rate_events(db)
+    left = sorted((b, d) for b, d in db.execute("SELECT bucket, device_id FROM rate_events"))
+    assert left == [("newdev:c", 2), ("req48:b", None), ("req:a", None), ("slots:7", None)]
+
+
+def test_the_poller_prunes_rate_events_every_cycle_and_never_breaks_it(capsys):
+    from app.poller import _prune_rate_events
+    _prune_rate_events(None)                     # a broken connection: logged, not raised
+    assert "rate event prune failed" in capsys.readouterr().out

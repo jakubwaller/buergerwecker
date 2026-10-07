@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 # SQLite's own timestamp shape, the one CURRENT_TIMESTAMP and datetime('now')
 # produce. Queries compare stored timestamps against those as plain text, so a
@@ -95,10 +95,64 @@ CREATE TABLE IF NOT EXISTS push_devices (
   -- the 24-hour lives of both run from these, not from verify_requested_at,
   -- which every resend and re-registration re-stamps.
   pending_since        TIMESTAMP,
-  verify_code_at       TIMESTAMP
+  verify_code_at       TIMESTAMP,
+  -- Whose request the outstanding verification push answers: 'owner' (the
+  -- device's own main credential: a token change or a resend) or 'open' (a
+  -- registration, which needs no credential). Each has its own daily budget
+  -- per token (verify_attempts), so a stranger cannot spend the owner's.
+  verify_kind          TEXT,
+  -- Attempts the relay refused for the outstanding request while the
+  -- platform showed it works (push.PushResult.failed); the sweep gives up on
+  -- it at repo.MAX_VERIFY_FAILURES. A new request starts over.
+  verify_failures      INTEGER NOT NULL DEFAULT 0,
+  -- Not before: after any try that did not deliver (a minute, longer after
+  -- each refusal: verify_tries), or when the budget says wait, so the sweep
+  -- rotates through the queue instead of retrying its head.
+  verify_next_at       TIMESTAMP,
+  -- Refusals of the token since it last delivered or changed, with evidence
+  -- or without: the sweep's backoff, and an unverified device with no
+  -- subscription is retired at repo.MAX_UNCONFIRMED_REFUSALS. Re-registering
+  -- and resending do not start it over, or a junk row would never retire.
+  verify_tries         INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_push_devices_token
   ON push_devices(platform, token);
+
+-- Verification pushes attempted per push token, every one the relay answered.
+-- `credited` is 1 for a delivery or a refusal while the platform showed it
+-- works, and only those count toward the daily budgets; 0 is a refusal
+-- without that evidence (a misconfiguration answers the same for every
+-- device), which counts only toward the hard ceiling, and only while the
+-- platform settings are still the ones it was made under (`config`, a hash of
+-- them: push.config_fingerprint). Fixing the settings forgives it; no client
+-- can. An outage is not recorded at all.
+-- `token_key` is the SHA-256 of "<platform>|<token>", so the count outlives
+-- the device row: deleting a device and registering its token again starts no
+-- new budget. `kind` is the request's (see push_devices.verify_kind). Read
+-- over a rolling day by repo.token_verify_wait; housekeeping prunes rows older
+-- than that.
+CREATE TABLE IF NOT EXISTS verify_attempts (
+  token_key  TEXT NOT NULL,
+  kind       TEXT NOT NULL,
+  at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  config     TEXT NOT NULL DEFAULT '',
+  credited   INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_verify_attempts_key ON verify_attempts(token_key, at);
+
+-- Rate-limit events that must hold across the web workers: slot-overview
+-- reads per device (ratelimit.db_rate_hit), and new devices per client
+-- network (ratelimit.unverified_devices, `device_id` set: only the ones that
+-- never verified count). `bucket` names the limit and its subject; a client
+-- network appears only as a keyed hash, never as an address. A network's
+-- events are dropped once they leave its hour; housekeeping prunes anything
+-- older than a day, the longest window.
+CREATE TABLE IF NOT EXISTS rate_events (
+  bucket     TEXT NOT NULL,
+  at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  device_id  INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_rate_events_bucket ON rate_events(bucket, at);
 
 CREATE TABLE IF NOT EXISTS seen_slots (
   subscription_id INTEGER NOT NULL,
@@ -363,8 +417,15 @@ def init_schema(conn: sqlite3.Connection) -> None:
         # NULL, which it is.
         "device_id": "INTEGER REFERENCES push_devices(id) ON DELETE CASCADE",
     })
+    # Schema 16: a device's subscriptions are looked up by device_id on every
+    # API call, and housekeeping's device prune runs one NOT EXISTS per device
+    # row; without an index each was a scan of the whole table. Here, not in
+    # SCHEMA_SQL, because an older table gets device_id only just above.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_subs_device "
+                 "ON subscriptions(device_id, deleted_at)")
     # Schema 15: device verification. A device row that predates the columns
-    # reads as unverified and is asked to verify on its next call.
+    # reads as unverified and is asked to verify on its next call. Schema 16
+    # adds the request's kind, its failure count and the sweep's not-before.
     _add_missing_columns(conn, "push_devices", {
         "verified_at": "TIMESTAMP",
         "verify_code_hash": "TEXT",
@@ -373,7 +434,16 @@ def init_schema(conn: sqlite3.Connection) -> None:
         "pending_secret_hash": "TEXT",
         "pending_since": "TIMESTAMP",
         "verify_code_at": "TIMESTAMP",
+        "verify_kind": "TEXT",
+        "verify_failures": "INTEGER NOT NULL DEFAULT 0",
+        "verify_next_at": "TIMESTAMP",
+        "verify_tries": "INTEGER NOT NULL DEFAULT 0",
     })
+    _add_missing_columns(conn, "verify_attempts", {
+        "config": "TEXT NOT NULL DEFAULT ''",
+        "credited": "INTEGER NOT NULL DEFAULT 1",
+    })
+    _add_missing_columns(conn, "rate_events", {"device_id": "INTEGER"})
     # best_time: the earliest time told under a day key. Existing day-key rows
     # get NULL, which has_seen_slot reads as "told at an unknown time" and
     # keeps suppressing the whole day exactly as before the column existed —
