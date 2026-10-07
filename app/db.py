@@ -101,18 +101,22 @@ CREATE TABLE IF NOT EXISTS push_devices (
   -- registration, which needs no credential). Each has its own daily budget
   -- per token (verify_attempts), so a stranger cannot spend the owner's.
   verify_kind          TEXT,
-  -- Attempts the relay refused for the outstanding request; the sweep gives
-  -- up on it at repo.MAX_VERIFY_FAILURES. A new request starts over.
+  -- Attempts the relay refused for the outstanding request while the
+  -- platform showed it works (push.PushResult.failed); the sweep gives up on
+  -- it at repo.MAX_VERIFY_FAILURES. A new request starts over.
   verify_failures      INTEGER NOT NULL DEFAULT 0,
-  -- Not before: set after a refused attempt or when the budget says wait,
-  -- so the sweep rotates through the queue instead of retrying its head.
+  -- Not before: a minute after any try that did not deliver, or when the
+  -- budget says wait, so the sweep rotates through the queue instead of
+  -- retrying its head.
   verify_next_at       TIMESTAMP
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_push_devices_token
   ON push_devices(platform, token);
 
--- Verification pushes attempted per push token, delivered or refused (a
--- platform-wide outage is not counted: it says nothing about the token).
+-- Verification pushes attempted per push token: delivered, or refused while
+-- the platform showed it works. Neither an outage nor a refusal from a
+-- platform that delivers to nobody (a misconfiguration answers the same for
+-- every device) is counted: they say nothing about the token.
 -- `token_key` is the SHA-256 of "<platform>|<token>", so the count outlives
 -- the device row: deleting a device and registering its token again starts no
 -- new budget. `kind` is the request's (see push_devices.verify_kind). Read

@@ -93,9 +93,14 @@ class PushResult:
     # platform this deploy has no credentials for, a payload the relay refused.
     undeliverable: set[str] = field(default_factory=set)
     sent_by_platform: dict[str, int] = field(default_factory=dict)
-    # idem_keys the relay (or a local error) refused for that one item: a dead
-    # token, a refused payload, a per-token throttle. Not an outage, which
-    # says nothing about the item. The verification sender counts these.
+    # idem_keys refused for that one item while the platform showed it works:
+    # a dead token, a refused payload or a per-token throttle from a relay
+    # that delivered to someone in this batch (for a dead token, also since
+    # the device first answered dead: the retirement rule), or an item that
+    # could not even be sent here. Neither an outage nor a refusal from a
+    # platform that delivers nothing, which is what a wrong APNS_TOPIC,
+    # APNS_SANDBOX or FCM project answers for every device: those say nothing
+    # about the item. The verification sender counts only these.
     failed: set[str] = field(default_factory=set)
 
 
@@ -200,13 +205,21 @@ def send_verifications(conn: sqlite3.Connection, cfg, *,
     minute and a daily count per request kind, kept in `verify_attempts`
     (`repo.token_verify_wait`). Under concurrency it is approximate, bounded
     by the one-a-minute claim. A device over it is left alone until the
-    budget frees (`verify_next_at`). Every attempt the relay answered is counted,
-    delivered or refused; one it refused also counts toward the device's
-    MAX_VERIFY_FAILURES, after which the sweep gives up on the request. An
-    outage counts toward neither. `verify_sent_at` is stamped only for a
-    delivered push whose code the row still holds, so a device whose push
-    could not go out (no credentials, relay down) is picked up again by the
-    poller's sweep, for as long as the request is under 24 hours old. Two
+    budget frees (`verify_next_at`). Every delivered attempt is counted, and
+    every refused one the platform's evidence stands behind (`PushResult.
+    failed`: it delivered to someone this batch, or, for a dead token, since
+    the device first answered dead); that refusal also counts toward the
+    device's MAX_VERIFY_FAILURES, after which the sweep gives up on the
+    request. An outage, or a refusal from a platform that delivers to nobody
+    (a wrong APNS_TOPIC, APNS_SANDBOX or FCM project), counts toward neither:
+    it would lock everyone who registered in that window out for a day after
+    the fix. `verify_sent_at` is stamped only for a delivered push whose code
+    the row still holds, so a device whose push could not go out (relay down,
+    refused) is picked up again by the poller's sweep, for as long as the
+    request is under 24 hours old; every device a pass tried and did not
+    deliver to waits a minute (`verify_next_at`), so whatever cannot go out
+    rotates to the back instead of filling every sweep. Only devices of a
+    platform this process has credentials for are considered at all. Two
     callers: the web process right after a registration, a token change or a
     resend (`device_ids`), and the poller once per cycle, MAX_SWEEP_DEVICES
     at a time."""
@@ -217,13 +230,18 @@ def send_verifications(conn: sqlite3.Connection, cfg, *,
                           devices_awaiting_verification, mark_verification_sent,
                           record_verify_attempts, record_verify_failures,
                           set_verify_code, token_key, token_verify_wait)
+    platforms = [p for p in PLATFORMS if configured(cfg, p)]
+    if not platforms:
+        return 0
     candidates = devices_awaiting_verification(
-        conn, device_ids=device_ids,
+        conn, device_ids=device_ids, platforms=platforms,
         min_age_seconds=0 if device_ids else SWEEP_GRACE_SECONDS,
         limit=None if device_ids else MAX_SWEEP_DEVICES)
     items: list[OutgoingPush] = []
     # idem_key -> (device_id, code hash, token key, request kind)
     sent: dict[str, tuple[int, str, str, str]] = {}
+    # Devices this pass tried to send to (claimed or not).
+    touched: list[int] = []
     for row in candidates:
         kind = row["verify_kind"] or "open"
         tkey = token_key(row["platform"], row["token"])
@@ -232,6 +250,7 @@ def send_verifications(conn: sqlite3.Connection, cfg, *,
         if wait > 0:
             defer_verification(conn, row["id"], wait)
             continue
+        touched.append(row["id"])
         lang = "en" if row["language"] == "en" else "de"
         code = secrets.token_urlsafe(16)
         code_hash = _hash(code)
@@ -249,21 +268,27 @@ def send_verifications(conn: sqlite3.Connection, cfg, *,
             data={"type": "verify", "code": code},
             collapse_id=f"verify-{row['id']}", token=row["token"]))
         sent[key] = (row["id"], code_hash, tkey, kind)
-    if not items:
+    if not touched:
         return 0
-    try:
-        result = send_push_batch(conn, items, cfg)
-    except Exception as exc:
-        print(f"push: verification batch failed: {exc!r}", flush=True)
-        return 0
+    result = PushResult()
+    if items:
+        try:
+            result = send_push_batch(conn, items, cfg)
+        except Exception as exc:
+            print(f"push: verification batch failed: {exc!r}", flush=True)
     delivered = [sent[k] for k in result.delivered if k in sent]
     refused = [sent[k] for k in result.failed if k in sent]
-    if delivered or refused:
-        with transaction(conn):
-            record_verify_attempts(conn, [(tkey, kind) for _, _, tkey, kind
-                                          in delivered + refused])
-            mark_verification_sent(conn, [(d, h) for d, h, _, _ in delivered])
-            record_verify_failures(conn, [d for d, _, _, _ in refused])
+    settled = {d for d, _, _, _ in delivered + refused}
+    with transaction(conn):
+        record_verify_attempts(conn, [(tkey, kind) for _, _, tkey, kind
+                                      in delivered + refused])
+        mark_verification_sent(conn, [(d, h) for d, h, _, _ in delivered])
+        record_verify_failures(conn, [d for d, _, _, _ in refused])
+        # Undeliverable, deferred, refused without evidence, or claimed by
+        # another sender: a minute at the back of the queue.
+        for d in touched:
+            if d not in settled:
+                defer_verification(conn, d, 60)
     return len(delivered)
 
 
@@ -416,6 +441,7 @@ DEFER = "defer"      # relay down or out of quota: release, platform waits for n
 THROTTLE = "throttle"  # this one token is being throttled: release just this item
 AUTH = "auth"        # our credentials were refused: refresh, retry once, then give up this cycle
 DROP = "drop"        # the relay read our payload and refused it: retrying cannot help
+LOCAL = "local"      # this item cannot even be sent (a URL httpx refuses): dropped like DROP
 
 _APNS_DEAD_TOKEN = {"BadDeviceToken", "DeviceTokenNotForTopic", "Unregistered",
                     "ExpiredToken"}
@@ -488,16 +514,16 @@ def send_push_batch(conn: sqlite3.Connection, items: list[OutgoingPush],
     retired, unknown, or on a platform this deploy has no credentials for is
     reported undeliverable without a claim, and so is an item whose device no
     longer holds the token the item was made for, or is no longer verified
-    (the verification push itself excepted). A dead-token answer retires a
-    verified or subscribed device only once the platform has delivered to
-    someone since that device first answered dead: a wrong APNS_TOPIC,
-    APNS_SANDBOX or FCM project makes every device answer dead and nothing
-    succeed, and that must not end every app user's subscriptions, while three
-    uninstalled phones are retired the moment any live device gets a push. An
-    unverified device without subscriptions has nothing to lose and is
-    retired on its first dead answer. Either way only while it still holds the
-    token that answered. An unreachable relay, a quota wall, or credentials
-    refused twice end that platform's turn for the cycle; a per-token throttle
+    (the verification push itself excepted). A dead-token answer retires the
+    device only once the platform has delivered to someone since that device
+    first answered dead, and only while it still holds the token that
+    answered: a wrong APNS_TOPIC, APNS_SANDBOX or FCM project makes every
+    device answer dead and nothing succeed, and that must not end every app
+    user's subscriptions, nor retire every phone registering in that window,
+    while three uninstalled phones are retired the moment any live device
+    gets a push. The same evidence decides which refusals are reported in
+    `failed`. An unreachable relay, a quota wall, or credentials refused
+    twice end that platform's turn for the cycle; a per-token throttle
     releases just that item, and an item the client cannot even send (a token
     httpx refuses as a URL) is dropped on its own. Everything released is
     retried by the next cycle (fresh cycle_id), and the caller must not record
@@ -531,7 +557,10 @@ def send_push_batch(conn: sqlite3.Connection, items: list[OutgoingPush],
     unusable: set[str] = set()
     released: list[OutgoingPush] = []
     # platform -> RETIRE answers
-    dead: dict[str, list[tuple[OutgoingPush, LiveDevice, str]]] = {}
+    dead: dict[str, list[tuple[OutgoingPush, str]]] = {}
+    # Refused payloads and throttles, judged after the loop like dead tokens:
+    # (item, platform, refused here rather than by the relay)
+    refusals: list[tuple[OutgoingPush, str, bool]] = []
     for it, dev in pending:
         platform = dev.platform
         if platform in unusable:
@@ -552,19 +581,18 @@ def send_push_batch(conn: sqlite3.Connection, items: list[OutgoingPush],
                 result.sent_by_platform.get(platform, 0) + 1)
         elif verdict == RETIRE:
             # Judged after the loop, once this cycle's deliveries are known.
-            dead.setdefault(platform, []).append((it, dev, reason))
-            result.failed.add(it.idem_key)
+            dead.setdefault(platform, []).append((it, reason))
         elif verdict == THROTTLE:
             released.append(it)
-            result.failed.add(it.idem_key)
+            refusals.append((it, platform, False))
             print(f"push: {platform} throttling device {it.device_id} "
                   f"({reason}); retried next cycle", flush=True)
-        elif verdict == DROP:
+        elif verdict in (DROP, LOCAL):
             with transaction(conn):
                 conn.execute("DELETE FROM sent_idempotency WHERE idem_key=?",
                              (it.idem_key,))
             result.undeliverable.add(it.idem_key)
-            result.failed.add(it.idem_key)
+            refusals.append((it, platform, verdict == LOCAL))
             print(f"push: {platform} refused payload for device "
                   f"{it.device_id}: {reason}", flush=True)
         else:  # DEFER, or AUTH after the one retry
@@ -577,6 +605,13 @@ def send_push_batch(conn: sqlite3.Connection, items: list[OutgoingPush],
             unusable.add(platform)
             print(f"push: {platform} {verdict} ({reason}); the platform waits "
                   f"for the next cycle", flush=True)
+    for it, platform, local in refusals:
+        # A refused payload is also what a topic APNs does not accept answers
+        # for every device. Only a refusal from a platform that delivered to
+        # someone in this batch says something about this item; one we could
+        # not even send always does.
+        if local or result.sent_by_platform.get(platform):
+            result.failed.add(it.idem_key)
     for platform, answers in dead.items():
         # The relay said "dead token". That is also what a wrong APNS_TOPIC,
         # APNS_SANDBOX or FCM project says, for every device at once, and
@@ -592,16 +627,15 @@ def send_push_batch(conn: sqlite3.Connection, items: list[OutgoingPush],
         # that delivery would count as evidence. The runbook keeps the VPS on
         # production for that reason.
         #
-        # None of that protects a device that has nothing to lose: never
-        # verified, or unverified after a token change with no subscription,
-        # it answers its verification push dead and is retired at once. A
-        # junk registration then stops costing a request a minute, and a real
-        # one under a misconfiguration re-registers once the knob is fixed.
+        # This holds for a device that never verified too: retiring it at
+        # once looked free (it has no subscription to lose), but under a
+        # misconfiguration it retired, and counted a refusal against, every
+        # phone that registered in that window. Only an answer with evidence
+        # is reported in `failed`, for the verification sender's budgets.
         retire_now: list[tuple[OutgoingPush, str]] = []
         hold: list[tuple[OutgoingPush, str]] = []
-        for it, dev, reason in answers:
-            if result.sent_by_platform.get(platform) or not (
-                    dev.verified or dev.subscribed):
+        for it, reason in answers:
+            if result.sent_by_platform.get(platform):
                 retire_now.append((it, reason))
                 continue
             row = conn.execute("SELECT dead_since FROM push_devices "
@@ -624,6 +658,7 @@ def send_push_batch(conn: sqlite3.Connection, items: list[OutgoingPush],
                                  (it.idem_key,))
             for it, _ in retire_now:
                 result.undeliverable.add(it.idem_key)
+                result.failed.add(it.idem_key)
             for it, reason in retired:
                 result.retired.add(it.device_id)
                 print(f"push: {platform} retired device {it.device_id}: {reason}",
@@ -670,5 +705,5 @@ def _try(cfg, platform: str, item: OutgoingPush, token: str) -> tuple[str, str]:
         # with a control character as a URL, InvalidURL). Dropping it alone
         # keeps one poisoned row from deferring the whole platform, and with
         # it everyone else's push and the verification sweep, every cycle.
-        return DROP, f"local: {exc!r}"
+        return LOCAL, f"local: {exc!r}"
     return (_apns_verdict if platform == "apns" else _fcm_verdict)(resp)

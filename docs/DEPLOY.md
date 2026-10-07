@@ -463,12 +463,11 @@ retirement rule below keeps that from retiring anyone.
   every cycle a slot matches. That line on every cycle with no `retired`
   line ever is the misconfiguration signature; fix the knob it names. A
   retired device's `retire_reason` says which answer did it, and the app
-  re-registers on next launch. The one exception: an unverified device that
-  holds no subscription (a registration answering its verification push) has
-  nothing a misconfiguration could take away and is retired on its first dead
-  answer, so a junk registration stops costing a request a minute. Either way
-  a device is retired (and `dead_since` stamped) only while it still holds the
-  token that answered.
+  re-registers on next launch. The rule holds for a device that never
+  verified too: a junk registration costs a verification request a minute
+  until anyone else gets a push, while under a misconfiguration nobody who
+  registers in that window is retired. A device is retired (and `dead_since`
+  stamped) only while it still holds the token that answered.
 - `5xx`, FCM `429` (project quota), relay unreachable (a timeout, a refused
   or reset connection): released, the next cycle retries, and the platform is
   not tried again this cycle (an outage must not hold the poller for a timeout
@@ -552,14 +551,22 @@ minute per token (and one delivered push a minute per device row), and per
 rolling day five on requests that need no credential (a registration, the same
 token again, a pending secret's resend) and, separately, five on the main
 secret's own requests (a token change, a resend), so a stranger re-registering
-somebody's token cannot spend the owner's. Every attempt the relay answered
-counts, delivered or refused; an outage does not. Register and token change
+somebody's token cannot spend the owner's. A delivered attempt counts, and so
+does a refused one, but only while the platform shows it works: it delivered
+to someone in the same pass, or, for a dead token, since the device first
+answered dead. An outage does not count, nor does a refusal from a platform
+that delivers to nobody: a wrong `APNS_TOPIC`, `APNS_SANDBOX` or FCM project
+must not leave every phone that registered in that window locked out of
+verification for a day after the fix. Register and token change
 never refuse, they stamp the request and the sender decides when it goes out
 (resend answers 429 with `retry_after`); a device over its budget is left
-alone until it frees (`push_devices.verify_next_at`). A request the relay has
-refused three times (`verify_failures`) is given up until the next one, and
-the poller's sweep sends to at most 50 devices a cycle (`push.MAX_SWEEP_DEVICES`),
-least recently tried first. The minute is also an atomic claim on the
+alone until it frees (`push_devices.verify_next_at`). A request refused three
+times with that evidence (`verify_failures`) is given up until the next one.
+The poller's sweep sends to at most 50 devices a cycle (`push.MAX_SWEEP_DEVICES`),
+only of the platforms it has credentials for, least recently tried first:
+every device a pass tried and did not deliver to (refused, an outage, a claim
+another sender holds) waits a minute at the back of the queue, so rows that
+cannot go out never fill the sweep. The minute is also an atomic claim on the
 idempotency key `verify|<device_id>|<UTC minute>`. The operator dashboard counts only subscriptions that run. `GET /device` shows an unverified device no subscriptions. A device that never verified and
 holds no subscription is purged after a day (housekeeping). An app that shows
 "waiting for the test notification" forever therefore means `APNS_*`/`FCM_*`

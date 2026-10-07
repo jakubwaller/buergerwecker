@@ -29,15 +29,18 @@ _APNS_ENV = {"APNS_TEAM_ID": "TEAM123456", "APNS_KEY_ID": "KEY1234567",
 
 
 class Relay:
-    """Stands in for `app.push._post`; answers every request with `status`."""
+    """Stands in for `app.push._post`; answers every request with `status`
+    (and an APNs `reason`, if given)."""
 
-    def __init__(self, status=200):
+    def __init__(self, status=200, reason=None):
         self.status = status
+        self.reason = reason
         self.calls: list[dict] = []
 
     def __call__(self, platform, url, *, headers=None, json=None, data=None):
         self.calls.append({"url": url, "json": json})
-        return httpx.Response(self.status, json={})
+        return httpx.Response(self.status,
+                              json={"reason": self.reason} if self.reason else {})
 
     def codes(self):
         return [c["json"]["code"] for c in self.calls]
@@ -364,8 +367,10 @@ def test_the_minute_claim_stops_a_second_sender(client, monkeypatch):
         with patch("app.push._post", Relay()) as r:
             assert send_verifications(conn, load_config()) == 0
         assert r.calls == []
+        assert _row(dev)["verify_next_at"] is not None     # tried, not delivered
         conn.execute("DELETE FROM sent_idempotency")
         _backdate(dev, "verify_code_at", "-61 seconds")
+        _backdate(dev, "verify_next_at", "-1 seconds")
         with patch("app.push._post", Relay()) as r:
             assert send_verifications(conn, load_config()) == 1
         assert len(r.calls) == 1
@@ -567,8 +572,12 @@ def test_a_deferring_relay_leaves_the_device_waiting(client, monkeypatch):
     assert row["verify_sent_at"] is None
     # The claim was released, so the next pass can try again.
     assert conn.execute("SELECT COUNT(*) FROM sent_idempotency").fetchone()[0] == 0
-    # The stored code holds the claim for a minute; then a new one goes out.
+    # Not counted against anyone, and the device waits a minute at the back of
+    # the queue; the stored code holds the claim as long. Then a new one goes out.
+    assert row["verify_failures"] == 0 and _attempts() == []
+    assert row["verify_next_at"] is not None
     _backdate(dev, "verify_code_at", "-61 seconds")
+    _backdate(dev, "verify_next_at", "-1 seconds")
     with patch("app.push._post", Relay()) as ok:
         assert send_verifications(conn, load_config()) == 1
     assert len(ok.calls) == 1
@@ -582,18 +591,24 @@ def test_the_stored_code_is_the_claim_one_sender_per_device_per_minute(client, m
     with patch("app.push._post", Relay(status=503)):
         assert send_verifications(conn, load_config()) == 0      # stores a code
     first = _row(dev)["verify_code_hash"]
+    # The sweep's own not-before would hold it too; take it away to see the
+    # claim alone (another sender does not go by it).
+    _db().execute("UPDATE push_devices SET verify_next_at=NULL WHERE id=?", (dev,))
     with patch("app.push._post", Relay()) as second:
         assert send_verifications(conn, load_config()) == 0      # claim held
     assert second.calls == [] and _row(dev)["verify_code_hash"] == first
-    _db().execute("UPDATE push_devices SET verify_code_at=datetime('now','-61 seconds') "
-                  "WHERE id=?", (dev,))
+    _db().execute("UPDATE push_devices SET verify_code_at=datetime('now','-61 seconds'), "
+                  "verify_next_at=NULL WHERE id=?", (dev,))
     with patch("app.push._post", Relay()) as third:
         assert send_verifications(conn, load_config()) == 1
     assert len(third.calls) == 1 and _row(dev)["verify_code_hash"] != first
 
 
 def test_a_resend_leaves_an_in_flight_code_alone(client, monkeypatch):
-    dev, secret = _register(client, verified=False)       # no credentials: stored, unsent
+    dev, secret = _register(client, verified=False)
+    # Another sender has just stored a code and is delivering it.
+    _db().execute("UPDATE push_devices SET verify_code_hash='in-flight', "
+                  "verify_code_at=CURRENT_TIMESTAMP WHERE id=?", (dev,))
     before = _row(dev)
     assert before["verify_code_hash"] and before["verify_code_at"]
     # Now the web process has credentials: a relay WOULD be called if the
@@ -677,21 +692,44 @@ def _sweep_again(*devs):
         _backdate(dev, "verify_requested_at", "-2 minutes")
 
 
+class ByToken(Relay):
+    """Answers `status` (and `reason`) to the tokens named, 200 to every
+    other: one refused phone among working ones."""
+
+    def __init__(self, names, status=400, reason=None):
+        super().__init__(status, reason)
+        self.refuse = {tok(n) for n in names}
+
+    def __call__(self, platform, url, *, headers=None, json=None, data=None):
+        self.calls.append({"url": url, "json": json})
+        if url.rsplit("/", 1)[1] in self.refuse:
+            return httpx.Response(self.status,
+                                  json={"reason": self.reason} if self.reason else {})
+        return httpx.Response(200, json={})
+
+    def to(self, name):
+        return [c for c in self.calls if c["url"].endswith("/" + tok(name))]
+
+
 def test_a_refused_verification_push_counts_and_the_sweep_gives_up_after_three(client, monkeypatch):
     dev, secret = _register(client, verified=False)       # no credentials: unsent
     _enable_push(monkeypatch)
     cfg = load_config()
-    refusing = Relay(status=400)                           # a payload the relay refuses
+    refusing = ByToken(["tok-1"], status=400)              # a payload refused for this token
     with patch("app.push._post", refusing):
         for n in range(1, 4):
+            # Another phone's push goes out in the same pass: the platform works,
+            # so the refusal is about this token.
+            other, _ = _register(client, token=f"live-{n}", verified=False)
+            _backdate(other, "verify_requested_at", "-1 minutes")
             _sweep_again(dev)
-            assert send_verifications(_db(), cfg) == 0
+            assert send_verifications(_db(), cfg) == 1
             row = _row(dev)
             assert row["verify_failures"] == n and row["verify_sent_at"] is None
             assert row["verify_next_at"] is not None       # back of the queue
         _sweep_again(dev)
         assert send_verifications(_db(), cfg) == 0
-    assert len(refusing.calls) == 3                        # and not every minute for a day
+    assert len(refusing.to("tok-1")) == 3                  # and not every minute for a day
     # Refused attempts are attempts: they count toward the token's budget.
     assert _attempts() == ["open"] * 3
     # The owner's resend is a new request and starts the count over.
@@ -723,21 +761,126 @@ def test_an_outage_is_not_a_refusal(client, monkeypatch):
     assert _row(dev)["verify_failures"] == 0 and _attempts() == []
 
 
-def test_a_dead_token_retires_a_new_device_on_its_first_answer(monkeypatch, client):
-    """Nothing delivered on the platform, and still retired: a device that
-    never verified holds nothing a misconfiguration could take away."""
+def test_a_dead_token_retires_a_new_device_once_the_platform_shows_it_works(
+        monkeypatch, client):
+    """A junk registration is retired on the first dead answer after anyone
+    else got a push: the evidence that rules out a misconfiguration."""
     app_client = _relay_client(monkeypatch)
-    dead = Relay(status=410)
-    with patch("app.push._post", dead):
+    relay = ByToken(["junk"], status=410)
+    with patch("app.push._post", relay):
         r = app_client.post("/api/v1/devices", json={"platform": "apns",
                                                      "token": tok("junk")})
         dev, secret = r.get_json()["device_id"], r.get_json()["secret"]
+        row = _row(dev)                                # nothing delivered yet: held
+        assert row["retired_at"] is None and row["dead_since"] is not None
+        assert _attempts(name="junk") == [] and row["verify_failures"] == 0
+        _register(app_client, token="live", verified=False)   # someone's push goes out
+        _sweep_again(dev)
+        assert send_verifications(_db(), load_config()) == 0
         assert _row(dev)["retired_at"] is not None
         gone = app_client.get("/api/v1/device", headers=_auth(dev, secret))
         assert gone.status_code == 410 and gone.get_json()["error"] == "device_retired"
         _sweep_again(dev)
         assert send_verifications(_db(), load_config()) == 0
-    assert len(dead.calls) == 1
+    assert len(relay.to("junk")) == 2
+    assert _attempts(name="junk") == ["open"]
+
+
+def test_a_misconfigured_platform_spends_no_budget_and_retires_nobody(client, monkeypatch):
+    """A wrong APNS_SANDBOX or APNS_TOPIC answers dead for every device at
+    once. Counting those answers against the token, or retiring on them,
+    locked every phone that tried in that window out of verification for a
+    day after the knob was fixed."""
+    app_client = _relay_client(monkeypatch)
+    wrong = Relay(status=400, reason="BadDeviceToken")
+    with patch("app.push._post", wrong):
+        r = app_client.post("/api/v1/devices", json={"platform": "apns", "token": tok()})
+        dev = r.get_json()["device_id"]
+        for _ in range(5):
+            _age_deliveries(dev)
+            _register(app_client, verified=False)          # the app tries again
+            _sweep_again(dev)
+            send_verifications(_db(), load_config())
+    assert len(wrong.calls) >= 6
+    row = _row(dev)
+    assert row["retired_at"] is None and row["verify_failures"] == 0
+    assert _attempts() == []
+    _age_deliveries(dev)
+    assert verify_push_wait(_db(), dev) == 0
+    # The knob is fixed: the next registration verifies at once.
+    with patch("app.push._post", Relay()) as fixed:
+        _register(app_client, verified=False)
+    assert len(fixed.calls) == 1
+
+
+def test_a_token_change_under_a_misconfiguration_does_not_pause_subscriptions_for_a_day(
+        client, monkeypatch):
+    app_client = _relay_client(monkeypatch)
+    with patch("app.push._post", Relay()):
+        dev, secret = _register(app_client)
+    own = _auth(dev, secret)
+    sub = _subscribe(app_client, own).get_json()["id"]
+    wrong = Relay(status=400, reason="DeviceTokenNotForTopic")
+    with patch("app.push._post", wrong):
+        _age_deliveries(dev)
+        put = app_client.put("/api/v1/device", json={"token": tok("new")}, headers=own)
+        assert put.status_code == 200
+        for _ in range(3):
+            _sweep_again(dev)
+            send_verifications(_db(), load_config())
+        for _ in range(2):
+            _age_deliveries(dev)
+            assert app_client.post("/api/v1/device/verify/resend", json={},
+                                   headers=own).status_code == 202
+    assert len(wrong.calls) == 6
+    assert active_subscriptions(_db()) == []           # paused, as any token change
+    row = _row(dev)
+    assert row["retired_at"] is None and row["verify_failures"] == 0
+    assert _attempts(name="new") == []
+    # Fixed: the owner's next resend goes out, the code verifies, and the
+    # subscription runs again.
+    _age_deliveries(dev)
+    with patch("app.push._post", Relay()) as fixed:
+        r = app_client.post("/api/v1/device/verify/resend", json={}, headers=own)
+        assert r.status_code == 202 and len(fixed.calls) == 1
+    assert _post_code(app_client, own, fixed.codes()[0]).status_code == 200
+    assert [s.id for s in active_subscriptions(_db())] == [sub]
+
+
+def test_rows_of_a_platform_this_process_cannot_send_do_not_starve_the_sweep(
+        client, monkeypatch):
+    """Sixty FCM registrations, older than an APNs one, on a poller with only
+    APNs credentials: they filled every sweep, and the APNs device was never
+    tried."""
+    fcm = [_register(client, platform="fcm", token=f"f{i}", verified=False)[0]
+           for i in range(60)]
+    for d in fcm:
+        _backdate(d, "verify_requested_at", "-10 minutes")
+    apns, _ = _register(client, token="a1", verified=False)
+    _backdate(apns, "verify_requested_at", "-5 minutes")
+    _enable_push(monkeypatch)                          # APNs only
+    with patch("app.push._post", Relay()) as r:
+        for _ in range(5):
+            send_verifications(_db(), load_config())
+    assert len(r.calls) == 1 and r.calls[0]["url"].endswith("/" + tok("a1"))
+    # Untouched: a process with FCM credentials sends them as before.
+    assert all(_row(d)["verify_code_hash"] is None for d in fcm)
+
+
+def test_rows_an_outage_left_undelivered_go_to_the_back_of_the_queue(client, monkeypatch):
+    devs = [_register(client, token=f"o{i}", verified=False)[0] for i in range(3)]
+    for i, dev in enumerate(devs):
+        _backdate(dev, "verify_requested_at", f"-{10 - i} minutes")
+    _enable_push(monkeypatch)
+    cfg = load_config()
+    with patch("app.push.MAX_SWEEP_DEVICES", 2):
+        with patch("app.push._post", Relay(status=503)) as down:
+            assert send_verifications(_db(), cfg) == 0
+        assert len(down.calls) == 1                    # the outage ends the turn
+        with patch("app.push._post", Relay()) as up:
+            assert send_verifications(_db(), cfg) == 1
+        assert up.calls[0]["url"].endswith("/" + tok("o2"))
+        assert all(_row(d)["verify_failures"] == 0 for d in devs)
 
 
 def test_one_sweep_handles_a_bounded_number_of_devices_and_rotates(client, monkeypatch):

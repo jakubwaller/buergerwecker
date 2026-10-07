@@ -168,13 +168,15 @@ def verify_push_wait(conn: sqlite3.Connection, device_id: int, *,
 
 def record_verify_attempts(conn: sqlite3.Connection,
                            attempts: list[tuple[str, str]]) -> None:
-    """One row per (token_key, kind) the relay answered."""
+    """One row per (token_key, kind): a delivery, or a refusal the platform's
+    evidence stands behind (see push.send_verifications)."""
     conn.executemany("INSERT INTO verify_attempts (token_key, kind) VALUES (?,?)",
                      attempts)
 
 
 def devices_awaiting_verification(conn: sqlite3.Connection, *,
                                   device_ids: list[int] | None = None,
+                                  platforms: list[str] | None = None,
                                   min_age_seconds: int = 0,
                                   limit: int | None = None
                                   ) -> list[sqlite3.Row]:
@@ -182,9 +184,11 @@ def devices_awaiting_verification(conn: sqlite3.Connection, *,
     prove) whose verification push was requested in the last 24 hours (and
     at least `min_age_seconds` ago), has not been delivered yet, has not been
     refused MAX_VERIFY_FAILURES times and is not waiting out a not-before
-    (`id`, `language`, `platform`, `token`, `verify_kind`). Least recently
-    tried first, then oldest request, at most `limit`: a sweep rotates
-    through a long queue instead of retrying its head."""
+    (`id`, `language`, `platform`, `token`, `verify_kind`), on one of
+    `platforms` if given. Least recently tried first (a device the sender
+    tried and did not deliver to waits a minute), then oldest request, at
+    most `limit`: a sweep rotates through a long queue instead of retrying
+    its head."""
     sql = ("SELECT id, language, platform, token, verify_kind FROM push_devices "
            "WHERE (verified_at IS NULL OR pending_secret_hash IS NOT NULL) "
            "AND retired_at IS NULL AND verify_sent_at IS NULL "
@@ -192,6 +196,11 @@ def devices_awaiting_verification(conn: sqlite3.Connection, *,
            "AND verify_failures < ? "
            "AND (verify_next_at IS NULL OR verify_next_at <= CURRENT_TIMESTAMP)")
     params: list = [VERIFY_WINDOW, MAX_VERIFY_FAILURES]
+    if platforms is not None:
+        if not platforms:
+            return []
+        sql += f" AND platform IN ({','.join('?' * len(platforms))})"
+        params += list(platforms)
     if min_age_seconds:
         sql += " AND verify_requested_at <= datetime('now', ?)"
         params.append(f"-{int(min_age_seconds)} seconds")
@@ -209,16 +218,17 @@ def devices_awaiting_verification(conn: sqlite3.Connection, *,
 
 def defer_verification(conn: sqlite3.Connection, device_id: int,
                        seconds: int) -> None:
-    """The token's budget says wait: the sweep leaves the device alone until
-    then rather than asking again every minute."""
+    """The budget says wait, or the last try did not deliver: the sweep
+    leaves the device alone until then and moves on to the rest."""
     conn.execute("UPDATE push_devices SET verify_next_at=datetime('now', ?) "
                  "WHERE id=?", (f"+{int(seconds)} seconds", device_id))
 
 
 def record_verify_failures(conn: sqlite3.Connection,
                            device_ids: list[int]) -> None:
-    """The relay refused these devices' verification push: count it, and
-    send the device to the back of the sweep's queue for at least a minute."""
+    """The relay refused these devices' verification push, with evidence
+    that the platform works: count it, and send the device to the back of
+    the sweep's queue for at least a minute."""
     conn.executemany(
         "UPDATE push_devices SET verify_failures=verify_failures+1, "
         "verify_next_at=datetime('now','+60 seconds') WHERE id=?",

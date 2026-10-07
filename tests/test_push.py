@@ -655,16 +655,31 @@ def test_credentials_that_cannot_be_built_end_the_platform_not_the_items(db):
     assert len(live_devices(db, [d1, d2])) == 2
 
 
-def test_failed_lists_what_the_relay_refused_for_that_item_only(db):
-    d1, d2, d3, d4 = (_device(db, token=t) for t in "abcd")
-    relay = FakeRelay([(400, {"reason": "PayloadTooLarge"}),
+def test_failed_lists_item_refusals_from_a_platform_that_works(db):
+    live, d1, d2, d3, d4 = (_device(db, token=t) for t in ("live", "a", "b", "c", "d"))
+    relay = FakeRelay([(200, {}),
+                       (400, {"reason": "PayloadTooLarge"}),
                        (429, {"reason": "TooManyRequests"}),
                        (410, {"reason": "Unregistered"}),
                        (503, {"reason": "ServiceUnavailable"})])
     with patch("app.push._post", relay):
         res = send_push_batch(db, [_item(d, f"k{i}") for i, d in
-                                   enumerate((d1, d2, d3, d4), 1)], _cfg())
+                                   enumerate((live, d1, d2, d3, d4))], _cfg())
     assert res.failed == {"k1", "k2", "k3"}
+
+
+def test_refusals_from_a_platform_that_delivers_nothing_are_no_ones_failure(db):
+    """A topic APNs does not accept, or the wrong sandbox, answers the same
+    refusal for every device: none of them says anything about the item."""
+    d1, d2, d3 = (_device(db, token=t) for t in "abc")
+    relay = FakeRelay([(400, {"reason": "TopicDisallowed"}),
+                       (429, {"reason": "TooManyRequests"}),
+                       (400, {"reason": "BadDeviceToken"})])
+    with patch("app.push._post", relay):
+        res = send_push_batch(db, [_item(d, f"k{i}") for i, d in
+                                   enumerate((d1, d2, d3), 1)], _cfg())
+    assert res.failed == set() and res.retired == set()
+    assert len(relay.calls) == 3
 
 
 def test_a_push_goes_only_to_the_token_it_was_queued_for(db):
@@ -700,15 +715,31 @@ def test_only_the_verification_push_reaches_an_unverified_device(db):
     assert len(relay.calls) == 1
 
 
-def test_a_dead_answer_retires_an_unverified_device_without_subscriptions_at_once(db):
-    """No delivery on the platform, so a verified device would be held; one
-    that never verified has nothing to lose, and a junk registration must
-    not cost a request a minute for a day."""
-    dev = _device(db, verified=False)
-    with patch("app.push._post", FakeRelay([(410, {"reason": "Unregistered"})])):
-        res = send_push_batch(db, [_item(dev, kind="verify")], _cfg())
-    assert res.retired == {dev} and res.failed == {"k1"} and res.deferred == 0
+def test_a_device_that_never_verified_gets_the_same_evidence_rule(db):
+    """Retiring it on the first dead answer looked free, but a wrong
+    APNS_SANDBOX answers dead for every phone registering in that window."""
+    dev, live = _device(db, verified=False), _device(db, token="live")
+    dead = (410, {"reason": "Unregistered"})
+    with patch("app.push._post", FakeRelay([dead])):
+        res = send_push_batch(db, [_item(dev, "c1", kind="verify")], _cfg())
+    assert res.retired == set() and res.failed == set() and res.deferred == 1
+    assert live_devices(db, [dev])
+    # Someone gets a push: the platform works, and the next dead answer retires.
+    with patch("app.push._post", FakeRelay([(200, {})])):
+        send_push_batch(db, [_item(live, "c2")], _cfg())
+    with patch("app.push._post", FakeRelay([dead])):
+        res = send_push_batch(db, [_item(dev, "c3", kind="verify")], _cfg())
+    assert res.retired == {dev} and res.failed == {"c3"}
     assert not live_devices(db, [dev])
+
+
+def test_a_dead_answer_beside_a_delivery_retires_at_once(db):
+    live, dev = _device(db, token="live"), _device(db, verified=False)
+    relay = FakeRelay([(200, {}), (410, {"reason": "Unregistered"})])
+    with patch("app.push._post", relay):
+        res = send_push_batch(db, [_item(live, "k0"),
+                                   _item(dev, "k1", kind="verify")], _cfg())
+    assert res.retired == {dev} and res.failed == {"k1"}
 
 
 def test_an_unverified_device_with_paused_subscriptions_keeps_the_safeguard(db):
