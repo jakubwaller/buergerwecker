@@ -945,8 +945,9 @@ directory, keeps it 14 days, and a workstation pulls the last seven nights.
 
 **No copy of the database may outlive 30 days, wherever it sits.** The privacy
 page promises that a permanently removed record is gone from the last backup
-30 days later at the latest; `BACKUP_RETENTION_DAYS` in `scripts/backup-loop.sh`
-holds `/mnt/backup` to it. Any off-host copy prunes by its own age, not by
+30 days later at the latest; `scripts/backup-loop.sh` holds `/mnt/backup` to it.
+Its `BACKUP_RETENTION_DAYS` is not set in `docker-compose.yml`, so it is 30;
+raising it breaks the page unless the page changes first. Any off-host copy prunes by its own age, not by
 mirroring the server: it still has to survive a wiped server, and it still has
 to expire. A puller that keeps every snapshot it ever fetched breaks the
 promise — the earlier scp pull did exactly that and is retired.
