@@ -24,7 +24,7 @@ RSA_PEM = _KEY.private_bytes(
     serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
     serialization.NoEncryption()).decode()
 ACCOUNT = json.dumps({
-    "project_id": "bw-test", "client_email": "sa@bw-test.example.com",
+    "project_id": "bw-test", "client_email": "sa@example.com",
     "token_uri": "https://oauth2.example.com/token", "private_key": RSA_PEM})
 
 _ENV = {
