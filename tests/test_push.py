@@ -1,6 +1,7 @@
 """Push delivery for the app (app/push.py) and its wiring into the digest
 flush, the repo, housekeeping and the schema. No network: every relay request
 leaves through `app.push._post`, which these tests replace."""
+from dataclasses import replace
 from datetime import datetime, time, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -100,12 +101,19 @@ def _filter(types=("svc-A",)):
                   time_window_start=time(0, 0), time_window_end=time(23, 59))
 
 
-def _device(db, platform="apns", token="tok-1", language="de"):
+# The token each device of the running test was registered with, so a test
+# push can be made for it (a push carries the token it was queued for).
+_TOKENS: dict[int, str] = {}
+
+
+def _device(db, platform="apns", token="tok-1", language="de", verified=True):
     dev = register_device(db, platform=platform, token=token,
                           secret_hash="h" * 64, language=language)
-    # Verified: an unverified device's subscriptions do not run.
-    db.execute("UPDATE push_devices SET verified_at=CURRENT_TIMESTAMP WHERE id=?",
-               (dev,))
+    _TOKENS[dev] = token
+    if verified:
+        # Verified: an unverified device's subscriptions do not run.
+        db.execute("UPDATE push_devices SET verified_at=CURRENT_TIMESTAMP WHERE id=?",
+                   (dev,))
     return dev
 
 
@@ -115,11 +123,12 @@ def _push_sub(db, device_id, city="leipzig", **kw):
                                     ttl_days=30, **kw)
 
 
-def _item(device_id, key="k1"):
+def _item(device_id, key="k1", token=None, kind="slots"):
     return OutgoingPush(device_id=device_id, title="t", body="b", idem_key=key,
-                        data={"url": "https://x/go/leipzig", "sub": "1",
+                        data={"type": kind, "url": "https://x/go/leipzig", "sub": "1",
                               "city": "leipzig"},
-                        collapse_id="sub-1")
+                        collapse_id="sub-1",
+                        token=token if token is not None else _TOKENS.get(device_id))
 
 
 def _claimed(db, key):
@@ -549,7 +558,7 @@ def test_unconfigured_platform_is_undeliverable_without_a_claim_or_a_request(db)
 
 def test_retired_or_unknown_device_is_undeliverable(db):
     dev = _device(db)
-    retire_device(db, dev, "Unregistered")
+    retire_device(db, dev, "Unregistered", token=_TOKENS[dev])
     relay = FakeRelay([])
     with patch("app.push._post", relay):
         res = send_push_batch(db, [_item(dev, "k1"), _item(9999, "k2")], _cfg())
@@ -567,6 +576,213 @@ def test_an_already_claimed_key_is_not_sent_again(db):
 
 def test_empty_batch_is_a_noop(db):
     assert send_push_batch(db, [], _cfg()) == PushResult()
+
+
+# ---------------------------------------------------------------------------
+# send_push_batch: a push is bound to its token, one bad item stays one item
+
+@pytest.mark.parametrize("token, path", [
+    # Unescaped, httpx drops a fragment or a query and resolves dot segments,
+    # so every one of these reached Apple as /3/device/T: one phone behind
+    # any number of rows. Rows stored before the API checked the format.
+    ("T#1", "/3/device/T%231"), ("x/../T", "/3/device/x%2F%2E%2E%2FT"),
+    ("./T", "/3/device/%2E%2FT"), ("..", "/3/device/%2E%2E"), ("T?x", "/3/device/T%3Fx"),
+])
+def test_the_apns_path_carries_the_token_as_one_escaped_segment(db, token, path):
+    dev = _device(db, token=token)
+    relay = FakeRelay([(400, {"reason": "BadDeviceToken"})])
+    with patch("app.push._post", relay):
+        send_push_batch(db, [_item(dev)], _cfg())
+    url = relay.calls[0]["url"]
+    assert url == "https://api.push.apple.com" + path
+    assert httpx.Request("POST", url).url.raw_path.decode() == path
+
+
+def test_a_token_httpx_refuses_drops_that_push_alone(db):
+    """A token with a control character made httpx raise InvalidURL, which
+    deferred the whole platform: one poisoned row held back every push and
+    the verification sweep, every cycle."""
+    bad, good = _device(db, token="bad"), _device(db, token="good")
+
+    def post(platform, url, **kw):
+        if url.endswith("/bad"):
+            # What httpx raises for "a\x01b" in a URL.
+            raise httpx.InvalidURL("Invalid non-printable ASCII character in URL")
+        return httpx.Response(200, json={})
+    with patch("app.push._post", post):
+        res = send_push_batch(db, [_item(bad, "k1"), _item(good, "k2")], _cfg())
+    assert res.delivered == {"k2"} and res.deferred == 0
+    assert res.undeliverable == {"k1"} and res.failed == {"k1"}
+    assert _claimed(db, "k1") is None
+    assert live_devices(db, [bad])                    # not retired either
+
+
+def test_a_control_character_never_reaches_httpx_unescaped(db):
+    dev = _device(db, token="a\x01b")
+    relay = FakeRelay([(200, {})])
+    with patch("app.push._post", relay):
+        assert send_push_batch(db, [_item(dev)], _cfg()).delivered == {"k1"}
+    assert relay.calls[0]["url"].endswith("/a%01b")
+
+
+@pytest.mark.parametrize("error", [
+    httpx.ConnectError("no route"), httpx.ReadTimeout("slow"),
+    httpx.RemoteProtocolError("reset"),
+    # What an HTTP/2 connection the relay closed (GOAWAY) raises on reuse.
+    httpx.LocalProtocolError("Invalid input ConnectionInputs.SEND_HEADERS "
+                             "in state ConnectionState.CLOSED"),
+])
+def test_only_network_errors_defer_the_platform(db, error):
+    d1, d2 = _device(db, token="a"), _device(db, token="b")
+    calls = []
+
+    def post(*a, **k):
+        calls.append(1)
+        raise error
+    with patch("app.push._post", post):
+        res = send_push_batch(db, [_item(d1, "k1"), _item(d2, "k2")], _cfg())
+    assert res.deferred == 2 and len(calls) == 1 and res.failed == set()
+
+
+def test_credentials_that_cannot_be_built_end_the_platform_not_the_items(db):
+    """A broken key is ours: it must not count as every item's failure."""
+    d1, d2 = _device(db, token="a"), _device(db, token="b")
+    relay = FakeRelay([])
+    with patch("app.push._post", relay):
+        res = send_push_batch(db, [_item(d1, "k1"), _item(d2, "k2")],
+                              _cfg(apns_key_p8="not a key"))
+    assert res.deferred == 2 and res.failed == set() and relay.calls == []
+    assert len(live_devices(db, [d1, d2])) == 2
+
+
+def test_failed_lists_what_the_relay_refused_for_that_item_only(db):
+    d1, d2, d3, d4 = (_device(db, token=t) for t in "abcd")
+    relay = FakeRelay([(400, {"reason": "PayloadTooLarge"}),
+                       (429, {"reason": "TooManyRequests"}),
+                       (410, {"reason": "Unregistered"}),
+                       (503, {"reason": "ServiceUnavailable"})])
+    with patch("app.push._post", relay):
+        res = send_push_batch(db, [_item(d, f"k{i}") for i, d in
+                                   enumerate((d1, d2, d3, d4), 1)], _cfg())
+    assert res.failed == {"k1", "k2", "k3"}
+
+
+def test_a_push_goes_only_to_the_token_it_was_queued_for(db):
+    """A verified device queued a digest, then switched to somebody else's
+    token before the flush: the digest went to the new token."""
+    dev = _device(db, token="mine")
+    item = _item(dev)
+    db.execute("UPDATE push_devices SET token='victim' WHERE id=?", (dev,))
+    relay = FakeRelay([])
+    with patch("app.push._post", relay):
+        res = send_push_batch(db, [item], _cfg())
+    assert relay.calls == [] and res.undeliverable == {"k1"}
+    assert _claimed(db, "k1") is None
+
+
+def test_a_push_without_a_token_is_never_sent(db):
+    dev = _device(db)
+    relay = FakeRelay([])
+    with patch("app.push._post", relay):
+        res = send_push_batch(db, [_item(dev, token="")], _cfg())
+        res2 = send_push_batch(db, [replace(_item(dev, "k2"), token=None)], _cfg())
+    assert relay.calls == [] and res.undeliverable == {"k1"}
+    assert res2.undeliverable == {"k2"}
+
+
+def test_only_the_verification_push_reaches_an_unverified_device(db):
+    dev = _device(db, verified=False)
+    relay = FakeRelay([(200, {})])
+    with patch("app.push._post", relay):
+        res = send_push_batch(db, [_item(dev, "digest"),
+                                   _item(dev, "verify", kind="verify")], _cfg())
+    assert res.undeliverable == {"digest"} and res.delivered == {"verify"}
+    assert len(relay.calls) == 1
+
+
+def test_a_dead_answer_retires_an_unverified_device_without_subscriptions_at_once(db):
+    """No delivery on the platform, so a verified device would be held; one
+    that never verified has nothing to lose, and a junk registration must
+    not cost a request a minute for a day."""
+    dev = _device(db, verified=False)
+    with patch("app.push._post", FakeRelay([(410, {"reason": "Unregistered"})])):
+        res = send_push_batch(db, [_item(dev, kind="verify")], _cfg())
+    assert res.retired == {dev} and res.failed == {"k1"} and res.deferred == 0
+    assert not live_devices(db, [dev])
+
+
+def test_an_unverified_device_with_paused_subscriptions_keeps_the_safeguard(db):
+    """A token change un-verifies a device that holds subscriptions; a
+    misconfigured platform must not end them."""
+    dev = _device(db, verified=False)
+    sid = _push_sub(db, dev)
+    with patch("app.push._post", FakeRelay([(410, {"reason": "Unregistered"})])):
+        res = send_push_batch(db, [_item(dev, kind="verify")], _cfg())
+    assert res.retired == set() and res.deferred == 1
+    assert db.execute("SELECT deleted_at FROM subscriptions WHERE id=?",
+                      (sid,)).fetchone()[0] is None
+
+
+def test_a_dead_answer_for_a_replaced_token_retires_nothing(db):
+    """The relay answered dead for the old token while the device moved to a
+    new one: the answer is about a token the device no longer has."""
+    live, dev = _device(db, token="live"), _device(db, token="old")
+    sid = _push_sub(db, dev)
+    answers = iter([(200, {}), (410, {"reason": "Unregistered"})])
+
+    def post(platform, url, **kw):
+        status, body = next(answers)
+        if url.endswith("/old"):
+            db.execute("UPDATE push_devices SET token='new' WHERE id=?", (dev,))
+        return httpx.Response(status, json=body)
+    with patch("app.push._post", post):
+        res = send_push_batch(db, [_item(live, "k0"), _item(dev)], _cfg())
+    assert res.retired == set() and res.undeliverable == {"k1"}
+    row = db.execute("SELECT retired_at, token FROM push_devices WHERE id=?",
+                     (dev,)).fetchone()
+    assert row["retired_at"] is None and row["token"] == "new"
+    assert db.execute("SELECT deleted_at FROM subscriptions WHERE id=?",
+                      (sid,)).fetchone()[0] is None
+
+
+def test_retire_device_is_bound_to_the_token(db):
+    dev = _device(db, token="old")
+    sid = _push_sub(db, dev)
+    db.execute("UPDATE push_devices SET token='new' WHERE id=?", (dev,))
+    assert retire_device(db, dev, "Unregistered", token="old") is False
+    assert live_devices(db, [dev])
+    assert db.execute("SELECT deleted_at FROM subscriptions WHERE id=?",
+                      (sid,)).fetchone()[0] is None
+    assert retire_device(db, dev, "Unregistered", token="new") is True
+    assert retire_device(db, dev, "Unregistered", token="new") is False
+    assert db.execute("SELECT deleted_at FROM subscriptions WHERE id=?",
+                      (sid,)).fetchone()[0] is not None
+
+
+def test_a_held_dead_answer_is_remembered_only_for_its_token(db):
+    dev = _device(db, token="old")
+    _push_sub(db, dev)
+    item = _item(dev)
+
+    def post(platform, url, **kw):
+        db.execute("UPDATE push_devices SET token='new' WHERE id=?", (dev,))
+        return httpx.Response(410, json={"reason": "Unregistered"})
+    with patch("app.push._post", post):
+        send_push_batch(db, [item], _cfg())
+    assert db.execute("SELECT dead_since FROM push_devices").fetchone()[0] is None
+
+
+def test_the_cycle_binds_a_digest_to_the_token_it_found_verified(db):
+    from app.repo import active_subscriptions
+    dev = _device(db, token="mine")
+    _push_sub(db, dev)
+    sub = active_subscriptions(db)[0]
+    assert sub.push_token == "mine"
+    sink = []
+    send_digest(conn=db, subscription=sub,
+                matched_slots=[Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")],
+                cycle_id="c1", cfg=_cfg(), sink=sink)
+    assert sink[0].item.token == "mine"
 
 
 # ---------------------------------------------------------------------------
@@ -842,7 +1058,7 @@ def test_a_retired_device_gets_no_checkin(db):
     dev = _device(db)
     due = _push_sub(db, dev)
     db.execute("UPDATE subscriptions SET expires_at=datetime('now','+5 days') WHERE id=?", (due,))
-    retire_device(db, dev, "Unregistered")
+    retire_device(db, dev, "Unregistered", token=_TOKENS[dev])
     relay = FakeRelay([])
     with patch("app.push._post", relay):
         _send_push_checkins(db, _checkin_cfg())
@@ -889,7 +1105,7 @@ def test_push_subscription_is_live_at_once_with_the_empty_address_sentinel(db):
 def test_register_device_revives_the_same_token_and_keeps_its_subscriptions(db):
     dev = _device(db, token="same")
     sid = _push_sub(db, dev)
-    retire_device(db, dev, "Unregistered")
+    retire_device(db, dev, "Unregistered", token=_TOKENS[dev])
     db.execute("UPDATE push_devices SET dead_since=CURRENT_TIMESTAMP WHERE id=?", (dev,))
     again = register_device(db, platform="apns", token="same",
                             secret_hash="n" * 64, language="en")
@@ -992,10 +1208,10 @@ def test_prune_push_devices_purges_retired_and_abandoned_rows_only(db):
     from app.housekeeping import _prune_push_devices
     old = sql_ts(datetime.utcnow() - timedelta(days=31))
     retired_old = _device(db, token="r-old")
-    retire_device(db, retired_old, "Unregistered")
+    retire_device(db, retired_old, "Unregistered", token=_TOKENS[retired_old])
     db.execute("UPDATE push_devices SET retired_at=? WHERE id=?", (old, retired_old))
     retired_fresh = _device(db, token="r-new")
-    retire_device(db, retired_fresh, "Unregistered")
+    retire_device(db, retired_fresh, "Unregistered", token=_TOKENS[retired_fresh])
     abandoned = _device(db, token="abandoned")           # never subscribed
     db.execute("UPDATE push_devices SET last_seen_at=? WHERE id=?", (old, abandoned))
     dormant_with_sub = _device(db, token="dormant")      # old, but still subscribed

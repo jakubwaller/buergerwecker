@@ -32,11 +32,14 @@ def parse_hhmm(s: str) -> time_cls:
 
 
 def parse_max_days(raw) -> int | None:
-    """'Only slots within the next N days'; ''/0/invalid → no limit."""
+    """'Only slots within the next N days'; ''/0/invalid → no limit. A JSON
+    number gets the same four-digit ceiling as a string: past 9999 it means
+    no limit, rather than an arbitrarily long number stored in the filter and
+    printed in every digest."""
     if isinstance(raw, bool):
         return None
     if isinstance(raw, int):
-        return raw if raw > 0 else None
+        return raw if 0 < raw <= 9999 else None
     raw = (str(raw) if raw is not None else "").strip()
     # ASCII and short: "²" passes str.isdigit() and a 5,000-digit string
     # exceeds int()'s digit limit; both were a 500 instead of "no limit".

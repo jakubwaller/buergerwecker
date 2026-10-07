@@ -303,3 +303,33 @@ def test_paused_subscription_gets_no_heartbeat(db):
     with patch("app.mail.send") as send:
         run_once(db)
     assert _mails_to(send, "a@x.com") == []
+
+
+def test_rate_records_are_pruned_once_no_verdict_can_read_them(db):
+    from app.housekeeping import _prune_rate_records
+    for table, col, value in (("verify_attempts", "token_key, kind", "'k', 'open'"),
+                              ("rate_events", "bucket", "'newdev:x'")):
+        db.execute(f"INSERT INTO {table} ({col}, at) VALUES ({value}, "
+                   "datetime('now','-25 hours'))")
+        db.execute(f"INSERT INTO {table} ({col}, at) VALUES ({value}, "
+                   "datetime('now','-23 hours'))")
+    _prune_rate_records(db)
+    for table in ("verify_attempts", "rate_events"):
+        assert db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 1
+
+
+def test_rate_records_prune_runs_inside_housekeeping(db):
+    db.execute("INSERT INTO rate_events (bucket, at) VALUES ('slots:1', "
+               "datetime('now','-2 days'))")
+    with patch("app.mail.send"):
+        run_once(db)
+    assert db.execute("SELECT COUNT(*) FROM rate_events").fetchone()[0] == 0
+
+
+def test_the_device_prune_uses_the_subscriptions_device_index(db):
+    """One NOT EXISTS per device row: without the index each was a scan of
+    every subscription."""
+    plan = " ".join(r["detail"] for r in db.execute(
+        "EXPLAIN QUERY PLAN SELECT 1 FROM subscriptions s "
+        "WHERE s.device_id = ? AND s.deleted_at IS NULL", (1,)))
+    assert "idx_subs_device" in plan

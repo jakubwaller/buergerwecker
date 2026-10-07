@@ -130,7 +130,7 @@ def test_api_root_404_has_cors(on):
 
 
 def test_wrong_method_405_has_cors(on):
-    r = on.post("/api/v1/cities", headers={"Origin": "https://localhost"})
+    r = on.post("/api/v1/cities", json={}, headers={"Origin": "https://localhost"})
     assert r.status_code == 405
     assert r.headers.getlist("Access-Control-Allow-Origin") == ["https://localhost"]
 
@@ -152,6 +152,24 @@ def test_gate_off_unknown_path_still_404_with_cors(off):
     r = off.get("/api/v1/nope", headers={"Origin": "https://localhost"})
     assert r.status_code == 404
     assert r.headers["Access-Control-Allow-Origin"] == "https://localhost"
+
+
+@pytest.mark.parametrize("method, path", [
+    ("get", "/api/v1/nope"), ("get", "/api/v1"), ("post", "/api/v1/cities"),
+    ("delete", "/api/v1/devices"), ("patch", "/api/v1/device"),
+    ("get", "/api/v1/subscriptions/x"),
+])
+def test_gate_off_routing_errors_are_the_gated_json_too(off, method, path):
+    # Flask's HTML 404/405 would show the API is there, and which methods
+    # each route takes.
+    r = getattr(off, method)(path)
+    assert r.status_code == 404
+    assert r.get_json() == {"error": "not_available"}
+
+
+def test_gate_on_still_answers_routing_errors(on):
+    assert on.get("/api/v1/nope").status_code == 404
+    assert on.post("/api/v1/cities", json={}).status_code == 405
 
 
 def test_website_404_has_no_cors(on):

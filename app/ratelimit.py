@@ -48,6 +48,31 @@ class IPRateLimiter:
 
 GLOBAL_IP_LIMITER = IPRateLimiter()
 
+def db_rate_hit(conn: sqlite3.Connection, bucket: str, limit: int,
+                window_seconds: int) -> int:
+    """DB-backed sliding-window limit, shared across workers (rate_events).
+
+    Records one event in `bucket` and returns 0 when fewer than `limit` are
+    already in the last `window_seconds`; otherwise records nothing and
+    returns the seconds until the oldest one ages out. The check and the
+    insert are one statement, so two workers cannot both take the last place.
+    `limit <= 0` disables the limit."""
+    if limit <= 0:
+        return 0
+    window = f"-{int(window_seconds)} seconds"
+    cur = conn.execute(
+        "INSERT INTO rate_events (bucket) SELECT ? WHERE "
+        "(SELECT COUNT(*) FROM rate_events WHERE bucket=? "
+        " AND at > datetime('now', ?)) < ?",
+        (bucket, bucket, window, int(limit)))
+    if cur.rowcount == 1:
+        return 0
+    age = conn.execute(
+        "SELECT CAST(strftime('%s','now') - strftime('%s', MIN(at)) AS INTEGER) "
+        "FROM rate_events WHERE bucket=? AND at > datetime('now', ?)",
+        (bucket, window)).fetchone()[0]
+    return max(1, int(window_seconds) - int(age or 0))
+
 def email_rate_limit_ok(conn: sqlite3.Connection, email: str,
                         per_day_limit: int) -> bool:
     """DB-backed per-email rate limit (shared across workers).

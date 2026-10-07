@@ -58,6 +58,9 @@ class Config:
     # registration endpoint lets anyone create subscriptions without a
     # confirmation step.
     app_api_enabled: bool = False
+    # Devices one client network (an IPv4 address, an IPv6 /64) may register
+    # per rolling day, across all web workers. 0 disables the limit.
+    max_new_devices_per_ip_per_day: int = 5
     # The mail pool is the free provider chain (about 600/day). When its
     # rolling-24h usage reaches `mail_pool_pressure_pct` of the summed caps,
     # every mail subscriber's daily cap drops to `mail_cap_under_pressure`
@@ -222,6 +225,8 @@ def load_config() -> Config:
         # in minutes; a notification delivered an hour late is noise.
         push_ttl_seconds=int(os.environ.get("PUSH_TTL_SECONDS", "1800")),
         app_api_enabled=os.environ.get("APP_API_ENABLED", "0") == "1",
+        max_new_devices_per_ip_per_day=int(
+            os.environ.get("MAX_NEW_DEVICES_PER_IP_PER_DAY", "5")),
         mail_pool_pressure_pct=int(os.environ.get("MAIL_POOL_PRESSURE_PCT", "80")),
         mail_cap_under_pressure=int(
             os.environ.get("MAIL_CAP_UNDER_PRESSURE", "1")),

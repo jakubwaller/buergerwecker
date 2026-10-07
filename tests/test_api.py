@@ -31,6 +31,8 @@ _ENV = {
     "RENEWAL_REMINDER_DAYS_BEFORE": "10", "MAX_PLANS_PER_CITY": "10",
     "PARSER_CANARY_THRESHOLD_HOURS": "2", "DEVELOPER_EMAIL": "dev@x",
     "KOFI_URL": "https://k", "APP_API_ENABLED": "1",
+    # Every test client is one address; the tests of the limit lower it.
+    "MAX_NEW_DEVICES_PER_IP_PER_DAY": "999",
 }
 
 
@@ -54,13 +56,24 @@ def _db():
     return connect(os.environ["DB_PATH"])
 
 
+def tok(name="tok-1", platform="apns"):
+    """A synthetic push token of the platform's shape, named for the test:
+    64 hex characters for APNs, an FCM-style `<id>:APA91b…` for FCM."""
+    digest = hashlib.sha256(name.encode()).hexdigest()
+    if platform == "apns":
+        return digest
+    return f"{digest[:22]}:APA91b{hashlib.sha512(name.encode()).hexdigest()}"
+
+
 def _register(client, platform="apns", token="tok-1", language="de",
               verified=True):
-    """Register a device. Verified by default (straight in the database, as
-    if the code had been posted back) so the tests of everything else need
-    no push; tests/test_verification.py covers the verification itself."""
+    """Register a device; `token` is a name for `tok()`. Verified by default
+    (straight in the database, as if the code had been posted back) so the
+    tests of everything else need no push; tests/test_verification.py covers
+    the verification itself."""
     r = client.post("/api/v1/devices", json={"platform": platform,
-                                             "token": token, "language": language})
+                                             "token": tok(token, platform),
+                                             "language": language})
     assert r.status_code == 201, r.data
     body = r.get_json()
     if verified:
@@ -88,7 +101,7 @@ def _subscribe(client, auth, **over):
 def test_register_stores_the_hashed_secret_and_shows_it_once(client):
     dev, secret = _register(client)
     row = _db().execute("SELECT * FROM push_devices WHERE id=?", (dev,)).fetchone()
-    assert row["platform"] == "apns" and row["token"] == "tok-1"
+    assert row["platform"] == "apns" and row["token"] == tok()
     assert row["secret_hash"] == hashlib.sha256(secret.encode()).hexdigest()
     assert secret not in json.dumps(dict(row))
     r = client.get("/api/v1/device", headers=_auth(dev, secret))
@@ -106,14 +119,26 @@ def test_the_same_token_registering_again_is_the_same_device_with_a_pending_secr
     # The install that works is not broken; the new one waits for its code.
     r = client.get("/api/v1/device", headers=_auth(dev, old))
     assert r.status_code == 200 and len(r.get_json()["subscriptions"]) == 1
+    # ... and learns nothing about the device it is waiting for.
     r = client.get("/api/v1/device", headers=_auth(dev, new))
-    assert r.status_code == 200 and r.get_json()["verified"] is False
+    assert r.status_code == 200 and r.get_json() == {"verified": False}
+
+
+_HEX64 = "0123456789abcdef" * 4
 
 
 @pytest.mark.parametrize("body, error", [
     ({"platform": "sms", "token": "t"}, "unknown_platform"),
     ({"platform": "fcm", "token": ""}, "invalid_push_token"),
     ({"platform": "fcm", "token": "has space"}, "invalid_push_token"),
+    ({"platform": "fcm", "token": 12345}, "invalid_push_token"),
+    ({"platform": "fcm", "token": "a" * 63}, "invalid_push_token"),
+    ({"platform": "fcm", "token": "a" * 4097}, "invalid_push_token"),
+    ({"platform": "fcm", "token": "a" * 100 + "/x"}, "invalid_push_token"),
+    ({"platform": "fcm", "token": "a" * 100 + "é"}, "invalid_push_token"),
+    ({"platform": "apns", "token": "tok-1"}, "invalid_push_token"),
+    ({"platform": "apns", "token": _HEX64[:-1]}, "invalid_push_token"),
+    ({"platform": "apns", "token": _HEX64 * 4}, "invalid_push_token"),   # 256
     ({}, "unknown_platform"),
 ])
 def test_register_rejects_a_bad_platform_or_token(client, body, error):
@@ -121,9 +146,80 @@ def test_register_rejects_a_bad_platform_or_token(client, body, error):
     assert r.status_code == 400 and r.get_json()["error"] == error
 
 
-def test_register_accepts_a_body_that_is_not_json_as_empty(client):
-    r = client.post("/api/v1/devices", data="not json",
-                    content_type="text/plain")
+@pytest.mark.parametrize("alias", [
+    # Each of these reached APNs as /3/device/<T>: httpx drops the fragment
+    # and the query and resolves dot segments, so one phone verified a row
+    # per alias.
+    _HEX64 + "#1", _HEX64 + "?x", "x/../" + _HEX64, "./" + _HEX64,
+    _HEX64 + "/", _HEX64 + "%23", _HEX64[:32] + "\n" + _HEX64[32:], _HEX64 + "\x00",
+    _HEX64 + "K",            # KELVIN SIGN lowercases to an ASCII "k"
+])
+def test_register_refuses_every_alias_of_an_apns_token(client, alias):
+    r = client.post("/api/v1/devices", json={"platform": "apns", "token": alias})
+    assert r.status_code == 400 and r.get_json()["error"] == "invalid_push_token"
+    assert _db().execute("SELECT COUNT(*) FROM push_devices").fetchone()[0] == 0
+
+
+def test_a_token_that_is_not_utf8_is_a_400_not_a_500(client):
+    for platform in ("apns", "fcm"):
+        r = client.post("/api/v1/devices", data=json.dumps(
+            {"platform": platform, "token": "ab\ud800" * 40}),
+            content_type="application/json")
+        assert r.status_code == 400, platform
+        assert r.get_json()["error"] == "invalid_push_token"
+
+
+def test_apns_tokens_are_stored_lowercase_so_one_token_is_one_row(client):
+    upper = tok("case").upper()
+    r = client.post("/api/v1/devices", json={"platform": "apns", "token": upper})
+    assert r.status_code == 201
+    again = client.post("/api/v1/devices", json={"platform": "apns",
+                                                 "token": tok("case")})
+    assert again.get_json()["device_id"] == r.get_json()["device_id"]
+    row = _db().execute("SELECT token FROM push_devices").fetchone()
+    assert row["token"] == tok("case")
+
+
+def test_real_shaped_fcm_tokens_pass(client):
+    # The current shape: a 22-character installation id, ':' and an
+    # APA91b... body, about 163 characters in all; and an older one without
+    # the id. Synthetic, same alphabet and length.
+    current = "cAbC1dEf2GhI3jKl4MnO5p" + ":APA91b" + "Xy-_" * 34
+    legacy = "APA91b" + "Qz9_-a" * 25
+    for t in (current, legacy):
+        r = client.post("/api/v1/devices", json={"platform": "fcm", "token": t})
+        assert r.status_code == 201, (len(t), r.data)
+
+
+def test_register_refuses_a_body_that_is_not_json(client):
+    # A text/plain post is a "simple" request that a browser sends cross-site
+    # without a CORS preflight; requiring JSON forces the preflight.
+    for data, ctype in (("not json", "text/plain"),
+                        (json.dumps({"platform": "apns", "token": tok()}), "text/plain"),
+                        ("platform=apns", "application/x-www-form-urlencoded")):
+        r = client.post("/api/v1/devices", data=data, content_type=ctype)
+        assert r.status_code == 415, ctype
+        assert r.get_json()["error"] == "unsupported_media_type"
+    assert _db().execute("SELECT COUNT(*) FROM push_devices").fetchone()[0] == 0
+
+
+def test_every_route_with_a_body_requires_json(client):
+    dev, secret = _register(client)
+    auth = _auth(dev, secret)
+    for method, path in (("put", "/api/v1/device"),
+                         ("post", "/api/v1/device/verify"),
+                         ("post", "/api/v1/device/verify/resend"),
+                         ("post", "/api/v1/subscriptions"),
+                         ("put", "/api/v1/subscriptions/1"),
+                         ("post", "/api/v1/subscriptions/1/renew")):
+        r = getattr(client, method)(path, data="{}", content_type="text/plain",
+                                    headers=auth)
+        assert r.status_code == 415, (method, path)
+        assert r.get_json()["error"] == "unsupported_media_type"
+
+
+def test_a_json_body_that_is_not_an_object_is_empty(client):
+    r = client.post("/api/v1/devices", data="[1, 2]", content_type="application/json")
     assert r.status_code == 400 and r.get_json()["error"] == "unknown_platform"
 
 
@@ -145,7 +241,7 @@ def test_wrong_secret_or_unknown_device_is_unauthorized(client):
 
 def test_a_retired_device_is_told_to_register_afresh(client):
     dev, secret = _register(client)
-    retire_device(_db(), dev, "Unregistered")
+    retire_device(_db(), dev, "Unregistered", token=tok())
     r = client.get("/api/v1/subscriptions", headers=_auth(dev, secret))
     assert r.status_code == 410 and r.get_json()["error"] == "device_retired"
     # Registering again revives it; the verified old secret works again.
@@ -168,15 +264,80 @@ def test_every_authenticated_call_restarts_the_purge_clock(client):
 def test_registration_is_rate_limited_per_ip(client, monkeypatch):
     monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR", "2")
     c = create_app().test_client()
-    assert c.post("/api/v1/devices", json={"platform": "apns", "token": "a"}).status_code == 201
-    assert c.post("/api/v1/devices", json={"platform": "apns", "token": "b"}).status_code == 201
-    r = c.post("/api/v1/devices", json={"platform": "apns", "token": "c"})
+    assert c.post("/api/v1/devices", json={"platform": "apns", "token": tok("a")}).status_code == 201
+    assert c.post("/api/v1/devices", json={"platform": "apns", "token": tok("b")}).status_code == 201
+    r = c.post("/api/v1/devices", json={"platform": "apns", "token": tok("c")})
     assert r.status_code == 429 and r.get_json()["error"] == "rate_limited"
     # Reads are not counted: the app lists its subscriptions on every launch.
     assert c.get("/api/v1/cities").status_code == 200
-    # One budget per address across the form and the API.
-    assert c.post("/subscribe", data={"email": "a@example.com", "city": "leipzig",
-                                      "appointment_type": LEIPZIG_SVC}).status_code == 429
+    # The API has its own bucket: app traffic behind a carrier NAT does not
+    # use up the sign-up form's budget for everyone there.
+    keys = set(GLOBAL_IP_LIMITER._events)
+    assert keys and all(k.startswith("api:") for k in keys)
+
+
+def test_ipv6_clients_are_counted_by_their_slash_64(client, monkeypatch):
+    monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR", "2")
+    c = create_app().test_client()
+
+    def reg(name, addr):
+        return c.post("/api/v1/devices", json={"platform": "apns", "token": tok(name)},
+                      headers={"X-Forwarded-For": addr})
+    assert reg("v6-a", "2001:db8:1:2::1").status_code == 201
+    assert reg("v6-b", "2001:db8:1:2:ffff::9").status_code == 201
+    assert reg("v6-c", "2001:db8:1:2:abcd::5").status_code == 429     # same /64
+    assert reg("v6-d", "2001:db8:1:3::1").status_code == 201         # next /64
+    # IPv4 stays the full address, and an IPv4-mapped one counts as it.
+    assert reg("v4-a", "192.0.2.1").status_code == 201
+    assert reg("v4-b", "::ffff:192.0.2.1").status_code == 201
+    assert reg("v4-c", "192.0.2.1").status_code == 429
+    assert reg("v4-d", "192.0.2.2").status_code == 201
+    assert "api:2001:db8:1:2::/64" in GLOBAL_IP_LIMITER._events
+
+
+def test_new_devices_per_network_per_day_hold_across_workers(client, monkeypatch):
+    monkeypatch.setenv("MAX_NEW_DEVICES_PER_IP_PER_DAY", "2")
+    c = create_app().test_client()
+
+    def reg(name, addr="192.0.2.10"):
+        return c.post("/api/v1/devices", json={"platform": "apns", "token": tok(name)},
+                      headers={"X-Forwarded-For": addr})
+    first = reg("n1")
+    assert first.status_code == 201
+    assert reg("n2").status_code == 201
+    # The per-process limiter forgets (another worker, a restart); the
+    # database does not.
+    GLOBAL_IP_LIMITER._events.clear()
+    over = reg("n3")
+    assert over.status_code == 429 and over.get_json()["error"] == "rate_limited"
+    assert 0 < over.get_json()["retry_after"] <= 86400
+    # Deleting a device does not give its place back.
+    dev, secret = first.get_json()["device_id"], first.get_json()["secret"]
+    assert c.delete("/api/v1/device", headers=_auth(dev, secret)).status_code == 204
+    assert reg("n4").status_code == 429
+    # A token that already has a row is not a new device: re-registering works.
+    assert reg("n2").status_code == 201
+    # Another network has its own count, and the table holds no address.
+    assert reg("n5", "198.51.100.7").status_code == 201
+    buckets = [r[0] for r in _db().execute("SELECT bucket FROM rate_events")]
+    assert len(buckets) == 3 and not any("192.0.2" in b or "198.51" in b for b in buckets)
+    # The window frees after a day.
+    _db().execute("UPDATE rate_events SET at=datetime('now','-25 hours')")
+    assert reg("n6").status_code == 201
+
+
+def test_deleting_a_device_counts_against_the_network_but_is_never_refused(client, monkeypatch):
+    monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR", "2")
+    c = create_app().test_client()
+    dev, secret = _register(c, token="del-1")
+    assert c.delete("/api/v1/device", headers=_auth(dev, secret)).status_code == 204
+    # Register (1) and delete (2) used the budget up.
+    r = c.post("/api/v1/devices", json={"platform": "apns", "token": tok("del-2")})
+    assert r.status_code == 429
+    GLOBAL_IP_LIMITER._events.clear()
+    dev, secret = _register(c, token="del-3")
+    _register(c, token="del-4")
+    assert c.delete("/api/v1/device", headers=_auth(dev, secret)).status_code == 204
 
 
 # ---------------------------------------------------------------------------
@@ -188,22 +349,41 @@ def test_device_update_rotates_the_token_and_changes_the_language(client):
     db.execute("UPDATE push_devices SET dead_since=CURRENT_TIMESTAMP WHERE id=?", (dev,))
     assert client.put("/api/v1/device", json={"language": "fr"},
                       headers=_auth(dev, secret)).status_code == 400
-    assert client.put("/api/v1/device", json={"token": ""},
-                      headers=_auth(dev, secret)).status_code == 400
-    r = client.put("/api/v1/device", json={"token": "tok-2", "language": "en"},
+    for bad in ("", "tok-2", tok("tok-2") + "#1", tok("fcm", "fcm"), 7):
+        assert client.put("/api/v1/device", json={"token": bad},
+                          headers=_auth(dev, secret)).status_code == 400, bad
+    r = client.put("/api/v1/device", json={"token": tok("tok-2").upper(), "language": "en"},
                    headers=_auth(dev, secret))
     assert r.status_code == 200 and r.get_json()["language"] == "en"
     assert r.get_json()["verified"] is False       # a new token must verify again
     row = db.execute("SELECT * FROM push_devices WHERE id=?", (dev,)).fetchone()
-    assert row["token"] == "tok-2" and row["language"] == "en"
+    assert row["token"] == tok("tok-2") and row["language"] == "en"
     assert row["dead_since"] is None     # a new token: the evidence clock starts over
 
 
 def test_device_update_refuses_a_token_another_row_holds(client):
     dev, secret = _register(client, token="tok-1")
     _register(client, token="tok-2")
-    r = client.put("/api/v1/device", json={"token": "tok-2"}, headers=_auth(dev, secret))
+    r = client.put("/api/v1/device", json={"token": tok("tok-2")},
+                   headers=_auth(dev, secret))
     assert r.status_code == 409 and r.get_json()["error"] == "token_in_use"
+
+
+def test_owner_writes_stop_once_the_secret_was_replaced_in_between(client):
+    """The route authenticated the old secret; a pending one promoted before
+    the write (the phone changed hands) makes the write a no-op and a 401."""
+    from app.repo import delete_device, update_device
+    dev, secret = _register(client)
+    old_hash = hashlib.sha256(secret.encode()).hexdigest()
+    db = _db()
+    db.execute("UPDATE push_devices SET secret_hash=? WHERE id=?", ("f" * 64, dev))
+    assert update_device(db, dev, secret_hash=old_hash, language="en") == "unauthorized"
+    assert update_device(db, dev, secret_hash=old_hash, token=tok("x")) == "unauthorized"
+    assert delete_device(db, dev, old_hash) is False
+    row = db.execute("SELECT token, language FROM push_devices WHERE id=?", (dev,)).fetchone()
+    assert row["token"] == tok() and row["language"] == "de"
+    assert update_device(db, dev, secret_hash="f" * 64, language="en") == "ok"
+    assert delete_device(db, dev, "f" * 64) is True
 
 
 def test_delete_device_takes_its_subscriptions_along_and_ends_the_secret(client):
@@ -260,7 +440,14 @@ def test_city_slots_is_the_last_poll_per_watched_service(client):
         plan.key(): [Slot("2026-06-10", "10:30", LEIPZIG_LOC, LEIPZIG_SVC, "t"),
                      Slot("2026-06-09", "08:00", "loc-unknown", LEIPZIG_SVC, "t")],
         other.key(): []}, now=dt(2026, 6, 8, 12, 0))
-    body = client.get("/api/v1/cities/leipzig/slots").get_json()
+    dev, secret = _register(client)
+    auth = _auth(dev, secret)
+    assert _subscribe(client, auth).status_code == 201
+    assert _subscribe(client, auth, city="bonn",
+                      appointment_type=_bonn_service()).status_code == 201
+    r = client.get("/api/v1/cities/leipzig/slots", headers=auth)
+    assert r.headers["Cache-Control"] == "private, no-store"
+    body = r.get_json()
     assert body["slug"] == "leipzig" and body["polled_at"] == "2026-06-08T12:00:00Z"
     assert [s["name"] for s in body["services"]] == ["Abholung Ausweisdokumente",
                                                      "Abmeldung Wohnsitz"]
@@ -276,12 +463,118 @@ def test_city_slots_is_the_last_poll_per_watched_service(client):
     second = body["services"][1]
     assert second["slots"] == [] and second["earliest"] is None and second["n_total"] == 0
     # One service only, and English labels.
-    body = client.get(f"/api/v1/cities/leipzig/slots?service={LEIPZIG_SVC_2}&lang=en").get_json()
+    body = client.get(f"/api/v1/cities/leipzig/slots?service={LEIPZIG_SVC_2}&lang=en",
+                      headers=auth).get_json()
     assert [s["id"] for s in body["services"]] == [LEIPZIG_SVC_2]
-    # A city nobody watches has nothing to show, and says so.
-    assert client.get("/api/v1/cities/bonn/slots").get_json() == {
+    # A city nobody's poll has reached yet has nothing to show, and says so.
+    assert client.get("/api/v1/cities/bonn/slots", headers=auth).get_json() == {
         "slug": "bonn", "polled_at": None, "services": []}
-    assert client.get("/api/v1/cities/atlantis/slots").status_code == 404
+    assert client.get("/api/v1/cities/atlantis/slots", headers=auth).status_code == 404
+
+
+def _bonn_service():
+    from app.catalog import load_catalog
+    return next(u for u in load_catalog("bonn").appointment_types.values()
+                if not load_catalog("bonn").is_sensitive(u))
+
+
+def _snapshot(city, service, slot_loc="loc-x"):
+    from app.models import PollPlan, Slot
+    from app.snapshots import record_snapshots
+    plan = PollPlan(city=city, appointment_type=service, locations="all")
+    record_snapshots(_db(), [plan], {city}, [plan], {
+        plan.key(): [Slot("2026-06-10", "10:30", slot_loc, service, "t")]})
+
+
+def test_city_slots_is_for_a_verified_device_that_watches_the_city(client):
+    _snapshot("leipzig", LEIPZIG_SVC)
+    url = "/api/v1/cities/leipzig/slots"
+    r = client.get(url)
+    assert r.status_code == 401 and r.get_json() == {"error": "unauthorized"}
+    assert r.headers["Cache-Control"] == "no-store"
+    dev, secret = _register(client)
+    auth = _auth(dev, secret)
+    # Verified, but watching nothing here.
+    r = client.get(url, headers=auth)
+    assert r.status_code == 403 and r.get_json()["error"] == "not_subscribed"
+    assert r.get_json()["message"].startswith("Du beobachtest")
+    en = client.get(url + "?lang=en", headers=auth).get_json()
+    assert en["message"].startswith("You aren't watching")
+    sid = _subscribe(client, auth).get_json()["id"]
+    assert client.get(url, headers=auth).status_code == 200
+    # An expired subscription is paused, and watches nothing.
+    _db().execute("UPDATE subscriptions SET expires_at=datetime('now','-1 hour') "
+                  "WHERE id=?", (sid,))
+    assert client.get(url, headers=auth).get_json()["error"] == "not_subscribed"
+    _db().execute("UPDATE subscriptions SET expires_at=datetime('now','+1 day') "
+                  "WHERE id=?", (sid,))
+    assert client.delete(f"/api/v1/subscriptions/{sid}", headers=auth).status_code == 204
+    assert client.get(url, headers=auth).get_json()["error"] == "not_subscribed"
+    # Unverified (a token change), a pending credential, a retired device.
+    other, osecret = _register(client, token="other")
+    _subscribe(client, _auth(other, osecret))
+    _db().execute("UPDATE push_devices SET verified_at=NULL WHERE id=?", (other,))
+    r = client.get(url, headers=_auth(other, osecret))
+    assert r.status_code == 403 and r.get_json()["error"] == "device_unverified"
+    _db().execute("UPDATE push_devices SET verified_at=CURRENT_TIMESTAMP WHERE id=?",
+                  (other,))
+    _, pending = _register(client, token="other", verified=False)
+    r = client.get(url, headers=_auth(other, pending))
+    assert r.status_code == 403 and r.get_json()["error"] == "device_unverified"
+    retire_device(_db(), other, "Unregistered", token=tok("other"))
+    r = client.get(url, headers=_auth(other, osecret))
+    assert r.status_code == 410 and r.get_json()["error"] == "device_retired"
+
+
+def test_city_slots_shows_a_special_category_service_only_to_its_own_watchers(client):
+    city = "muenster-standesamt"
+    _snapshot(city, SBGG_SVC)
+    _snapshot(city, "2434")
+    url = f"/api/v1/cities/{city}/slots"
+    ordinary, so = _register(client, token="ordinary")
+    assert _subscribe(client, _auth(ordinary, so), city=city,
+                      appointment_type="2434").status_code == 201
+    body = client.get(url, headers=_auth(ordinary, so)).get_json()
+    assert [s["id"] for s in body["services"]] == ["2434"]
+    # Asking for it by id does not help.
+    body = client.get(url + f"?service={SBGG_SVC}", headers=_auth(ordinary, so)).get_json()
+    assert body["services"] == [] and body["polled_at"] is None
+    watcher, sw = _register(client, token="watcher")
+    assert _subscribe(client, _auth(watcher, sw), city=city, appointment_type=SBGG_SVC,
+                      consent_special=True).status_code == 201
+    body = client.get(url, headers=_auth(watcher, sw)).get_json()
+    assert {s["id"] for s in body["services"]} == {SBGG_SVC, "2434"}
+
+
+def test_city_slots_reads_are_capped_per_device_across_workers(client):
+    _snapshot("leipzig", LEIPZIG_SVC)
+    dev, secret = _register(client)
+    auth = _auth(dev, secret)
+    _subscribe(client, auth)
+    from app.api import MAX_SLOT_READS_PER_DEVICE_PER_HOUR as cap
+    _db().executemany("INSERT INTO rate_events (bucket) VALUES (?)",
+                      [(f"slots:{dev}",)] * (cap - 1))
+    assert client.get("/api/v1/cities/leipzig/slots", headers=auth).status_code == 200
+    r = client.get("/api/v1/cities/leipzig/slots", headers=auth)
+    assert r.status_code == 429 and 0 < r.get_json()["retry_after"] <= 3600
+    # Another device has its own count, and the write limit is not touched.
+    other, osecret = _register(client, token="other")
+    _subscribe(client, _auth(other, osecret))
+    assert client.get("/api/v1/cities/leipzig/slots",
+                      headers=_auth(other, osecret)).status_code == 200
+
+
+def test_authenticated_answers_are_never_stored_and_the_catalog_may_be(client):
+    dev, secret = _register(client)
+    auth = _auth(dev, secret)
+    for r in (client.get("/api/v1/device", headers=auth),
+              client.get("/api/v1/subscriptions", headers=auth),
+              _subscribe(client, auth),
+              client.get("/api/v1/subscriptions", headers=_auth(dev, "wrong")),
+              client.post("/api/v1/devices", json={"platform": "apns", "token": tok("n")})):
+        assert r.headers["Cache-Control"] == "no-store", r.request.path
+    assert "Cache-Control" not in client.get("/api/v1/cities").headers
+    assert "Cache-Control" not in client.get("/api/v1/cities/leipzig").headers
 
 
 def test_unknown_city_is_not_found(client):
@@ -370,6 +663,17 @@ def test_subscribe_ignores_digits_int_cannot_read(client, over, field, stored):
     r = _subscribe(client, _auth(dev, secret), **over)
     assert r.status_code == 201, r.data
     assert r.get_json()[field] == stored
+
+
+@pytest.mark.parametrize("raw, stored", [
+    (14, 14), (9999, 9999), (10000, None), (10 ** 30, None), (0, None), (-3, None),
+    (True, None),
+])
+def test_max_days_ahead_as_a_number_has_the_same_ceiling_as_a_string(client, raw, stored):
+    dev, secret = _register(client)
+    r = _subscribe(client, _auth(dev, secret), max_days_ahead=raw)
+    assert r.status_code == 201, r.data
+    assert r.get_json()["max_days_ahead"] == stored
 
 
 def test_a_body_over_the_limit_is_refused(client):
@@ -531,7 +835,7 @@ def test_renew_starts_a_new_term_and_clears_the_checkin_latch(client):
     # Expired is paused, not gone: still listed, inactive, renewable.
     listed = client.get("/api/v1/subscriptions", headers=auth).get_json()["subscriptions"]
     assert listed[0]["active"] is False
-    r = client.post(f"/api/v1/subscriptions/{sid}/renew", headers=auth)
+    r = client.post(f"/api/v1/subscriptions/{sid}/renew", json={}, headers=auth)
     assert r.status_code == 200 and r.get_json()["active"] is True
     row = db.execute("SELECT expires_at, reminder_sent_at FROM subscriptions WHERE id=?",
                      (sid,)).fetchone()
@@ -544,7 +848,7 @@ def test_renew_keeps_the_shorter_special_category_term(client):
     auth = _auth(dev, secret)
     sid = _subscribe(client, auth, city="muenster-standesamt", appointment_type=SBGG_SVC,
                      consent_special=True).get_json()["id"]
-    client.post(f"/api/v1/subscriptions/{sid}/renew", headers=auth)
+    client.post(f"/api/v1/subscriptions/{sid}/renew", json={}, headers=auth)
     row = _db().execute("SELECT expires_at FROM subscriptions WHERE id=?", (sid,)).fetchone()
     assert datetime.fromisoformat(row["expires_at"]) < datetime.utcnow() + timedelta(days=31)
 

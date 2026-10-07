@@ -463,22 +463,38 @@ retirement rule below keeps that from retiring anyone.
   every cycle a slot matches. That line on every cycle with no `retired`
   line ever is the misconfiguration signature; fix the knob it names. A
   retired device's `retire_reason` says which answer did it, and the app
-  re-registers on next launch.
-- `5xx`, FCM `429` (project quota), relay unreachable: released, the next
-  cycle retries, and the platform is not tried again this cycle (an outage
-  must not hold the poller for a timeout per device). APNs `429` is per
-  device token and releases only that push. Nothing is recorded as seen.
-- `403` / `401`: our credentials. The provider token is renewed and the push
-  retried once; refused again, everything on that platform waits for the next
-  cycle. A persistent `push: apns auth` line in the poller log means the key
-  or team id is wrong.
+  re-registers on next launch. The one exception: an unverified device that
+  holds no subscription (a registration answering its verification push) has
+  nothing a misconfiguration could take away and is retired on its first dead
+  answer, so a junk registration stops costing a request a minute. Either way
+  a device is retired (and `dead_since` stamped) only while it still holds the
+  token that answered.
+- `5xx`, FCM `429` (project quota), relay unreachable (a timeout, a refused
+  or reset connection): released, the next cycle retries, and the platform is
+  not tried again this cycle (an outage must not hold the poller for a timeout
+  per device). APNs `429` is per device token and releases only that push.
+  Nothing is recorded as seen.
+- `403` / `401`: our credentials, and so is a key that cannot even be loaded.
+  The provider token is renewed and the push retried once; refused again,
+  everything on that platform waits for the next cycle. A persistent
+  `push: apns auth` line in the poller log means the key or team id is wrong.
 - Any other `400`: our payload. Dropped and logged (`push: … refused payload`);
-  retrying cannot help.
+  retrying cannot help. A push the HTTP client cannot even build a request for
+  (`refused payload … local: InvalidURL…`) is dropped the same way, on its
+  own: one bad row must not stall the platform.
+
+A push goes only to the token it was queued for: a digest carries the token
+the cycle found verified, a check-in and a verification push the token they
+were made for, and a device that has changed its token since, or (for
+anything but the verification push) is no longer verified, gets nothing
+(`push: device … changed its token or lost its verification`). The APNs path
+carries the token percent-encoded as one segment, dots included.
 
 ### The app's API
 
 The API answers `404 {"error": "not_available"}` to everything, the public
-catalog routes included, while `APP_API_ENABLED` is unset or `0`. It is
+catalog routes and routing errors (an unknown path, a wrong method) included,
+while `APP_API_ENABLED` is unset or `0`. It is
 switched on (`APP_API_ENABLED=1`) together with the `APNS_*`/`FCM_*`
 credentials for the TestFlight build. Registration has no confirmation step of
 its own, so a device is verified by push before it may subscribe (below).
@@ -486,11 +502,21 @@ its own, so a device is verified by push before it may subscribe (below).
 The app talks to the web container under `/api/v1` (`app/api.py`); nothing
 else uses it, and the website is unchanged. The API answers CORS (on every path under `/api/v1`, routing errors included) only for the
 app's WebView origins (`CORS_ORIGINS`), and preflights succeed even while
-`APP_API_ENABLED` is off, so the gated 404 stays readable by the app. A device registers its push
+`APP_API_ENABLED` is off, so the gated 404 stays readable by the app. Every
+`POST` and `PUT` must be `Content-Type: application/json` (else `415
+unsupported_media_type`): a cross-site form or a `text/plain` fetch skips the
+preflight, and would let any web page register devices from its visitors'
+addresses. Every answer but the public catalog's is `Cache-Control: no-store`.
+A device registers its push
 token once (`POST /api/v1/devices`, `{platform, token, language}`) and gets a
 `device_id` and a `secret` shown once; every later call carries
 `Authorization: Bearer <device_id>.<secret>`. The secret is stored hashed
-(`push_devices.secret_hash`). There is no account and no address.
+(`push_devices.secret_hash`). There is no account and no address. The token
+must have its platform's shape (`api.normalize_push_token`): APNs 64 to 200
+hex characters (stored lowercase), FCM 64 to 4096 of `A-Z a-z 0-9 _ : -`;
+anything else is `400 invalid_push_token`, on `PUT /device` too. Before this,
+`T#1` or `x/../T` reached Apple as `/3/device/T`, one phone behind any number
+of rows.
 
 **Verification.** A device starts unverified. Registering (the same token
 again included) makes the server push a one-time code to the token
@@ -507,19 +533,34 @@ itself inside the register request when it has the `APNS_*`/`FCM_*`
 credentials; otherwise (or when the relay is down) the poller sweeps once a
 minute and sends it, for up to 24 hours. Registering a known token again (verified or not)
 never touches the existing secret, so it never breaks the install that works and
-cannot take a row over: the old secret keeps its access, the new one is pending (`GET /device` and the two verify routes only, usable 24 hours)
+cannot take a row over: the old secret keeps its access, the new one is pending (`GET /device`, which answers it only `{"verified": false}`, and the two verify routes, usable 24 hours)
 and replaces the old secret the moment its holder posts the code (exactly the
-secret that authenticated that call). A device's main secret may always call
+secret that authenticated that call). If the main secret posts the code
+instead, the pending secret is dropped: the phone answered its owner. A
+device's main secret may always call
 `GET/PUT/DELETE /device` and the verify routes, verified or not, so a device
-waiting for its code can still report a rotated token or delete its data. Changing the push token
+waiting for its code can still report a rotated token or delete its data; its
+`PUT` and `DELETE` act only while the row still has that secret. Changing the push token
 (`PUT /device`) un-verifies the device the same way (`"verified": false`, the
 code goes to the new token) and pauses its subscriptions, which neither poll
-nor count toward a city's plan cap until it verifies again. The same token can trigger at most one
-verification push a minute and five a day, both measured from delivered pushes
-in the database; register and token change never refuse, they stamp the
-request and the sender decides when it goes out (resend answers 429 with
-`retry_after`); the minute rule is an atomic claim on the idempotency key
-`verify|<device_id>|<UTC minute>`. The operator dashboard counts only subscriptions that run. `GET /device` shows an unverified device no subscriptions. A device that never verified and
+nor count toward a city's plan cap until it verifies again.
+
+Verification pushes are budgeted per token, in a record that outlives the
+device row (`verify_attempts`, keyed by a SHA-256 of platform and token), so
+deleting a device and registering again starts nothing over: one attempt a
+minute per token (and one delivered push a minute per device row), and per
+rolling day five on requests that need no credential (a registration, the same
+token again, a pending secret's resend) and, separately, five on the main
+secret's own requests (a token change, a resend), so a stranger re-registering
+somebody's token cannot spend the owner's. Every attempt the relay answered
+counts, delivered or refused; an outage does not. Register and token change
+never refuse, they stamp the request and the sender decides when it goes out
+(resend answers 429 with `retry_after`); a device over its budget is left
+alone until it frees (`push_devices.verify_next_at`). A request the relay has
+refused three times (`verify_failures`) is given up until the next one, and
+the poller's sweep sends to at most 50 devices a cycle (`push.MAX_SWEEP_DEVICES`),
+least recently tried first. The minute is also an atomic claim on the
+idempotency key `verify|<device_id>|<UTC minute>`. The operator dashboard counts only subscriptions that run. `GET /device` shows an unverified device no subscriptions. A device that never verified and
 holds no subscription is purged after a day (housekeeping). An app that shows
 "waiting for the test notification" forever therefore means `APNS_*`/`FCM_*`
 are missing or wrong on the VPS: check `docker compose logs poller | grep
@@ -531,7 +572,15 @@ are missing or wrong on the VPS: check `docker compose logs poller | grep
 - `GET /api/v1/cities`, `GET /api/v1/cities/<slug>`: the catalog the sign-up
   form shows, public.
 - `GET /api/v1/cities/<slug>/slots`: what the last polls found free, per
-  watched service, soonest first, with the earliest slot for the widget.
+  watched service, soonest first, with the earliest slot for the widget. For
+  a verified device only (the main secret; `401 unauthorized`, `403
+  device_unverified`, `410 device_retired` as everywhere), and only for a
+  city it watches: without a live subscription there (not deleted, not
+  expired) the answer is `403 not_subscribed`. A special-category (Art. 9)
+  service appears only to a device that watches that service itself, since
+  that somebody watches it is the sensitive fact. At most 60 reads per device
+  an hour across workers (`rate_events`), apart from the write limit;
+  `Cache-Control: private, no-store`.
   Read from `slot_snapshots`, one row per (city, service) that the poller
   rewrites after every cycle in which all of the service's plans succeeded
   (`app/snapshots.py`), so the overview adds no upstream request: the one
@@ -546,9 +595,17 @@ are missing or wrong on the VPS: check `docker compose logs poller | grep
   opt-in, so a push subscription is live at once.
 - A retired device (the relay reported its token dead) gets `410
   device_retired` on every authenticated call, and the app registers afresh.
-- Rate limits: registration and every write count against
-  `SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR` (per process, like the form); a device
-  holds at most 10 live subscriptions (`api.MAX_SUBSCRIPTIONS_PER_DEVICE`).
+- Rate limits: registration and every write, `DELETE /device` included
+  (counted, never refused: erasure does not wait), count against
+  `SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR` per client network, an IPv4 address
+  or an IPv6 /64, in the API's own bucket (`api:`; per process, like the
+  form, but apart from it, so app traffic behind a carrier NAT does not use
+  up the form). Across workers, in the database: at most
+  `MAX_NEW_DEVICES_PER_IP_PER_DAY` new devices (a token no row holds yet) per
+  client network per rolling day, `429 rate_limited` with `retry_after`
+  beyond it (`rate_events`, under a keyed hash of the network, no address
+  stored; everyone behind one carrier-NAT IPv4 shares it); a device holds at
+  most 10 live subscriptions (`api.MAX_SUBSCRIPTIONS_PER_DEVICE`).
 - The still-looking check-in reaches app subscriptions as a push
   (`push.checkin_*` in the i18n bundles) in the same window as the mail,
   `RENEWAL_REMINDER_DAYS_BEFORE` days before the term ends; the app answers
@@ -580,7 +637,9 @@ Silence is the healthy state. Retention: an unverified device without any
 subscription is purged after a day; a retired device is purged 30 days
 after retirement; a live one once 30 days have passed since both its last
 registration and the end of its last subscription (housekeeping, same clock as
-an address).
+an address). The per-token verification record (`verify_attempts`) and the
+cross-worker rate events (`rate_events`) are pruned by the daily housekeeping
+run once they are a day old, so no row lives past two days.
 
 ## Subscription term & the "still looking?" check-in
 

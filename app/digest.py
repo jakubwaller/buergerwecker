@@ -252,9 +252,12 @@ def send_digest(*, conn: sqlite3.Connection, subscription: Subscription,
             go_url += "?lang=en"
         title, push_body, data = render_push(subscription, matched_slots,
                                              catalog=catalog, booking_url=go_url)
+        # Bound to the token the cycle found verified: a token changed before
+        # the flush gets nothing (push.send_push_batch).
         item = OutgoingPush(device_id=device_id, title=title, body=push_body,
                             idem_key=key, data=data,
-                            collapse_id=f"sub-{subscription.id}")
+                            collapse_id=f"sub-{subscription.id}",
+                            token=getattr(subscription, "push_token", None))
     else:
         body = render_digest_text(subscription, matched_slots,
                                   unsubscribe_url=unsub_url,

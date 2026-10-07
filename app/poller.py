@@ -43,7 +43,9 @@ def main() -> None:
 
 def _sweep_verifications(conn, cfg) -> None:
     """Send the verification pushes the web process could not (no credentials
-    there, relay down, or a resend request). Never breaks the cycle."""
+    there, relay down, or a budget that said wait), at most
+    push.MAX_SWEEP_DEVICES a cycle, least recently tried first. Never breaks
+    the cycle."""
     try:
         from app.push import send_verifications
         send_verifications(conn, cfg)
