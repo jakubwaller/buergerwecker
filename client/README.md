@@ -372,9 +372,13 @@ where only invited testers can install the app and so only they can verify a dev
 
 - [ ] **A fresh security review of the app's API** (`app/api.py`, the whole of it, CORS included)
       before the App Store or Play release goes public. The last security passes ran on device
-      verification (#98); the CORS changes (#100, #103) came after them. Public, anyone with a
-      real phone can verify devices, by reinstalling for a new token too, so check the
-      per-device, per-IP and per-city limits against that, not against fake tokens.
+      verification (#98); the CORS changes (#100, #103) came after them. On iOS a verified
+      device needs a real install of the signed app (reinstalls give new tokens). On Android it
+      does not: `google-services.json` ships in every APK, and a headless FCM receiver can
+      register real tokens under the project and receive the verification push without a phone.
+      So assume scripted, unlimited verified Android devices, where the 10-per-device ceiling
+      limits nothing, and check the per-IP limit (per process) and the per-city plan cap
+      against that.
 
 ## Not in this version
 
