@@ -109,7 +109,8 @@ MAX_VERIFY_FAILURES = 3
 # evidence and whoever asked: the hard ceiling on what anyone can make us send
 # to one token. Above the two budgets together, so it never binds a token the
 # relay delivers to; it binds the refusals that count toward no budget, those
-# from a platform that delivers to nobody.
+# without evidence that the platform works, which an attacker can produce at
+# will by keeping every answer a junk token's first.
 MAX_VERIFY_ATTEMPTS_PER_TOKEN_PER_DAY = 20
 # Refusals, with evidence or without, after which an unverified device with
 # no subscription is retired: it has nothing to lose, the app re-registers on
@@ -123,16 +124,8 @@ def token_key(platform: str, token: str) -> str:
     return hashlib.sha256(f"{platform}|{token}".encode("utf-8")).hexdigest()
 
 
-def platform_last_delivery(conn: sqlite3.Connection, platform: str) -> str | None:
-    """When `platform` last delivered a push to anyone (SQLite's shape), or
-    None: what forgives the refusals a misconfiguration produced."""
-    row = conn.execute("SELECT sent_at FROM sent_idempotency WHERE provider=? "
-                       "ORDER BY sent_at DESC LIMIT 1", (platform,)).fetchone()
-    return row[0] if row else None
-
-
 def token_verify_wait(conn: sqlite3.Connection, key: str, kind: str,
-                      last_delivery: str | None) -> int:
+                      config: str | None) -> int:
     """Seconds until the token `key` may be sent another verification push on
     a request of `kind` (0 = now), from `verify_attempts`, so the rules hold
     across workers, the poller, and a deleted and re-created row:
@@ -141,12 +134,14 @@ def token_verify_wait(conn: sqlite3.Connection, key: str, kind: str,
     - the kind's daily budget, counting deliveries and refusals with evidence
       that the platform works (`credited`);
     - MAX_VERIFY_ATTEMPTS_PER_TOKEN_PER_DAY, counting every answered attempt,
-      except a refusal without evidence made before the platform's
-      `last_delivery`: once the platform delivers to anyone again, what a
-      misconfiguration refused is forgiven, while on a platform that delivers
-      to nobody it stays counted."""
+      except a refusal without evidence made under other platform settings
+      than the current `config` (push.config_fingerprint; None counts them
+      all). Fixing a misconfiguration changes the settings and so forgives
+      what it refused; nothing a client does can. (Forgiving once the
+      platform delivered to anyone let any delivery reset the count: the
+      attacker's own phone, or other users' digests.)"""
     rows = conn.execute(
-        "SELECT kind, credited, at, "
+        "SELECT kind, credited, config, "
         "CAST(strftime('%s','now') - strftime('%s', at) AS INTEGER) AS age "
         "FROM verify_attempts WHERE token_key=? "
         "AND at > datetime('now','-1 day') ORDER BY at DESC", (key,)).fetchall()
@@ -163,7 +158,7 @@ def token_verify_wait(conn: sqlite3.Connection, key: str, kind: str,
     wait = max(wait, frees([r["age"] for r in rows
                             if r["credited"] and r["kind"] == kind], cap))
     counted = [r["age"] for r in rows
-               if r["credited"] or last_delivery is None or r["at"] > last_delivery]
+               if r["credited"] or config is None or r["config"] == config]
     wait = max(wait, frees(counted, MAX_VERIFY_ATTEMPTS_PER_TOKEN_PER_DAY))
     return max(0, wait)
 
@@ -183,27 +178,27 @@ def device_verify_wait(conn: sqlite3.Connection, device_id: int) -> int:
 
 
 def verify_push_wait(conn: sqlite3.Connection, device_id: int, *,
-                     kind: str | None = None) -> int:
+                     kind: str | None = None, config: str | None = None) -> int:
     """Seconds until the device may be sent a verification push on a request
     of `kind` (default: the outstanding request's): the device's own minute
-    and its current token's budget (`token_verify_wait`), whichever is
-    later."""
+    and its current token's budget and ceiling (`token_verify_wait`, under
+    the platform settings `config`), whichever is later."""
     row = conn.execute("SELECT platform, token, verify_kind FROM push_devices "
                        "WHERE id=?", (device_id,)).fetchone()
     if row is None:
         return 0
     return max(device_verify_wait(conn, device_id),
                token_verify_wait(conn, token_key(row["platform"], row["token"]),
-                                 kind or row["verify_kind"] or "open",
-                                 platform_last_delivery(conn, row["platform"])))
+                                 kind or row["verify_kind"] or "open", config))
 
 
 def record_verify_attempts(conn: sqlite3.Connection,
                            attempts: list[tuple[str, str, str, bool]]) -> None:
-    """One row per (token_key, kind, platform, credited) the relay answered:
+    """One row per (token_key, kind, config, credited) the relay answered:
     credited for a delivery or a refusal the platform's evidence stands
-    behind (see push.send_verifications)."""
-    conn.executemany("INSERT INTO verify_attempts (token_key, kind, platform, credited) "
+    behind (see push.send_verifications); `config` the platform settings it
+    was made under (push.config_fingerprint)."""
+    conn.executemany("INSERT INTO verify_attempts (token_key, kind, config, credited) "
                      "VALUES (?,?,?,?)",
                      [(k, kind, p, 1 if c else 0) for k, kind, p, c in attempts])
 

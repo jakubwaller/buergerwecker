@@ -276,6 +276,31 @@ def test_registration_is_rate_limited_per_ip(client, monkeypatch):
     assert keys and all(k.startswith("api:") for k in keys)
 
 
+def test_addresses_that_embed_an_ipv4_address_count_as_it(client, monkeypatch):
+    """A 6to4 address carries its IPv4 address, and 2002:<v4>::/48 is 65,536
+    /64s for whoever holds that one IPv4: counted by the /64, every one was a
+    fresh budget. Teredo names its client's IPv4 the same way."""
+    monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR", "2")
+    monkeypatch.setenv("MAX_NEW_DEVICES_PER_IP_PER_DAY", "3")
+    c = create_app().test_client()
+
+    def reg(name, addr):
+        return c.post("/api/v1/devices", json={"platform": "apns", "token": tok(name)},
+                      headers={"X-Forwarded-For": addr})
+    assert reg("e1", "192.0.2.1").status_code == 201
+    assert reg("e2", "2002:c000:201:1::1").status_code == 201         # 6to4 of 192.0.2.1
+    assert reg("e3", "2002:c000:201:2::1").status_code == 429         # another /64 of it
+    assert reg("e4", "2001:0:4136:e378:8000:63bf:3fff:fdfe").status_code == 429  # Teredo
+    assert reg("e5", "2002:c000:202::1").status_code == 201           # 6to4 of 192.0.2.2
+    assert set(GLOBAL_IP_LIMITER._events) == {"api:192.0.2.1", "api:192.0.2.2"}
+    # The database count is shared the same way, across workers.
+    GLOBAL_IP_LIMITER._events.clear()
+    assert reg("e6", "2002:c000:201:3::1").status_code == 201
+    GLOBAL_IP_LIMITER._events.clear()
+    r = reg("e7", "2002:c000:201:4::1")
+    assert r.status_code == 429 and r.get_json()["retry_after"] > 0
+
+
 def test_ipv6_clients_are_counted_by_their_slash_64(client, monkeypatch):
     monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR", "2")
     c = create_app().test_client()

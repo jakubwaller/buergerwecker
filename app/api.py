@@ -285,14 +285,18 @@ def _client_network() -> str:
     """The client's address as the rate limits count it: an IPv4 address as
     it is, an IPv6 address by its /64, the smallest network one subscriber
     is handed (counting single IPv6 addresses would give each phone 2^64
-    budgets). An IPv4-mapped address counts as the IPv4 one."""
+    budgets). An address that carries an IPv4 address counts as that IPv4:
+    IPv4-mapped, 6to4 (2002:<v4>::/48, 65,536 /64s for whoever holds the one
+    IPv4) and Teredo (the client's IPv4)."""
     raw = _client_ip()
     try:
         ip = ipaddress.ip_address(raw)
     except ValueError:
         return raw
-    if ip.version == 6 and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
+    if ip.version == 6:
+        embedded = ip.ipv4_mapped or ip.sixtofour or (ip.teredo or (None, None))[1]
+        if embedded is not None:
+            ip = embedded
     if ip.version == 6:
         return str(ipaddress.ip_network(f"{ip}/64", strict=False))
     return str(ip)
@@ -595,7 +599,9 @@ def device_verify_resend():
     if _rate_limited():
         return _error("rate_limited", 429, lang)
     kind = "open" if g.credential_pending else "owner"
-    wait = verify_push_wait(g.conn, g.device["id"], kind=kind)
+    from app.push import config_fingerprint
+    wait = verify_push_wait(g.conn, g.device["id"], kind=kind,
+                            config=config_fingerprint(_cfg(), g.device["platform"]))
     if wait > 0:
         return _error("rate_limited", 429, lang, retry_after=wait)
     with transaction(g.conn):

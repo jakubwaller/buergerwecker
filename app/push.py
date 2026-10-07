@@ -15,6 +15,7 @@ special-category subscription the body names nothing and the city slug stays
 home too (see `render_push`): the relay payload goes through Apple or Google.
 """
 from __future__ import annotations
+import hashlib
 import json
 import sqlite3
 import time
@@ -221,11 +222,12 @@ def send_verifications(conn: sqlite3.Connection, cfg, *,
     evidence (`PushResult.refused` minus `failed`: a wrong APNS_TOPIC,
     APNS_SANDBOX or FCM project answers so for every device) counts toward
     neither, which would lock everyone who registered in that window out for
-    a day after the fix, but it counts toward the ceiling until the platform
-    delivers to anyone after it, and an unverified device with no
-    subscription is retired after MAX_UNCONFIRMED_REFUSALS of either kind.
-    So a junk token costs at most the ceiling a day even on a platform that
-    delivers to nobody. An outage counts toward nothing.
+    a day after the fix, but it counts toward the ceiling for as long as the
+    platform settings are the ones it was made under (`config_fingerprint`;
+    fixing them forgives it, no client can), and an unverified device with
+    no subscription is retired after MAX_UNCONFIRMED_REFUSALS. So a junk
+    token costs at most the ceiling a day, however the attacker times its
+    answers. An outage counts toward nothing.
 
     `verify_sent_at` is stamped only for a delivered push whose code the row
     still holds, so a device whose push could not go out is picked up again
@@ -242,8 +244,7 @@ def send_verifications(conn: sqlite3.Connection, cfg, *,
     from app.db import transaction
     from app.repo import (MAX_UNCONFIRMED_REFUSALS, defer_verification,
                           device_verify_wait, devices_awaiting_verification,
-                          mark_verification_sent,
-                          platform_last_delivery, record_verify_attempts,
+                          mark_verification_sent, record_verify_attempts,
                           record_verify_refusals, retire_unconfirmed,
                           set_verify_code, token_key, token_verify_wait)
     platforms = [p for p in PLATFORMS if configured(cfg, p)]
@@ -256,19 +257,17 @@ def send_verifications(conn: sqlite3.Connection, cfg, *,
         share = max(1, MAX_SWEEP_DEVICES // len(platforms))
         candidates = [row for p in platforms for row in devices_awaiting_verification(
             conn, platforms=[p], min_age_seconds=SWEEP_GRACE_SECONDS, limit=share)]
-    last_delivery: dict[str, str | None] = {}
+    configs = {p: config_fingerprint(cfg, p) for p in platforms}
     items: list[OutgoingPush] = []
-    # idem_key -> (device_id, code hash, token key, request kind, platform, token)
+    # idem_key -> (device_id, code hash, token key, request kind, config, token)
     sent: dict[str, tuple[int, str, str, str, str, str]] = {}
     # Devices this pass tried to send to (claimed or not).
     touched: list[int] = []
     for row in candidates:
         kind = row["verify_kind"] or "open"
-        platform = row["platform"]
-        tkey = token_key(platform, row["token"])
-        if platform not in last_delivery:
-            last_delivery[platform] = platform_last_delivery(conn, platform)
-        wait = max(token_verify_wait(conn, tkey, kind, last_delivery[platform]),
+        config = configs[row["platform"]]
+        tkey = token_key(row["platform"], row["token"])
+        wait = max(token_verify_wait(conn, tkey, kind, config),
                    device_verify_wait(conn, row["id"]))
         if wait > 0:
             defer_verification(conn, row["id"], wait)
@@ -290,7 +289,7 @@ def send_verifications(conn: sqlite3.Connection, cfg, *,
             body=t(lang, "push.verify_body"), idem_key=key,
             data={"type": "verify", "code": code},
             collapse_id=f"verify-{row['id']}", token=row["token"]))
-        sent[key] = (row["id"], code_hash, tkey, kind, platform, row["token"])
+        sent[key] = (row["id"], code_hash, tkey, kind, config, row["token"])
     if not touched:
         return 0
     result = PushResult()
@@ -305,8 +304,8 @@ def send_verifications(conn: sqlite3.Connection, cfg, *,
     settled = {s[0] for s in delivered + confirmed + unconfirmed}
     with transaction(conn):
         record_verify_attempts(
-            conn, [(tkey, kind, p, True) for _, _, tkey, kind, p, _ in delivered + confirmed]
-            + [(tkey, kind, p, False) for _, _, tkey, kind, p, _ in unconfirmed])
+            conn, [(tkey, kind, c, True) for _, _, tkey, kind, c, _ in delivered + confirmed]
+            + [(tkey, kind, c, False) for _, _, tkey, kind, c, _ in unconfirmed])
         mark_verification_sent(conn, [(s[0], s[1]) for s in delivered])
         record_verify_refusals(conn, [s[0] for s in confirmed], confirmed=True)
         record_verify_refusals(conn, [s[0] for s in unconfirmed], confirmed=False)
@@ -334,6 +333,27 @@ def configured(cfg, platform: str) -> bool:
     if platform == "fcm":
         return bool(getattr(cfg, "fcm_service_account_json", ""))
     return False
+
+
+def config_fingerprint(cfg, platform: str) -> str:
+    """A short hash of the settings a relay's answer depends on besides the
+    token: the ones a misconfiguration is fixed in (APNs team, key, topic and
+    sandbox; the FCM project and service account). A refusal without evidence
+    counts toward a token's hard ceiling only while these are unchanged
+    (repo.token_verify_wait), so fixing a misconfiguration forgives what it
+    refused, and nothing a client can do does. No secret goes into it."""
+    if platform == "apns":
+        parts = [getattr(cfg, k, "") for k in ("apns_team_id", "apns_key_id",
+                                              "apns_topic")]
+        parts.append("sandbox" if getattr(cfg, "apns_sandbox", False) else "production")
+    else:
+        try:
+            acct = _fcm_account(cfg)
+            parts = [acct.get("project_id", ""), acct.get("client_email", "")]
+        except Exception:
+            parts = ["unreadable"]
+    raw = "|".join([platform, *(str(p) for p in parts)])
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
 _apns_jwt: dict[str, tuple[str, float]] = {}      # key id -> (token, issued at)

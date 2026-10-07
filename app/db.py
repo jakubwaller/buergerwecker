@@ -119,10 +119,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_push_devices_token
 
 -- Verification pushes attempted per push token, every one the relay answered.
 -- `credited` is 1 for a delivery or a refusal while the platform showed it
--- works, and only those count toward the daily budgets; 0 is a refusal from a
--- platform that delivered to nobody (a misconfiguration answers the same for
--- every device), which counts only toward the hard ceiling and only until the
--- platform delivers to anyone after it. An outage is not recorded at all.
+-- works, and only those count toward the daily budgets; 0 is a refusal
+-- without that evidence (a misconfiguration answers the same for every
+-- device), which counts only toward the hard ceiling, and only while the
+-- platform settings are still the ones it was made under (`config`, a hash of
+-- them: push.config_fingerprint). Fixing the settings forgives it; no client
+-- can. An outage is not recorded at all.
 -- `token_key` is the SHA-256 of "<platform>|<token>", so the count outlives
 -- the device row: deleting a device and registering its token again starts no
 -- new budget. `kind` is the request's (see push_devices.verify_kind). Read
@@ -132,7 +134,7 @@ CREATE TABLE IF NOT EXISTS verify_attempts (
   token_key  TEXT NOT NULL,
   kind       TEXT NOT NULL,
   at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  platform   TEXT NOT NULL DEFAULT '',
+  config     TEXT NOT NULL DEFAULT '',
   credited   INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_verify_attempts_key ON verify_attempts(token_key, at);
@@ -434,7 +436,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
         "verify_tries": "INTEGER NOT NULL DEFAULT 0",
     })
     _add_missing_columns(conn, "verify_attempts", {
-        "platform": "TEXT NOT NULL DEFAULT ''",
+        "config": "TEXT NOT NULL DEFAULT ''",
         "credited": "INTEGER NOT NULL DEFAULT 1",
     })
     # best_time: the earliest time told under a day key. Existing day-key rows

@@ -564,10 +564,14 @@ request path (register, resend, `PUT /device`) and the sweep alike. It counts
 every attempt the relay answered, refusals without evidence included, so a
 junk token costs at most that much even on a platform that delivers to
 nobody (FCM before any Android phone gets pushes). A refusal without
-evidence stops counting toward it once the platform delivers to anyone
-after it, so a fixed misconfiguration is forgiven as soon as any push goes
-out. On a platform with a single device that is not enough: after fixing
-the config there, `DELETE FROM verify_attempts WHERE credited=0` clears it.
+evidence counts toward it only while the platform's settings are the ones it
+was made under (`push.config_fingerprint`: APNs team, key, topic and sandbox;
+the FCM project and service account), so fixing `APNS_TOPIC`, `APNS_SANDBOX`,
+the key or the FCM JSON forgives what the misconfiguration refused. A
+delivery does not forgive anything: anyone can make one (an attacker's own
+phone, other users' digests). A misconfiguration fixed somewhere else, in
+the Apple developer account say, leaves the settings unchanged; after such a
+fix, `DELETE FROM verify_attempts WHERE credited=0` clears it.
 Register and token change
 never refuse, they stamp the request and the sender decides when it goes out
 (resend answers 429 with `retry_after`); a device over its budget or the
@@ -622,7 +626,8 @@ are missing or wrong on the VPS: check `docker compose logs poller | grep
 - Rate limits: registration and every write, `DELETE /device` included
   (counted, never refused: erasure does not wait), count against
   `SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR` per client network, an IPv4 address
-  or an IPv6 /64, in the API's own bucket (`api:`; per process, like the
+  or an IPv6 /64 (an IPv6 address that carries an IPv4 one, IPv4-mapped,
+  6to4 or Teredo, counts as that IPv4), in the API's own bucket (`api:`; per process, like the
   form, but apart from it, so app traffic behind a carrier NAT does not use
   up the form). Across workers, in the database: at most
   `MAX_NEW_DEVICES_PER_IP_PER_DAY` new devices (a token no row holds yet) per

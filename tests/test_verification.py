@@ -975,25 +975,56 @@ def test_a_paused_device_backs_off_and_stays_under_the_ceiling(client, monkeypat
     assert _row(dev)["retired_at"] is None and active_subscriptions(_db()) == []
 
 
-def test_a_misconfiguration_that_spent_the_ceiling_is_forgiven_once_anyone_gets_a_push(
-        client, monkeypatch):
+def test_a_delivery_anyone_can_make_does_not_reset_a_junk_tokens_ceiling(client, monkeypatch):
+    """Refusals without evidence were forgiven once the platform delivered
+    to anyone after them: the attacker's own phone (or an FCM token minted
+    from the app's public config, or other users' digests) reset a junk
+    token's count with every push it received."""
     app_client = _relay_client(monkeypatch)
-    wrong = Relay(status=400, reason="BadDeviceToken")
-    with patch("app.push._post", wrong):
-        for _ in range(_ceiling()):
+    relay = ByToken(["junk"], status=400, reason="BadDeviceToken")  # every other delivers
+    with patch("app.push._post", relay):
+        for i in range(_ceiling() + 10):
             _time_passes()
+            mine = app_client.post("/api/v1/devices", json={"platform": "apns",
+                                                            "token": tok(f"mine-{i}")})
+            assert mine.status_code == 201
             r = app_client.post("/api/v1/devices", json={"platform": "apns",
-                                                         "token": tok()})
+                                                         "token": tok("junk")})
+            body = r.get_json()
+            assert app_client.delete("/api/v1/device", headers=_auth(
+                body["device_id"], body["secret"])).status_code == 204
+    assert len(relay.to("mine-0")) == 1
+    assert len(relay.to("junk")) == _ceiling()
+
+
+def test_a_misconfiguration_that_spent_the_ceiling_is_forgiven_once_the_config_changes(
+        client, monkeypatch):
+    """What a misconfiguration refused was refused under settings the fix
+    changes; nothing an attacker does can change them."""
+    from app.push import config_fingerprint
+    from app.web import create_app
+    _enable_push(monkeypatch)
+    monkeypatch.setenv("APNS_TOPIC", "app.example.wrong")
+    wrong_app = create_app()
+    wrong_app.config["TESTING"] = True
+    wrong = Relay(status=400, reason="DeviceTokenNotForTopic")
+    with patch("app.push._post", wrong):
+        for _ in range(_ceiling() + 3):
+            _time_passes()
+            r = wrong_app.test_client().post(
+                "/api/v1/devices", json={"platform": "apns", "token": tok()})
     dev = r.get_json()["device_id"]
     assert len(wrong.calls) == _ceiling()
     _time_passes()
-    assert verify_push_wait(_db(), dev) > 3600                # the ceiling holds...
+    assert verify_push_wait(_db(), dev, config=config_fingerprint(
+        load_config(), "apns")) > 3600                         # the ceiling holds...
+    monkeypatch.setenv("APNS_TOPIC", _APNS_ENV["APNS_TOPIC"])   # ...until the fix
+    fixed_client = _relay_client(monkeypatch)
+    assert verify_push_wait(_db(), dev, config=config_fingerprint(
+        load_config(), "apns")) == 0
     with patch("app.push._post", Relay()) as fixed:
-        _register(app_client, token="someone-else", verified=False)
-        assert len(fixed.calls) == 1
-        assert verify_push_wait(_db(), dev) == 0              # ...until the platform works
-        _register(app_client, verified=False)
-    assert len(fixed.calls) == 2 and _attempts() == ["open"]
+        _register(fixed_client, verified=False)
+    assert len(fixed.calls) == 1 and _attempts() == ["open"]
 
 
 def test_junk_on_one_platform_cannot_crowd_out_the_other(client, monkeypatch):
