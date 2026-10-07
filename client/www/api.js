@@ -50,25 +50,43 @@ export const isApiError = (e) => !!e && typeof e === "object" && "status" in e &
 export const isUnavailable = (e) => isApiError(e) && e.status === 404 && e.error === "not_available";
 
 // Which i18n key and variables explain an error to a person. The server's
-// own sentence wins over our generic one; a few cases have their own wording
-// because they ask the person to do something specific.
+// own sentence, in the device's language, wins whenever it sent one: it knows
+// the actual cause (a waitlist full for this city, or for this device; too many
+// new devices from here today; a body too large), where the app only has a
+// fallback per key. Our own errors (no network, a timeout) carry no sentence.
 export function errorText(err) {
   if (!isApiError(err)) return { key: "err.generic", vars: {} };
+  if (typeof err.message === "string" && err.message.trim()) return { text: err.message };
   switch (err.error) {
     case "waitlist_full":
-      return { key: "err.waitlist_full", vars: {} };
-    case "too_many_subscriptions":
-      return { key: "err.too_many_subscriptions", vars: { limit: err.limit ?? 10 } };
     case "network":
     case "timeout":
-      return { key: `err.${err.error}`, vars: {} };
     case "rate_limited":
-      return err.message ? { text: err.message } : { key: "err.rate_limited", vars: {} };
     case "not_found":
-      return err.message ? { text: err.message } : { key: "err.not_found", vars: {} };
+    case "not_subscribed":
+    case "too_large":
+      return { key: `err.${err.error}`, vars: {} };
+    case "too_many_subscriptions":
+      return { key: "err.too_many_subscriptions", vars: { limit: err.limit ?? 10 } };
     default:
-      return err.message ? { text: err.message } : { key: "err.generic", vars: {} };
+      return { key: "err.generic", vars: {} };
   }
+}
+
+// `url` as an absolute URL on https://buergerwecker.de itself (exact origin:
+// scheme, host and default port), or null. A push's `url` is opened in the
+// system browser, and nothing about a push proves who wrote it, so the app
+// opens only its own site's pages (the server's /go/<slug> redirects).
+export function siteUrl(url) {
+  if (typeof url !== "string" || !url) return null;
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  if (u.origin !== SITE_URL || u.username || u.password) return null;
+  return u.href;
 }
 
 let credentials = () => null; // → { id, secret } or null
@@ -146,7 +164,9 @@ const q = (lang) => `?lang=${encodeURIComponent(lang)}`;
 export const api = {
   cities: (lang) => request("GET", `/cities${q(lang)}`),
   city: (slug, lang) => request("GET", `/cities/${encodeURIComponent(slug)}${q(lang)}`),
-  slots: (slug, lang) => request("GET", `/cities/${encodeURIComponent(slug)}/slots${q(lang)}`),
+  // Only for a device with a live alert in that city (403 not_subscribed
+  // otherwise), and a special-category service only to a device watching it.
+  slots: (slug, lang) => request("GET", `/cities/${encodeURIComponent(slug)}/slots${q(lang)}`, { auth: true }),
 
   registerDevice: (platform, token, language) =>
     request("POST", "/devices", { body: { platform, token, language } }),

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and older (android:fullBackupContent). allowBackup="false"
+     turns backup off there altogether; should it ever be switched on, the
+     device credential (SecureStore.java) still stays out. Android 12+ reads
+     data_extraction_rules.xml instead. -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="buergerwecker_secure.xml" />
+</full-backup-content>

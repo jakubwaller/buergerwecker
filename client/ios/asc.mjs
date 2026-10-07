@@ -31,6 +31,11 @@ const API = "https://api.appstoreconnect.apple.com/v1";
 // own; it reads what the page wrote for it from the App Group. `capabilities`
 // is what each App ID needs switched on.
 export const APP_GROUP = "group.de.buergerwecker.app";
+// The keychain access group both targets list after $(AppIdentifierPrefix) in
+// their entitlements: the app keeps the device credential there, the widget
+// reads it. Every profile of the team carries keychain-access-groups <team>.*,
+// so this needs no capability on the App IDs and no step on the portal.
+export const KEYCHAIN_GROUP = "de.buergerwecker.shared";
 export const BUNDLE_IDS = [
   { identifier: "de.buergerwecker.app", name: "Buergerwecker", capabilities: ["PUSH_NOTIFICATIONS", "APP_GROUPS"] },
   { identifier: "de.buergerwecker.app.widget", name: "Buergerwecker Widget", capabilities: ["APP_GROUPS"] },
@@ -194,6 +199,12 @@ export async function profiles(dir) {
     if (capabilities.includes("APP_GROUPS") && !text.includes(APP_GROUP)) {
       throw new Error(`${name} carries no App Group: create ${APP_GROUP} on developer.apple.com ` +
                       `(Identifiers → App Groups) and tick it on ${identifier} (App IDs → App Groups → Configure)`);
+    }
+    // Both targets ask for <team>.KEYCHAIN_GROUP; a profile allows it through
+    // its keychain-access-groups wildcard, which Apple puts in every profile.
+    if (!text.includes("keychain-access-groups")) {
+      throw new Error(`${name} carries no keychain-access-groups entitlement, which the app and the widget ` +
+                      `need for ${KEYCHAIN_GROUP} (the device credential)`);
     }
     console.log(`${name} → ${file}`);
   }

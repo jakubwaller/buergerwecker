@@ -8,10 +8,25 @@
 	<array/>
 	<!-- Reads the city list and the words the app wrote for it into the App
 	     Group, and keeps the last answer it got there. It asks buergerwecker.de
-	     for a city's public slot snapshot (no device id, no credential, nothing
-	     the app does not already send) and collects nothing. -->
+	     for a city's slot snapshot with the device credential the app keeps in
+	     the shared Keychain group: the same identifier of the install the app
+	     sends (declared the same way as in App/PrivacyInfo.xcprivacy), to the
+	     same host, for nothing else. -->
 	<key>NSPrivacyCollectedDataTypes</key>
-	<array/>
+	<array>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeDeviceID</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSPrivacyAccessedAPITypes</key>
 	<array>
 		<dict>

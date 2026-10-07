@@ -14,9 +14,9 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  * What the page tells the home-screen widget (client/www/widget.js): the cities
  * to show, the language and the words, as one JSON string in
  * SharedPreferences, which EarliestSlotWidget reads. No credential goes through
- * here: the slots route the widget fetches is public. After a change the
- * widgets are asked to update at once instead of waiting for their 30-minute
- * period. Write-only from the page's side; nothing leaves the phone.
+ * here: the widget reads the device credential from SecureStore itself. After a
+ * change the widgets are asked to update at once instead of waiting for their
+ * 30-minute period. Write-only from the page's side; nothing leaves the phone.
  *
  * The preference names live in EarliestSlotWidget; client/test/widget.test.mjs
  * holds every method the page calls to a @PluginMethod here.
@@ -40,12 +40,14 @@ public class WidgetBridgePlugin extends Plugin {
     @PluginMethod
     public void clear(PluginCall call) {
         getContext().getSharedPreferences(EarliestSlotWidget.PREFS, Context.MODE_PRIVATE)
-            .edit().remove(EarliestSlotWidget.KEY_CONFIG).remove(EarliestSlotWidget.KEY_CACHE).apply();
+            .edit().remove(EarliestSlotWidget.KEY_CONFIG).remove(EarliestSlotWidget.KEY_CACHE)
+            .remove(EarliestSlotWidget.KEY_LOCKED).apply();
         requestUpdate(getContext());
         call.resolve();
     }
 
-    private static void requestUpdate(Context context) {
+    /** Also SecureStorePlugin's, when the credential changes. */
+    static void requestUpdate(Context context) {
         AppWidgetManager manager = AppWidgetManager.getInstance(context);
         int[] ids = manager.getAppWidgetIds(new ComponentName(context, EarliestSlotWidget.class));
         if (ids.length == 0) return;

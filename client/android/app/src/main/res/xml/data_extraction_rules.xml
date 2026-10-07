@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12 and later: what may leave the phone in a cloud backup or a
+     device-to-device transfer. android:allowBackup="false" in the manifest
+     already stops the cloud backup; on 12+ it no longer stops a transfer to a
+     new phone, and these rules keep the device credential out of both
+     (SecureStore.java: SecureStore.PREFS, the file name below). Its key never
+     leaves the AndroidKeyStore, so a copy elsewhere would be unreadable anyway;
+     this keeps even the ciphertext on this phone. A new phone registers as a
+     new device. client/test/widget.test.mjs holds the file name to the code. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="buergerwecker_secure.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="buergerwecker_secure.xml" />
+    </device-transfer>
+</data-extraction-rules>

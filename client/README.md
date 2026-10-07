@@ -13,8 +13,9 @@ overview shows the server's own last poll, and "Book on the city's site" opens t
 `/go/<slug>` redirect in the system browser.
 
 There is no account and no address. The phone registers its push token (`POST /devices`) and
-gets an id and a secret, kept in the Preferences plugin and nowhere else; every authenticated
-call sends `Authorization: Bearer <id>.<secret>`. "Delete my data" is one `DELETE /device`.
+gets an id and a secret, kept in the Keychain (iOS) or encrypted under an AndroidKeyStore key
+(Android) and in no backup (see "The device credential" below); every authenticated call sends
+`Authorization: Bearer <id>.<secret>`. "Delete my data" is one `DELETE /device`.
 
 ## What the app does
 
@@ -33,22 +34,33 @@ call sends `Authorization: Bearer <id>.<secret>`. "Delete my data" is one `DELET
 3. **Cities**, grouped by city like the website's switcher (one city, several offices).
 4. **City overview**: per service the earliest free slot and the soonest few, "as of" the
    server's last poll in local time, "+N more"; "nobody is watching this service yet" where
-   there is no snapshot; "Watch this service" and "Book on the city's site".
+   there is no snapshot; "Watch this service" and "Book on the city's site". The slots come
+   only to a device with a live alert in that city (`GET /cities/<slug>/slots` takes the
+   device credential and answers `403 not_subscribed` otherwise), so without one the screen
+   says to set up an alert for the city; a special-category service appears only to a device
+   that watches it itself, and its card claims nothing when it is absent.
 5. **Subscribe / edit form**: service (with the Art. 9 consent box for a `sensitive`
    service), offices filtered by the service, weekdays, time window, how far ahead.
 6. **My alerts**: each with its filter, "runs until", "Keep looking" on expired ones, edit and
    stop. Loaded on launch and on resume, never on a timer.
 7. **Home-screen widget** (iOS small + medium, Android resizable): the earliest free slot in the
-   cities of the device's active alerts, "as of" the server's last poll. It only shows; a tap opens
-   the app (see "The widget" below).
+   cities of the device's active alerts, special-category (Art. 9) ones left out, "as of" the
+   server's last poll. It only shows; a tap opens the app (see "The widget" below).
 8. **Settings**: language (German/English, from the device language at first), delete my data,
    privacy / imprint / contact on buergerwecker.de, the version.
 
 Notification taps: `slots` opens the booking URL in the system browser and the city's overview
 in the app; `checkin` opens My alerts with "Yes, keep looking" / "No, I've got one" in front;
-`verify` sends the code. In the foreground a small in-app banner does the same on tap. While the
-server's `APP_API_ENABLED` gate is closed (every route `404 not_available`) the app shows one
-"not released yet" screen.
+`verify` sends the code. In the foreground a small in-app banner does the same on tap. A push's
+`url` is opened only when its origin is exactly `https://buergerwecker.de` (`siteUrl` in
+`api.js`); anything else is ignored. While the server's `APP_API_ENABLED` gate is closed (every
+route `404 not_available`) the app shows one "not released yet" screen.
+
+Errors: every API error body has `error` (a key) and usually `message`, a sentence in the
+device's language; the app shows `message` whenever there is one (a waitlist full for this city
+or for this device, too many new devices from one place in a day, a body too large) and its own
+fallback per key otherwise (`errorText` in `api.js`). Every request with a body sends
+`Content-Type: application/json`; the server refuses a body that is not JSON.
 
 ## Layout
 
@@ -61,9 +73,11 @@ client/
   www/                  the app: index.html, app.js (start-up, frame, notification taps),
                         api.js (the one network module), push.js (registration, verification),
                         state.js (navigation, subscription list, catalog cache), i18n.js (every
-                        string in de and en), format.js, store.js (Preferences), native.js (the
-                        Capacitor seam), ui.js, screens/*.js, style.css
-  test/                 node --test: i18n key sets, API error mapping, formatting, push rules
+                        string in de and en), format.js, store.js (Preferences, and the device
+                        credential through SecureStore), native.js (the Capacitor seam), ui.js,
+                        screens/*.js, style.css
+  test/                 node --test: i18n key sets, API error mapping, formatting, push rules,
+                        the credential's move out of Preferences, the native contracts
   plugins.test.mjs      Package.swift's plugin list held to package.json
   assets/               icon and splash sources (the site's alarm-clock glyph on #2563eb); every
                         size under ios/ and android/ comes from
@@ -72,19 +86,25 @@ client/
                         tests/test_no_real_pii.py reads the name as an email address
   ios/App/              the Xcode project (SPM, no CocoaPods), iOS 18
     App/                AppDelegate (hands the APNs token to the push plugin), SceneDelegate,
-                        MainViewController (registers WidgetBridgePlugin), Info.plist,
-                        App.entitlements (aps-environment, App Group), PrivacyInfo.xcprivacy
-    BuergerweckerWidget/ the WidgetKit extension (SwiftUI): the widget, its Info.plist, App Group
-                        entitlements, privacy manifest, German/English gallery texts
-  ios/add-widget-target.rb  registers the extension target with the Xcode project; idempotent,
-                        for after `npx cap add ios` regenerated it
+                        MainViewController (registers WidgetBridgePlugin and SecureStorePlugin),
+                        Info.plist, App.entitlements (aps-environment, App Group, keychain
+                        group), PrivacyInfo.xcprivacy
+    BuergerweckerWidget/ the WidgetKit extension (SwiftUI): the widget, its Info.plist,
+                        entitlements (App Group, keychain group), privacy manifest,
+                        German/English gallery texts
+  ios/add-widget-target.rb  registers the extension target (and the app's three Swift files)
+                        with the Xcode project; idempotent, for after `npx cap add ios`
+                        regenerated it
   ios/asc.mjs           App Store Connect API for the runner: bundle id, certificate, profile,
                         TestFlight "What to Test" text and beta group distribution
   ios/distribution.csr  the request the distribution certificate is signed from (no secret in it)
   ios/testflight/       what-to-test.<locale>.txt, one per TestFlight locale
   android/              the Android project; MainActivity registers PushGatePlugin (is push
-                        available in this build, and the notification settings button) and
-                        WidgetBridgePlugin; EarliestSlotWidget is the home-screen widget
+                        available in this build, and the notification settings button),
+                        WidgetBridgePlugin and SecureStorePlugin (SecureStore.java: the
+                        credential under an AndroidKeyStore key); EarliestSlotWidget is the
+                        home-screen widget; res/xml/data_extraction_rules.xml and
+                        backup_rules.xml keep the credential out of backup and transfer
   android/play.mjs      Google Play Developer API: upload a signed bundle to a track
   android/PLAY.md       keys, Firebase, the first Play release
 ```
@@ -187,32 +207,82 @@ in the project, the URL scheme, `CFBundleLocalizations` and `ITSAppUsesNonExempt
 For App Review 4.2 / 4.2.2 the app's answer to "a repackaged website" is what a website cannot be:
 push, no account, and a widget. The widget only shows; it never books and a tap opens the app.
 
-- **Data.** It fetches `GET /api/v1/cities/<slug>/slots` itself, the public snapshot route (no device
-  credential, so none is shared with it), and shows the earliest slot that would also trigger an
-  alert: each alert's service plus its offices, weekdays, time window and days ahead, matched like the
-  server's `app/filters.py` (inclusive time bounds, ISO weekdays, office ids, Berlin's today). The
-  snapshot keeps only the 100 soonest slots per service, so a match further out than that is not seen.
-  Nothing matching: "no matching slot right now" with the as-of time. Nothing new leaves the phone: the same host, the same route the app's city overview reads.
-  While `APP_API_ENABLED` is off (every route 404) or the network is down it shows the last answer
-  with its "as of" time; with none, a neutral "set up an alert in the app" text.
+- **Data.** It fetches `GET /api/v1/cities/<slug>/slots` itself, with the device credential
+  (`Authorization: Bearer <id>.<secret>`) it reads natively from the secure store (below; the page
+  never hands it over), and shows the earliest slot that would also trigger an alert: each alert's
+  service plus its offices, weekdays, time window and days ahead, matched like the server's
+  `app/filters.py` (inclusive time bounds, ISO weekdays, office ids, Berlin's today). The snapshot
+  keeps only the 100 soonest slots per service, so a match further out than that is not seen.
+  Nothing matching: "no matching slot right now" with the as-of time. Nothing new leaves the phone:
+  the same host, the same route and the same credential the app's city overview uses.
+- **What it shows when the answer is not a 200.** `401`, `410` or a `403` (the credential is
+  refused, the device unverified or retired), or no credential at all (the app not opened since
+  this version moved it, "Delete my data"): only "open the app", and the cached answers are
+  deleted, so nothing stale can later pass for live; the next answer that proves the credential
+  works lifts it. `403 not_subscribed` for one city: that city drops out until the app sends a new
+  list. `429` (the route's per-device budget, about 60 an hour shared with the app), `404` while
+  `APP_API_ENABLED` is off, or no network: the last answer with its "as of" time; with none, "no
+  data yet".
 - **Which cities.** The page decides (`www/widget.js`): the cities of the *active* alerts, at most
   five, with each alert's filter, the language, and the strings and weekday/month words from
-  `i18n.js` (native code cannot read it). It writes that through the local `WidgetBridge` plugin
-  (`setConfig` / `clear`) after the alert list loads or changes, after a language change, and on
-  "Delete my data". No alerts: the widget asks the person to open the app.
+  `i18n.js` (native code cannot read it). A special-category alert (`consent_special`, Art. 9) is
+  left out entirely, and so is a city only such alerts watch: a home-screen widget shows city,
+  time and office to anyone who looks at the phone, which the push for such an alert withholds
+  (`app/push.py`). It writes that through the local `WidgetBridge` plugin (`setConfig` / `clear`)
+  after the alert list loads or changes, after a language change, and on "Delete my data", and
+  skips a write that would change nothing (each one costs a fetch per city). No alerts: the widget
+  asks the person to open the app.
 - **iOS.** `BuergerweckerWidget` (bundle id `de.buergerwecker.app.widget`), SwiftUI, small and
   medium; timeline refresh about every 20 minutes (WidgetKit decides). The plugin
   (`App/WidgetBridgePlugin.swift`) writes the JSON into the App Group `group.de.buergerwecker.app`'s
-  UserDefaults and calls `reloadAllTimelines()`; the extension keeps its last answers there too. Both
-  privacy manifests declare reason `1C8F.1` (the App Group's defaults).
+  UserDefaults and calls `reloadAllTimelines()`; the extension keeps its last answers there too, and
+  reads the credential from the keychain group it shares with the app. Both privacy manifests
+  declare reason `1C8F.1` (the App Group's defaults) and the install's identifier sent to
+  buergerwecker.de for app functionality.
 - **Android.** `EarliestSlotWidget`, an `AppWidgetProvider` with a RemoteViews layout (one to three
   rows by height, light and dark), `updatePeriodMillis` 30 minutes (the platform floor; no
-  WorkManager dependency) plus an update broadcast from the plugin whenever the list changes. The
-  fetch runs inside that broadcast (`goAsync`), cities in parallel, 8 s timeouts. Data and cache
-  live in the SharedPreferences file `buergerwecker_widget`.
+  WorkManager dependency) plus an update broadcast from the plugins whenever the list or the
+  credential changes. The fetch runs inside that broadcast (`goAsync`), cities in parallel, 8 s
+  timeouts. Data and cache live in the SharedPreferences file `buergerwecker_widget`; the
+  credential comes from `SecureStore`.
 
 `test/widget.test.mjs` holds the page's side and the native contracts (plugin methods on both
-platforms, the App Group name, the storage keys, every string key native code reads) together.
+platforms, the App Group and keychain group names, the Keychain item's attributes, the storage
+keys, the backup rules, every string key native code reads) together.
+
+### The device credential
+
+The id and secret the server hands out at registration are the device's whole identity: whoever
+holds them can read and delete its alerts, special-category ones included. So they are kept out of
+Capacitor's Preferences, which are UserDefaults on iOS and land in every iCloud and Finder backup.
+
+- **iOS.** `App/SecureStorePlugin.swift` (`SecureStore` to the page) keeps them as one Keychain
+  item (generic password, service `de.buergerwecker.device`, account `credential`, the JSON
+  `{"id", "secret"}`), `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, not synchronisable:
+  never in iCloud Keychain, never restored onto another phone, readable in the background after
+  the first unlock (the widget refreshes with the screen locked). It sits in the keychain access
+  group **`$(AppIdentifierPrefix)de.buergerwecker.shared`**, which both `App.entitlements` and
+  `BuergerweckerWidget.entitlements` list under `keychain-access-groups`; the extension reads it
+  from there (`Credential` in `BuergerweckerWidget.swift`). Every App Store profile carries
+  `keychain-access-groups <team>.*`, so the group needs no capability on the App IDs and no step on
+  developer.apple.com; `ios/asc.mjs profiles` stops early if a profile ever lacks the wildcard.
+- **Android.** `SecureStore.java` encrypts the same JSON with an AES-256-GCM key generated in the
+  `AndroidKeyStore` (it never leaves it) and keeps the ciphertext in the private preference file
+  `buergerwecker_secure`. `allowBackup="false"` was already set; on Android 12+ that no longer
+  stops a device-to-device transfer, so `res/xml/data_extraction_rules.xml` excludes the file from
+  both cloud backup and transfer, and `backup_rules.xml` (`fullBackupContent`) does the same for
+  Android 11 and older. A new phone registers as a new device.
+- **The rest of the record** (`token`, `platform`, `verified`) stays in Preferences under `device`;
+  `push.js` puts the two together on launch. A credential in the Keychain with no record beside it
+  is what a reinstall finds on iOS (Keychain items outlive the app); it is deleted and the app
+  registers afresh, as a reinstall always has.
+- **Moving off Preferences.** Builds before this one kept `id` and `secret` inside the `device`
+  record. On the first launch of this one `store.migrateCredential` writes them to the secure store,
+  reads them back, and only then takes them out of the record; if the secure store refuses, the
+  record stays as it was and the next launch tries again. Until the updated app has been opened
+  once, the widget finds no credential and says "open the app".
+
+Every change to the credential reloads the widget. "Delete my data" removes it before anything else.
 
 ### TestFlight text
 
@@ -226,6 +296,17 @@ TestFlight shows now. This is PapaMap's process unchanged; its README has the de
 ### Android
 
 `android/PLAY.md`: the upload key, Firebase, the first Play release, the `play` task.
+
+## This version needs a new TestFlight build
+
+The credential's move into the Keychain / AndroidKeyStore, the widget's credential and the
+`not_subscribed` handling only exist in a build made from this code; `www/` is bundled into the
+app, so no server deploy reaches a phone. Builds before it keep the secret in UserDefaults (in
+every backup), and against the server that requires the credential on
+`GET /cities/<slug>/slots` their widget gets a `401` and their city overview no slots. Order: the
+server change and this one both on `main` and deployed (the API stays closed meanwhile), then a
+`testflight` run from `main`, then the gate. The keychain group needs nothing on
+developer.apple.com (see "The device credential").
 
 ## Before the first TestFlight build
 

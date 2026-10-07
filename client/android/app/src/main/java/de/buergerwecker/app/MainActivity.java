@@ -10,6 +10,7 @@ public class MainActivity extends BridgeActivity {
         // Before super: the bridge is built there, with the plugins it knows.
         registerPlugin(PushGatePlugin.class);
         registerPlugin(WidgetBridgePlugin.class);
+        registerPlugin(SecureStorePlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

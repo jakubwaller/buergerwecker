@@ -6,5 +6,11 @@
 	<array>
 		<string>group.de.buergerwecker.app</string>
 	</array>
+	<!-- The app's keychain group: the widget reads the device credential from
+	     it for GET /cities/<slug>/slots (App/App.entitlements). -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)de.buergerwecker.shared</string>
+	</array>
 </dict>
 </plist>

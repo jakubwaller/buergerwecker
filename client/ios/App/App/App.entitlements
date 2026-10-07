@@ -11,5 +11,13 @@
 	<array>
 		<string>group.de.buergerwecker.app</string>
 	</array>
+	<!-- The device credential (SecureStorePlugin.swift), shared with the
+	     widget extension, which lists the same group. The first entry is also
+	     the default group for new items. Every profile of the team allows
+	     <team>.*, so no App ID capability or portal step goes with it. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)de.buergerwecker.shared</string>
+	</array>
 </dict>
 </plist>

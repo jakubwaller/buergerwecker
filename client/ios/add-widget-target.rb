@@ -1,7 +1,8 @@
 #!/usr/bin/env ruby
 # Registers the home-screen widget with the Xcode project: the extension target
-# (de.buergerwecker.app.widget), the app's two Swift files for it, the embed
-# phase, the App Group entitlements, and the Release signing the runner uses.
+# (de.buergerwecker.app.widget), the app's three Swift files for it (the two
+# plugins and the view controller that registers them), the embed phase, the
+# entitlements (App Group, keychain group), and the Release signing the runner uses.
 # Idempotent. Run it after regenerating ios/ (`npx cap add ios`), which knows
 # nothing of the widget. Needs the xcodeproj gem: `gem install --user-install xcodeproj`.
 #
@@ -35,8 +36,9 @@ def add_variant(group, target, name, langs)
   target.resources_build_phase.add_file_reference(vg, true) unless target.resources_build_phase.files_references.include?(vg)
 end
 
-# The app's side: the plugin and the view controller that registers it.
-%w[WidgetBridgePlugin.swift MainViewController.swift].each { |f| add_file(app_group, app, f) }
+# The app's side: the two plugins (the widget's list, the device credential in
+# the shared Keychain group) and the view controller that registers them.
+%w[WidgetBridgePlugin.swift SecureStorePlugin.swift MainViewController.swift].each { |f| add_file(app_group, app, f) }
 app_group.new_file("App.entitlements") unless app_group.files.any? { |f| f.path == "App.entitlements" }
 app.build_configurations.each { |c| c.build_settings["CODE_SIGN_ENTITLEMENTS"] = "App/App.entitlements" }
 
