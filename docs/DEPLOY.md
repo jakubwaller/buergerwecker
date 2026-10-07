@@ -462,7 +462,7 @@ the service account in use (the FCM one, or a separate one in
 builds installed from Google Play pass; set `PLAY_INTEGRITY_REQUIRED=0` only on
 a dev server. Each check is one `decodeIntegrityToken` call against the app's
 daily quota (10,000 by default); a network with 3 failed checks in ten minutes
-(30 per IPv6 /48) is refused with 429 without a call. **Before the public
+(10 per IPv6 /48) is refused with 429 without a call. **Before the public
 release, request the higher Play Integrity usage tier in the Play Console**
 (App integrity → Play Integrity API), or real registrations can hit 503 on the
 quota.

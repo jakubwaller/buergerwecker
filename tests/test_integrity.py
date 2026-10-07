@@ -14,6 +14,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from app import push
+from app.api import MAX_INTEGRITY_FAILURES_PER_IP6_48
 from app.db import connect, init_schema
 from app.integrity import PACKAGE_NAME, verify_play_integrity
 from app.ratelimit import GLOBAL_IP_LIMITER
@@ -509,10 +510,11 @@ def test_a_network_over_its_failures_gets_429_and_no_google_call(client):
 def test_an_ipv6_48_is_bounded_across_its_64s(client):
     google = _fail_google()
     with patch("app.push._post", google):
-        for i in range(30):
+        for i in range(MAX_INTEGRITY_FAILURES_PER_IP6_48):
             assert _from(client, f"f{i}", addr=V6 % i).status_code == 403
         r = _from(client, "last", addr=V6 % 99)
-    assert r.status_code == 429 and len(google.decode_calls) == 30
+    assert r.status_code == 429
+    assert len(google.decode_calls) == MAX_INTEGRITY_FAILURES_PER_IP6_48
 
 
 def test_the_failures_expire_after_ten_minutes(client):

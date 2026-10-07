@@ -60,7 +60,7 @@ the database transaction. It fails closed: 400 `integrity_missing`, 403
 `integrity_failed`, 503 `integrity_unavailable`. PLAY_INTEGRITY_REQUIRED=0
 skips it for local servers; production runs with 1. Each decode spends
 Google's daily quota, so a network that has failed three checks in ten
-minutes (thirty per IPv6 /48) is answered 429 without a call, and a token
+minutes (ten per IPv6 /48) is answered 429 without a call, and a token
 that is not a JWE fails without one.
 
 Every POST and PUT must be `application/json` (else 415): a cross-site form
@@ -645,10 +645,13 @@ def register():
 # past which no further check is sent to Google: each decode spends the app's
 # daily quota (10,000 by default), which anonymous junk must not be able to
 # exhaust for the real phones. Ten minutes like the module's other network
-# limits; three is room for a real phone's retries, thirty for a /48.
+# limits; three is room for a real phone's retries. Ten for a /48: at thirty,
+# one /48 (a free tunnel broker hands them out) could spend 4,320 decodes a
+# day, nearly half the default quota; at ten it is 1,440, and the quota then
+# takes seven /48s, before the higher usage tier DEPLOY.md asks for.
 _INTEGRITY_FAIL_WINDOW = 600
 MAX_INTEGRITY_FAILURES_PER_NETWORK = 3
-MAX_INTEGRITY_FAILURES_PER_IP6_48 = 30
+MAX_INTEGRITY_FAILURES_PER_IP6_48 = 10
 _INTEGRITY_STATUS = {"integrity_missing": 400, "integrity_failed": 403,
                      "integrity_unavailable": 503}
 
