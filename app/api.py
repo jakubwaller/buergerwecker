@@ -86,6 +86,9 @@ MAX_SUBSCRIPTIONS_PER_DEVICE = 10
 # A push token is a few hundred characters on either platform; anything
 # longer is not one.
 _TOKEN_MAX = 4096
+# Request body ceiling for /api/v1 (see _body_limit): the largest request the
+# app makes is under 1 kB.
+MAX_BODY_BYTES = 16 * 1024
 _LANGS = ("de", "en")
 
 # Sentences for the errors only the API has (the website's come from
@@ -98,6 +101,10 @@ _API_MESSAGES = {
     "invalid_code": {
         "de": "Der Code ist ungültig oder abgelaufen.",
         "en": "The code is invalid or has expired.",
+    },
+    "too_large": {
+        "de": "Die Anfrage ist zu groß.",
+        "en": "The request is too large.",
     },
 }
 
@@ -164,6 +171,19 @@ def register_cors(app):
 def _gate():
     if not _cfg().app_api_enabled:
         return jsonify({"error": "not_available"}), 404
+    return None
+
+
+@api.before_request
+def _body_limit():
+    """No request the app makes comes near MAX_BODY_BYTES (a subscription for
+    every office of the largest city is under 1 kB). Without a limit Flask
+    parsed any size: a 30 MB body to the unauthenticated register route was
+    accepted, at about four times its size in memory. The app-wide default
+    stays unset for the provider webhooks, which batch events."""
+    request.max_content_length = MAX_BODY_BYTES
+    if request.content_length is not None and request.content_length > MAX_BODY_BYTES:
+        return _error("too_large", 413)
     return None
 
 

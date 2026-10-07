@@ -347,6 +347,39 @@ def test_subscribe_validates_like_the_form(client, over, status, error):
     assert active_subscriptions(_db()) == []
 
 
+def test_subscribe_stores_each_office_and_weekday_once(client):
+    # Every office entry goes upstream in the poller's request for the plan,
+    # every cycle: one valid id repeated was a multi-MB POST to the city.
+    dev, secret = _register(client)
+    r = _subscribe(client, _auth(dev, secret), locations=[LEIPZIG_LOC] * 200,
+                   weekdays=[3, 1, 3, "1", 7] * 100)     # still under MAX_BODY_BYTES
+    assert r.status_code == 201, r.data
+    body = r.get_json()
+    assert body["locations"] == [LEIPZIG_LOC] and body["weekdays"] == [1, 3, 7]
+
+
+@pytest.mark.parametrize("over, field, stored", [
+    ({"weekdays": ["²", 2]}, "weekdays", [2]),
+    ({"max_days_ahead": "²"}, "max_days_ahead", None),
+    ({"max_days_ahead": "9" * 5000}, "max_days_ahead", None),
+])
+def test_subscribe_ignores_digits_int_cannot_read(client, over, field, stored):
+    # str.isdigit() takes "²", and int() refuses it, or a 5,000-digit
+    # string: both were a 500.
+    dev, secret = _register(client)
+    r = _subscribe(client, _auth(dev, secret), **over)
+    assert r.status_code == 201, r.data
+    assert r.get_json()[field] == stored
+
+
+def test_a_body_over_the_limit_is_refused(client):
+    from app.api import MAX_BODY_BYTES
+    r = client.post("/api/v1/devices", data=b"{" + b" " * MAX_BODY_BYTES + b"}",
+                    content_type="application/json")
+    assert r.status_code == 413 and r.get_json()["error"] == "too_large"
+    assert _db().execute("SELECT COUNT(*) FROM push_devices").fetchone()[0] == 0
+
+
 def test_error_message_follows_the_device_language(client):
     dev, secret = _register(client, language="en")
     r = _subscribe(client, _auth(dev, secret), appointment_type="svc-nope")

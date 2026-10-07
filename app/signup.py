@@ -38,7 +38,9 @@ def parse_max_days(raw) -> int | None:
     if isinstance(raw, int):
         return raw if raw > 0 else None
     raw = (str(raw) if raw is not None else "").strip()
-    if raw.isdigit() and int(raw) > 0:
+    # ASCII and short: "²" passes str.isdigit() and a 5,000-digit string
+    # exceeds int()'s digit limit; both were a 500 instead of "no limit".
+    if raw.isascii() and raw.isdigit() and len(raw) <= 4 and int(raw) > 0:
         return int(raw)
     return None
 
@@ -66,17 +68,24 @@ def build_filter(catalog, *, appointment_type, locations, all_locations: bool,
     sensitive = catalog.is_sensitive(atype)
     if sensitive and not consent_special:
         raise FormError("consent_required")
-    loc_list = [str(loc) for loc in (locations or [])]
+    # De-duplicated, so a list can never be longer than the catalog's offices.
+    # Every entry goes upstream in the poller's request for the plan, once
+    # per cycle: one valid id repeated 50,000 times was a 2 MB POST to the
+    # city's booking site every minute (security review 2026-10-07).
+    loc_list = list(dict.fromkeys(str(loc) for loc in (locations or [])))
     if not all_locations and loc_list:
         known = set(catalog.locations.values())
         if any(loc not in known for loc in loc_list):
             raise FormError("unknown_location")
     locs = "all" if all_locations or not loc_list else loc_list
-    days = []
+    # A set, so at most seven entries. ASCII digits only: str.isdigit()
+    # takes "²", which int() then refuses with a 500.
+    day_set = set()
     for d in weekdays or []:
         s = str(d)
-        if s.isdigit() and 1 <= int(s) <= 7:
-            days.append(int(s))
+        if s.isascii() and s.isdigit() and len(s) <= 2 and 1 <= int(s) <= 7:
+            day_set.add(int(s))
+    days = sorted(day_set)
     if not days:
         days = [1, 2, 3, 4, 5, 6, 7]
     try:

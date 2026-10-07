@@ -317,6 +317,29 @@ def test_subscribe_accepts_a_location_the_catalog_offers(client):
     assert r.status_code == 302
 
 
+def test_subscribe_stores_a_repeated_office_once(client):
+    # The poller sends one upstream entry per stored office, every cycle; the
+    # form's 500 kB limit let one id repeat tens of thousands of times.
+    import json
+    import os
+    from unittest.mock import patch
+    from app.catalog import load_catalog
+    from app.db import connect
+    office = next(iter(load_catalog("leipzig").locations.values()))
+    form = _form("loc3@example.com") | {"all_locations": "0",
+                                        "locations": [office] * 1000,
+                                        "weekdays": ["2", "2", "²", "1"] * 50}
+    with patch("app.web._send_confirmation_email", return_value=True):
+        r = client.post("/subscribe", data=form,
+                        headers={"X-Forwarded-For": "203.0.113.53"})
+    assert r.status_code == 302
+    row = connect(os.environ["DB_PATH"]).execute(
+        "SELECT filters_json FROM subscriptions WHERE email=?",
+        ("loc3@example.com",)).fetchone()
+    stored = json.loads(row["filters_json"])
+    assert stored["locations"] == [office] and stored["weekdays"] == [1, 2]
+
+
 # One address per case: the per-IP limiter is a session-wide singleton at
 # 2/hour in this fixture (see test_web_tests_global_ip_limiter in the wiki).
 @pytest.mark.parametrize("start,end,ip", [
