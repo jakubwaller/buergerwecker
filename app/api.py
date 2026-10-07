@@ -46,6 +46,20 @@ token, see repo.register_device) may call only `GET /device`, which tells it
 nothing but `{"verified": false}`, and the two verify routes
 (`any_credential`).
 
+Attestation (Android only). A registration needs a Play Integrity verdict
+showing the real app on a real device (`app.integrity`), else a headless FCM
+receiver mints verified devices at will: the body carries `integrity_token`,
+bound to the FCM token by its request hash. It is required exactly when a new
+FCM row would come into existence or a row takes a new token: `POST /devices`
+with a token no row holds, and `PUT /device` with a new token (checked against
+the new one, or one attested row could rotate to scripted tokens). A known
+token registering again creates no row and is not checked; neither is a
+language-only PUT; iOS is out of scope. The check runs after `_token_gate` and
+the validation, so a refused request never costs a Google call, and outside
+the database transaction. It fails closed: 400 `integrity_missing`, 403
+`integrity_failed`, 503 `integrity_unavailable`. PLAY_INTEGRITY_REQUIRED=0
+skips it for local servers; production runs with 1.
+
 Every POST and PUT must be `application/json` (else 415): a cross-site form
 or a `text/plain` fetch is sent without a CORS preflight, and would let any
 web page register devices from its visitors' addresses. Every response but
@@ -126,9 +140,11 @@ _TOKEN_PATTERNS = {
     "apns": re.compile(r"[0-9a-f]{64,200}"),
     "fcm": re.compile(r"[A-Za-z0-9_:\-]{64,4096}"),
 }
-# Request body ceiling for /api/v1 (see _body_limit): the largest request the
-# app makes is under 1 kB.
-MAX_BODY_BYTES = 16 * 1024
+# Request body ceiling for /api/v1 (see _body_limit): the largest request is
+# an Android registration, a push token (up to 4 kB) plus a Play Integrity
+# token. Standard-request tokens are encrypted JWTs of several kB, and
+# Google gives no hard bound, so 16 kB was too close for comfort; 32 kB leaves room.
+MAX_BODY_BYTES = 32 * 1024
 # Slot-overview reads one device may make per hour, across workers. The app
 # reads it when the overview opens and the widget on its refresh schedule.
 MAX_SLOT_READS_PER_DEVICE_PER_HOUR = 60
@@ -158,6 +174,18 @@ _API_MESSAGES = {
     "not_subscribed": {
         "de": "Du beobachtest in dieser Stadt noch nichts. Lege zuerst einen Alarm an.",
         "en": "You aren't watching anything in this city yet. Set up an alert first.",
+    },
+    "integrity_missing": {
+        "de": "Die App konnte ihre Echtheit nicht nachweisen. Bitte installiere die App aus Google Play.",
+        "en": "The app could not prove it is genuine. Please install the app from Google Play.",
+    },
+    "integrity_failed": {
+        "de": "Bitte installiere die App aus Google Play.",
+        "en": "Please install the app from Google Play.",
+    },
+    "integrity_unavailable": {
+        "de": "Die Echtheitsprüfung ist gerade nicht erreichbar. Versuche es in ein paar Minuten noch einmal.",
+        "en": "The authenticity check is unavailable right now. Please try again in a few minutes.",
     },
     "too_many_services": {
         "de": (f"Pro Stadt kannst du höchstens {MAX_SERVICES_PER_DEVICE_PER_CITY} "
@@ -594,6 +622,10 @@ def register():
         return _error("invalid_push_token", 400, lang)
     known = conn.execute("SELECT 1 FROM push_devices WHERE platform=? AND token=?",
                          (platform, token)).fetchone()
+    if known is None and platform == "fcm":
+        refusal = _integrity_refusal(body, token, lang)
+        if refusal is not None:
+            return refusal
     secret = secrets.token_urlsafe(32)
     with transaction(conn):
         device_id = register_device(conn, platform=platform, token=token,
@@ -603,6 +635,24 @@ def register():
     _push_code(conn, device_id, gate)
     return jsonify({"device_id": device_id, "secret": secret,
                     "language": lang, "verified": False}), 201
+
+
+_INTEGRITY_STATUS = {"integrity_missing": 400, "integrity_failed": 403,
+                     "integrity_unavailable": 503}
+
+
+def _integrity_refusal(body: dict, token: str, lang: str):
+    """The error response when an FCM registration of `token` lacks a passing
+    Play Integrity verdict, else None. Call it after the gate and the
+    validation and outside any transaction: it makes a request to Google."""
+    cfg = _cfg()
+    if not cfg.play_integrity_required:
+        return None
+    from app.integrity import verify_play_integrity
+    key = verify_play_integrity(cfg, body.get("integrity_token"), token)
+    if key is None:
+        return None
+    return _error(key, _INTEGRITY_STATUS[key], lang)
 
 
 def _send_verification(conn, device_id: int) -> None:
@@ -656,6 +706,10 @@ def device_update():
         gate = _token_gate(g.conn)
         if gate.wait:
             return _error("rate_limited", 429, lang, retry_after=gate.wait)
+        if g.device["platform"] == "fcm":
+            refusal = _integrity_refusal(body, token, lang)
+            if refusal is not None:
+                return refusal
     with transaction(g.conn):
         outcome = update_device(g.conn, g.device["id"], secret_hash=g.secret_hash,
                                 token=token, language=language)

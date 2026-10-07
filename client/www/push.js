@@ -128,8 +128,23 @@ export async function register() {
 
 const platformKey = () => (platform() === "ios" ? "apns" : "fcm");
 
+// Android only: the server wants a Play Integrity verdict bound to the token
+// it is about to register (app/integrity.py). When the plugin cannot produce
+// one (a build without google-services.json, a phone without Play Services)
+// the field is left out and the server answers integrity_missing, which the
+// usual error path shows; this never throws.
+async function integrityToken(token) {
+  if (platform() !== "android") return undefined;
+  try {
+    const r = await plugin("Integrity")?.token({ pushToken: token });
+    return typeof r?.token === "string" && r.token ? r.token : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function registerFresh(token) {
-  const r = await api.registerDevice(platformKey(), token, lang());
+  const r = await api.registerDevice(platformKey(), token, lang(), await integrityToken(token));
   await saveDevice({
     id: r.device_id,
     secret: r.secret,
@@ -147,7 +162,7 @@ export async function onToken(token) {
   if (device.token === token) return;
   try {
     const seq = verifySeq;
-    const r = await api.updateDevice({ token });
+    const r = await api.updateDevice({ token, integrity_token: await integrityToken(token) });
     // A changed token is unverified again until the setup push sent to it
     // comes back; the waiting screen shows meanwhile. Should that push have
     // been posted already while this request was in flight, it stays verified.
