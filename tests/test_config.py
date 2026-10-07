@@ -149,3 +149,27 @@ def test_sensitive_term_is_the_shorter_of_the_two(monkeypatch):
     cfg = load_config()
     assert ttl_days_for(cfg, False) == 14
     assert ttl_days_for(cfg, True) == 14
+
+
+def test_the_app_ceiling_and_the_push_budget_are_optional(monkeypatch):
+    _minimal_env(monkeypatch)
+    for k in ("MAX_APP_SUBSCRIPTIONS_PER_CITY", "PUSH_BUDGET_PER_CYCLE",
+              "PUSH_BUDGET_SECONDS"):
+        monkeypatch.delenv(k, raising=False)
+    cfg = load_config()
+    assert (cfg.max_app_subscriptions_per_city, cfg.push_budget_per_cycle,
+            cfg.push_budget_seconds) == (100, 200, 20)
+    _minimal_env(monkeypatch, MAX_APP_SUBSCRIPTIONS_PER_CITY="0",
+                 PUSH_BUDGET_PER_CYCLE="50", PUSH_BUDGET_SECONDS="5")
+    cfg = load_config()
+    assert (cfg.max_app_subscriptions_per_city, cfg.push_budget_per_cycle,
+            cfg.push_budget_seconds) == (0, 50, 5)
+
+
+@pytest.mark.parametrize("key", ["MAX_APP_SUBSCRIPTIONS_PER_CITY",
+                                 "PUSH_BUDGET_PER_CYCLE", "PUSH_BUDGET_SECONDS"])
+def test_a_negative_app_ceiling_or_push_budget_refuses_to_start(monkeypatch, key):
+    """-1 would read as on and silence push or refuse every app sign-up."""
+    _minimal_env(monkeypatch, **{key: "-1"})
+    with pytest.raises(ValueError, match=key):
+        load_config()

@@ -1,4 +1,5 @@
 from __future__ import annotations
+import heapq
 import sqlite3
 from datetime import datetime, timedelta
 import requests
@@ -61,6 +62,35 @@ _STREAK_LADDER = ((1, 1), (2, 2), (3, 4))
 # has run to twice the cadence that digest earned — a live stream always comes
 # back well inside that.
 _QUIET_FACTOR = 2
+
+# The horizon: per subscription and cycle, only the soonest
+# MAX_SLOTS_PER_CYCLE matching slots are looked at at all. They are what is
+# checked against seen_slots, what the digest is made of, and (through the
+# carried seen_keys) what its delivery records; nothing past the horizon is
+# checked, mentioned or recorded. Without it a cycle cost one seen_slots
+# query per subscriber per matching slot, and a delivery one row each: 2000
+# subscriptions on a 1000-slot calendar took 12.6 s a cycle and left 2M rows.
+#
+# Why a horizon and not a cap on what a digest *records*: recording the
+# soonest 50 of 1000 notified slots leaves 950 the subscriber was told about
+# unrecorded, so they come back as candidates at every eligible cycle, a
+# digest per interval about the same inventory. That is the check/record
+# mismatch CLAUDE.md warns about. Here check and record cover one set.
+#
+# What a horizon does instead: a slot past it is treated exactly like a slot
+# past the filter's max_days_ahead window (models.Filter): not marked seen,
+# and news the cycle it moves within reach (a booking ahead of it, a day
+# going by), which is the first time the subscriber hears of it. The horizon
+# is over *matching* slots, seen or not: one over unseen slots would page
+# through the calendar fifty at a time. Bookings move it up one slot at a
+# time, at the subscriber's own cadence and daily cap. The abundance count
+# stops here too, well past the ladder's top rung, so the cadence reads the
+# same.
+MAX_SLOTS_PER_CYCLE = 50
+
+
+def _soonest(slot: Slot) -> tuple[str, str]:
+    return slot.date, slot.time_str
 
 
 def _ladder_multiplier(ladder, value: int) -> int:
@@ -160,26 +190,28 @@ def _due_cities(conn: sqlite3.Connection, cities: set[str]) -> set[str]:
     return due
 
 
-def subscriber_caps(conn: sqlite3.Connection, cfg) -> tuple[int, int, bool]:
-    """(cap for push subscribers, cap for mail subscribers, tightened?) for
-    this cycle. Both start at MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY: the same
-    daily cap on both channels is a fairness rule, not a coincidence. The
-    mail cap alone drops to MAIL_CAP_UNDER_PRESSURE while the free provider
-    pool's rolling-24h usage is at MAIL_POOL_PRESSURE_PCT or above, so the
-    pool thins everyone's mail a little before it defers anyone's entirely.
-    Push has no pool to run out of. 0 for the ordinary cap means no cap at
-    all, pressure or not: an operator who turned the cap off must not find
-    a hidden one; 0 for the pressure cap means never tighten."""
+def subscriber_cap(conn: sqlite3.Connection, cfg) -> tuple[int, bool]:
+    """(the daily digest cap for every subscriber, tightened?) for this
+    cycle. One number for both channels: the same daily cap for mail and
+    push is a fairness rule, not a coincidence, and it stays one rule under
+    pressure. It is MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY, dropping to
+    MAIL_CAP_UNDER_PRESSURE while the free provider pool's rolling-24h usage
+    is at MAIL_POOL_PRESSURE_PCT or above, so the pool thins everyone's day a
+    little before it defers anyone's entirely. Push has no pool of its own
+    and still gets no more than mail: a tighter day for mail alone made the
+    app the way to more notifications. 0 for the ordinary cap means no cap
+    at all, pressure or not: an operator who turned the cap off must not
+    find a hidden one; 0 for the pressure cap means never tighten."""
     from app.mail import pool_usage
     cap = getattr(cfg, "max_digests_per_subscriber_per_day", 0) or 0
     tight = getattr(cfg, "mail_cap_under_pressure", 0) or 0
     pct = getattr(cfg, "mail_pool_pressure_pct", 0) or 0
     if not cap or not tight or not pct or tight >= cap:
-        return cap, cap, False
+        return cap, False
     used, pool = pool_usage(conn, cfg)
     if pool and used * 100 >= pool * pct:
-        return cap, tight, True
-    return cap, cap, False
+        return tight, True
+    return cap, False
 
 
 def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
@@ -313,10 +345,14 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
     outbox: list = []
     # Per-cycle memo so a tenant's catalog is resolved once, not per subscriber.
     seen_key_fns: dict = {}
-    push_cap, mail_cap, tightened = subscriber_caps(conn, cfg)
+    # Every plan's slots soonest first, once per cycle, so each subscriber
+    # can stop at its horizon (MAX_SLOTS_PER_CYCLE) instead of walking a
+    # whole calendar.
+    soonest_by_plan = {k: sorted(v, key=_soonest) for k, v in slots_by_plan.items()}
+    cap, tightened = subscriber_cap(conn, cfg)
     if tightened:
-        print(f"cycle {cycle_id}: mail pool under pressure, mail subscribers "
-              f"capped at {mail_cap}/day this cycle", flush=True)
+        print(f"cycle {cycle_id}: mail pool under pressure, every subscriber "
+              f"(mail and app) capped at {cap}/day this cycle", flush=True)
     for sub in sorted(subs, key=lambda s: s.last_notified_at or datetime.min):
         # Each subscriber's floor is their own: scarce filters keep the base
         # interval, filters swimming in slots wait longer. Cheap to evaluate
@@ -351,35 +387,34 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
         if sub.city not in seen_key_fns:
             seen_key_fns[sub.city] = _seen_key_fn(sub.city)
         seen_key = seen_key_fns[sub.city]
-        for plan in plans:
-            if plan.city != sub.city:
+        sources = [soonest_by_plan.get(plan.key(), []) for plan in plans
+                   if plan.city == sub.city
+                   and plan.appointment_type in sub.sub_filter.appointment_types]
+        for slot in heapq.merge(*sources, key=_soonest):
+            if not matches(sub.sub_filter, slot):
                 continue
-            if plan.appointment_type not in sub.sub_filter.appointment_types:
+            slot_hash = slot.hash()
+            if slot_hash in seen_in_cycle:
                 continue
-            for slot in slots_by_plan.get(plan.key(), []):
-                if not matches(sub.sub_filter, slot):
-                    continue
-                slot_hash = slot.hash()
-                if slot_hash in seen_in_cycle:
-                    continue
-                seen_in_cycle.add(slot_hash)
-                # Counted before the seen filter: the adaptive interval needs
-                # how much this filter is matching *in total*, not how much of
-                # it is new. A subscriber drip-fed one fresh slot per cycle out
-                # of thirty standing ones is the abundant case, not the scarce
-                # one, and counting only candidates would read it backwards.
-                matched_total += 1
-                # What counts as already-told is the tenant's call, not the
-                # slot's: an earliest-slot-only tenant keys on the day, so the
-                # replacement slot that appears the moment someone books is
-                # not news — unless it is *earlier* than the time already
-                # reported, which only a cancellation can produce. See
-                # Catalog.seen_key and models.SeenKey.
-                key = seen_key(slot)
-                if has_seen_slot(conn, sub.id, key.key, at=key.best_time):
-                    continue
+            seen_in_cycle.add(slot_hash)
+            # Counted before the seen filter: the adaptive interval needs
+            # how much this filter is matching *in total*, not how much of
+            # it is new. A subscriber drip-fed one fresh slot per cycle out
+            # of thirty standing ones is the abundant case, not the scarce
+            # one, and counting only candidates would read it backwards.
+            matched_total += 1
+            # What counts as already-told is the tenant's call, not the
+            # slot's: an earliest-slot-only tenant keys on the day, so the
+            # replacement slot that appears the moment someone books is
+            # not news — unless it is *earlier* than the time already
+            # reported, which only a cancellation can produce. See
+            # Catalog.seen_key and models.SeenKey.
+            key = seen_key(slot)
+            if not has_seen_slot(conn, sub.id, key.key, at=key.best_time):
                 candidates.append(slot)
                 candidate_keys.append(key)
+            if matched_total >= MAX_SLOTS_PER_CYCLE:
+                break       # the horizon, see MAX_SLOTS_PER_CYCLE
         if not candidates:
             continue
         # The per-subscriber daily cap, checked only once there is something
@@ -387,7 +422,6 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
         # recorded as seen and last_notified_at is not stamped: the first
         # cycle after the rolling window frees re-evaluates the live slots
         # and sends whatever is still open — never a queued, stale digest.
-        cap = push_cap if sub.is_push else mail_cap
         if cap and digests_in_window(conn, sub.id) >= cap:
             record_cap_hold(conn, sub.id)
             continue

@@ -77,12 +77,21 @@ class Config:
     max_token_requests_per_ip_per_10_min: int = 10
     # The mail pool is the free provider chain (about 600/day). When its
     # rolling-24h usage reaches `mail_pool_pressure_pct` of the summed caps,
-    # every mail subscriber's daily cap drops to `mail_cap_under_pressure`
-    # for as long as the pressure lasts, so the pool degrades for everyone a
-    # little before it defers anyone entirely. Push has no pool and keeps
-    # the ordinary cap. 0 for the tightened cap turns the rule off.
+    # every subscriber's daily cap, mail and app alike, drops to
+    # `mail_cap_under_pressure` for as long as the pressure lasts, so the
+    # pool degrades for everyone a little before it defers anyone entirely.
+    # 0 for the tightened cap turns the rule off.
     mail_pool_pressure_pct: int = 80
     mail_cap_under_pressure: int = 1
+    # Live app subscriptions one city may hold, all devices together (see
+    # api._share_refusal). Devices cost nothing to mint, so this is what
+    # bounds the app's footprint in a city. 0 = no ceiling.
+    max_app_subscriptions_per_city: int = 100
+    # Push digests the poller attempts per cycle, and seconds after which it
+    # starts no more (push.send_push_batch); the rest wait for the next
+    # cycle, longest-waiting first. 0 = no bound.
+    push_budget_per_cycle: int = 200
+    push_budget_seconds: int = 20
 
 def _req(key: str) -> str:
     val = os.environ.get(key)
@@ -96,6 +105,19 @@ def _req_int(key: str) -> int:
         return int(raw)
     except ValueError:
         raise ValueError(f"Env var {key} must be an integer, got: {raw!r}")
+
+def _nonneg_int(key: str, default: str) -> int:
+    """An optional whole number where 0 means off. A negative one is a typo
+    that would read as on: -1 pushes nothing (every digest over budget) or
+    refuses every app sign-up, with only a log line. Refuse it at start."""
+    raw = os.environ.get(key, default)
+    try:
+        val = int(raw)
+    except ValueError:
+        raise ValueError(f"Env var {key} must be an integer, got: {raw!r}")
+    if val < 0:
+        raise ValueError(f"Env var {key} must be 0 (off) or more, got: {raw!r}")
+    return val
 
 def ttl_days_for(cfg, sensitive: bool) -> int:
     """Days a subscription lives from sign-up or renewal. A special-category
@@ -248,4 +270,8 @@ def load_config() -> Config:
         mail_pool_pressure_pct=int(os.environ.get("MAIL_POOL_PRESSURE_PCT", "80")),
         mail_cap_under_pressure=int(
             os.environ.get("MAIL_CAP_UNDER_PRESSURE", "1")),
+        max_app_subscriptions_per_city=_nonneg_int(
+            "MAX_APP_SUBSCRIPTIONS_PER_CITY", "100"),
+        push_budget_per_cycle=_nonneg_int("PUSH_BUDGET_PER_CYCLE", "200"),
+        push_budget_seconds=_nonneg_int("PUSH_BUDGET_SECONDS", "20"),
     )

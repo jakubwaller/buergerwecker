@@ -249,3 +249,119 @@ def test_poll_interval_fails_open_without_last_polled(db):
         gs.return_value.poll.return_value = []
         run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
     assert gs.return_value.poll.called
+
+
+# ---------------------------------------------------------------------------
+# The horizon (cycle.MAX_SLOTS_PER_CYCLE): per subscription and cycle only the
+# soonest matching slots are checked, sent and recorded, and exactly the same
+# ones. Security review 2026-10-07: 2000 subscriptions on a 1000-slot calendar
+# took 12.6 s a cycle and left 2M seen_slots rows.
+
+def _calendar(n, locs=("loc-1",)):
+    """n distinct slots, soonest first: twenty a day from 08:00, every half
+    hour, cycling through `locs`."""
+    from datetime import date, timedelta
+    base = date(2026, 11, 2)
+    return [Slot((base + timedelta(days=i // 20)).isoformat(),
+                 f"{8 + (i % 20) // 2:02d}:{(i % 2) * 30:02d}",
+                 locs[i % len(locs)], "svc-A", f"t{i}")
+            for i in range(n)]
+
+
+def _cycle_spying(db, slots, cycle_id):
+    """A real cycle and a real flush (the provider call mocked); returns the
+    slots each digest was made of."""
+    from app import digest
+    made = []
+
+    def spy(**kw):
+        made.append(list(kw["matched_slots"]))
+        return digest.send_digest(**kw)
+
+    with patch("app.cycle.get_scraper") as gs, \
+         patch("app.cycle.send_digest", spy), \
+         patch("app.mail._call_mailjet_batch", return_value=200):
+        gs.return_value.poll.return_value = slots
+        run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id=cycle_id)
+    return made
+
+
+def _seen(db, sid):
+    return {r[0] for r in db.execute(
+        "SELECT slot_hash FROM seen_slots WHERE subscription_id=?", (sid,))}
+
+
+def test_a_digest_is_the_soonest_slots_up_to_the_horizon_and_records_exactly_them(db):
+    import random
+    from app.cycle import MAX_SLOTS_PER_CYCLE as K
+    sid = insert_pending(db, email="h@example.com", city="leipzig",
+                         language="de", filter_=_f(["svc-A"]), ttl_days=90)
+    confirm(db, sid)
+    cal = _calendar(3 * K)
+    shuffled = random.Random(7).sample(cal, len(cal))   # the scraper's order is no order
+    made = _cycle_spying(db, shuffled, "c1")
+    assert [len(m) for m in made] == [K]
+    # Check and record cover one set: what the digest was made of is what
+    # its delivery recorded, and that is the soonest K.
+    assert {s.hash() for s in made[0]} == _seen(db, sid) == {s.hash() for s in cal[:K]}
+    # Due again on the same calendar: everything within the horizon is seen,
+    # so nothing goes out. The horizon is over matching slots, seen or not;
+    # it does not page on to the next K.
+    db.execute("UPDATE subscriptions SET last_notified_at=datetime('now','-1 day') "
+               "WHERE id=?", (sid,))
+    assert _cycle_spying(db, shuffled, "c2") == []
+    # The soonest slot is booked: the next one moves within reach, and it is
+    # news (the subscriber never heard of it), alone.
+    made = _cycle_spying(db, cal[1:], "c3")
+    assert [[s.hash() for s in m] for m in made] == [[cal[K].hash()]]
+    assert _seen(db, sid) == {s.hash() for s in cal[:K + 1]}
+
+
+def test_the_horizon_merges_overlapping_plans_soonest_first(db):
+    """An all-offices subscriber reads every plan of its service; with a
+    one-office plan next to the all-offices one the same slot arrives twice,
+    and the horizon counts it once."""
+    from app.cycle import MAX_SLOTS_PER_CYCLE as K
+    wide = insert_pending(db, email="w@example.com", city="leipzig", language="de",
+                          filter_=_f(["svc-A"]), ttl_days=90)
+    narrow = insert_pending(db, email="n@example.com", city="leipzig", language="de",
+                            filter_=_f(["svc-A"], ["loc-2"]), ttl_days=90)
+    confirm(db, wide)
+    confirm(db, narrow)
+    cal = _calendar(4 * K, locs=("loc-1", "loc-2"))
+    _cycle_spying(db, cal, "c1")
+    assert _seen(db, wide) == {s.hash() for s in cal[:K]}
+    # The one-office subscriber: the soonest K slots *it* matches.
+    its_own = [s for s in cal if s.location_uuid == "loc-2"]
+    assert _seen(db, narrow) == {s.hash() for s in its_own[:K]}
+
+
+def test_the_horizon_bounds_the_seen_slots_lookups(db):
+    from app import cycle
+    from app.cycle import MAX_SLOTS_PER_CYCLE as K
+    for i in range(3):
+        sid = insert_pending(db, email=f"s{i}@example.com", city="leipzig",
+                             language="de", filter_=_f(["svc-A"]), ttl_days=90)
+        confirm(db, sid)
+    calls = []
+    real = cycle.has_seen_slot
+
+    def counting(*a, **kw):
+        calls.append(1)
+        return real(*a, **kw)
+
+    with patch("app.cycle.get_scraper") as gs, \
+         patch("app.cycle.has_seen_slot", counting), \
+         patch("app.cycle.send_digest"):
+        gs.return_value.poll.return_value = _calendar(1000)
+        run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
+    assert len(calls) == 3 * K          # not 3 * 1000
+
+
+def test_the_horizon_lies_past_the_abundance_ladder():
+    """The abundance count stops at the horizon too; past the ladder's top
+    rung every count reads the same, so the cadence does not change."""
+    from app.cycle import MAX_SLOTS_PER_CYCLE, _ABUNDANCE_LADDER, adaptive_rate_limit_minutes
+    assert MAX_SLOTS_PER_CYCLE > _ABUNDANCE_LADDER[-1][0]
+    assert (adaptive_rate_limit_minutes(15, MAX_SLOTS_PER_CYCLE)
+            == adaptive_rate_limit_minutes(15, 2792))

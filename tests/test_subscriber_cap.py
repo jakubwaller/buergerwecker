@@ -293,47 +293,49 @@ def test_a_push_subscriber_is_capped_exactly_like_a_mail_subscriber(db, apns):
     assert [h[1] for h in _holds(db)] == [pid]
 
 
-def test_subscriber_caps_tighten_mail_only_once_the_pool_is_under_pressure(db, monkeypatch):
+def test_the_cap_tightens_for_everyone_once_the_pool_is_under_pressure(db, monkeypatch):
     from app.config import load_config
-    from app.cycle import subscriber_caps
+    from app.cycle import subscriber_cap
     monkeypatch.setenv("MAILJET_DAILY_QUOTA", "10")
     monkeypatch.setenv("BREVO_DAILY_QUOTA", "10")
     monkeypatch.setenv("MAIL_POOL_PRESSURE_PCT", "50")
     cfg = load_config()
-    assert subscriber_caps(db, cfg) == (2, 2, False)
+    assert subscriber_cap(db, cfg) == (2, False)
     # 9 of 20 sent in the last 24h: 45%, below the line.
     db.executemany("INSERT INTO sent_idempotency (idem_key, provider) VALUES (?, 'mailjet')",
                    [(f"k{i}",) for i in range(9)])
-    assert subscriber_caps(db, cfg) == (2, 2, False)
+    assert subscriber_cap(db, cfg) == (2, False)
     db.execute("INSERT INTO sent_idempotency (idem_key, provider) VALUES ('k9', 'mailjet')")
-    assert subscriber_caps(db, cfg) == (2, 1, True)
+    assert subscriber_cap(db, cfg) == (1, True)
     # Yesterday's sends are outside the rolling window.
     db.execute("UPDATE sent_idempotency SET sent_at=datetime('now','-25 hours') "
                "WHERE idem_key='k9'")
-    assert subscriber_caps(db, cfg) == (2, 2, False)
+    assert subscriber_cap(db, cfg) == (2, False)
 
 
 def test_tightening_is_off_with_zero_or_a_cap_no_lower_than_the_ordinary_one(db, monkeypatch):
     from app.config import load_config
-    from app.cycle import subscriber_caps
+    from app.cycle import subscriber_cap
     monkeypatch.setenv("MAILJET_DAILY_QUOTA", "10")
     monkeypatch.setenv("BREVO_DAILY_QUOTA", "10")
     monkeypatch.setenv("MAIL_POOL_PRESSURE_PCT", "50")
     db.executemany("INSERT INTO sent_idempotency (idem_key, provider) VALUES (?, 'mailjet')",
                    [(f"k{i}",) for i in range(20)])
     monkeypatch.setenv("MAIL_CAP_UNDER_PRESSURE", "0")
-    assert subscriber_caps(db, load_config()) == (2, 2, False)
+    assert subscriber_cap(db, load_config()) == (2, False)
     monkeypatch.setenv("MAIL_CAP_UNDER_PRESSURE", "2")
-    assert subscriber_caps(db, load_config()) == (2, 2, False)
+    assert subscriber_cap(db, load_config()) == (2, False)
     monkeypatch.setenv("MAIL_CAP_UNDER_PRESSURE", "1")
     monkeypatch.setenv("MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY", "0")
     # The ordinary cap turned off is off, pressure or not: /admin and the
     # summary only show the cap row while one is configured, so a hidden
     # pressure cap would be invisible everywhere but the poller log.
-    assert subscriber_caps(db, load_config()) == (0, 0, False)
+    assert subscriber_cap(db, load_config()) == (0, False)
 
 
-def test_under_pressure_mail_gets_one_digest_a_day_and_push_keeps_two(db, apns, monkeypatch):
+def test_under_pressure_mail_and_push_both_get_one_digest_a_day(db, apns, monkeypatch):
+    """The owner's rule: the same reduced cap on both channels. Push has no
+    pool to run out of, and still gets no more than mail."""
     monkeypatch.setenv("MAILJET_DAILY_QUOTA", "10")
     monkeypatch.setenv("BREVO_DAILY_QUOTA", "10")
     monkeypatch.setenv("MAIL_POOL_PRESSURE_PCT", "50")
@@ -348,10 +350,12 @@ def test_under_pressure_mail_gets_one_digest_a_day_and_push_keeps_two(db, apns, 
         _age_last_notified(db, s, 16)
     _cycle_both(db, [_slot(2)], "c2", relay)
     assert digests_in_window(db, sid) == 1          # mail: held at the tightened cap
-    assert digests_in_window(db, pid) == 2          # push: the ordinary cap
-    assert [h[1] for h in _holds(db)] == [sid]
+    assert digests_in_window(db, pid) == 1          # push: held at the same cap
+    assert relay.calls == 1
+    assert sorted(h[1] for h in _holds(db)) == sorted([sid, pid])
     from app.config import load_config
     s = stats(db, load_config())
     assert s["mail_cap_tightened"] is True and s["mail_cap"] == 1
     text = render_summary_email(s, now=datetime.utcnow(), anomalies=[], base_url="https://x")
-    assert "Mail pool under pressure: mail subscribers capped at 1/24h" in text
+    assert ("Mail pool under pressure: every subscriber, mail and app, "
+            "capped at 1/24h") in text

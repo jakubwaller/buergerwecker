@@ -365,9 +365,9 @@
       {% if s.subscriber_cap %}
       <tr>
         <td class="k">per-subscriber cap</td>
-        <td class="v">{{ s.subscriber_cap }} per rolling 24h{% if s.mail_cap_tightened %} · <span class="quota-hot">mail pool under pressure: mail subscribers capped at {{ s.mail_cap }}</span>{% endif %} · held today <span{% if s.cap_holds_today %} class="quota-hot"{% endif %}>{{ s.cap_holds_today }}</span> subscriber(s) · 7d {{ s.cap_holds_7d }} · capped now {{ s.capped_now }}
+        <td class="v">{{ s.subscriber_cap }} per rolling 24h{% if s.mail_cap_tightened %} · <span class="quota-hot">mail pool under pressure: every subscriber (mail and app) capped at {{ s.mail_cap }}</span>{% endif %} · held today <span{% if s.cap_holds_today %} class="quota-hot"{% endif %}>{{ s.cap_holds_today }}</span> subscriber(s) · 7d {{ s.cap_holds_7d }} · capped now {{ s.capped_now }}
           {%- if s.digests_per_sub_24h and s.digests_per_sub_24h.subs %} · last 24h {{ s.digests_per_sub_24h.digests }} digests to {{ s.digests_per_sub_24h.subs }} subscribers, {{ s.digests_per_sub_24h.mean }}/sub{% endif %}
-          <span class="adm-muted">· a held digest is dropped, not queued — its slots stay unseen and go out in the first cycle after that subscriber's window frees · MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY, 0 disables · at MAIL_POOL_PRESSURE_PCT of the combined rolling pool the mail cap drops to MAIL_CAP_UNDER_PRESSURE for everyone on mail; push keeps the ordinary cap</span></td>
+          <span class="adm-muted">· a held digest is dropped, not queued — its slots stay unseen and go out in the first cycle after that subscriber's window frees · MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY, 0 disables · at MAIL_POOL_PRESSURE_PCT of the combined rolling pool the cap drops to MAIL_CAP_UNDER_PRESSURE for every subscriber, mail and app alike</span></td>
       </tr>
       {% endif %}
       {# per-provider rows follow in EMAIL_PROVIDER_ORDER — the fallback chain #}

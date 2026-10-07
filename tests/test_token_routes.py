@@ -501,13 +501,14 @@ def test_manage_post_honours_the_plan_cap(client):
     c, sid = client
     conn = connect(os.environ["DB_PATH"])
     conn.execute("UPDATE subscriptions SET confirmed_at=datetime('now') WHERE id=?", (sid,))
-    with patch("app.web.would_exceed_cap", return_value=True) as cap:
+    with patch("app.web.refused_by_plan_cap", return_value=True) as cap:
         r = c.post(f"/manage/{_sign(sid, 'manage')}",
                    data={"appointment_type": LEIPZIG_SERVICE, "all_locations": "1"})
     assert r.status_code == 503
-    # Its own current plan is not counted against it.
-    existing = cap.call_args.args[0]
-    assert existing == []
+    # Its own current plan is not counted against it, and it is judged as
+    # mail: app-held services never count against it.
+    assert cap.call_args.kwargs["exclude_id"] == sid
+    assert cap.call_args.kwargs["push"] is False
     row = conn.execute("SELECT filters_json FROM subscriptions WHERE id=?",
                        (sid,)).fetchone()
     assert Filter.from_json(row["filters_json"]).appointment_types == ["A"]
