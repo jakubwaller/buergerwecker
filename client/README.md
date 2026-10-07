@@ -365,6 +365,17 @@ GitHub secrets, all in one place: `APPLE_TEAM_ID`, `ASC_ISSUER_ID`, `ASC_KEY_ID`
 `ANDROID_UPLOAD_KEYSTORE_PASSWORD`, `PLAY_SERVICE_ACCOUNT_JSON`, `FCM_GOOGLE_SERVICES_JSON`.
 Repository variables (optional): `ASC_BETA_GROUP`, `PLAY_TRACK`, `PLAY_RELEASE_STATUS`.
 
+## Before the public release
+
+Internal, not for the store texts. `APP_API_ENABLED` has been open since 2026-10-07 for TestFlight,
+where only invited testers can install the app and so only they can verify a device.
+
+- [ ] **A fresh security review of the app's API** (`app/api.py`, the whole of it, CORS included)
+      before the App Store or Play release goes public. The last security passes ran on device
+      verification (#98); the CORS changes (#100, #103) came after them. Public, anyone with a
+      real phone can verify devices, by reinstalling for a new token too, so check the
+      per-device, per-IP and per-city limits against that, not against fake tokens.
+
 ## Not in this version
 
 No store listing texts or screenshots, no in-app booking (never), no widget configuration screen
