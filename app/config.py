@@ -53,6 +53,10 @@ class Config:
     apns_topic: str = ""           # the app's bundle id
     apns_sandbox: bool = False     # Xcode development builds only; TestFlight is production
     fcm_service_account_json: str = ""   # the service-account JSON, as text
+    # Empty = the FCM one (load_config fills it in). Secure by default: a
+    # Config built without load_config still demands attestation.
+    play_integrity_service_account_json: str = ""
+    play_integrity_required: bool = True
     push_ttl_seconds: int = 1800
     # The app's JSON API under /api/v1. Off until the app is released: an open
     # registration endpoint lets anyone create subscriptions without a
@@ -257,6 +261,14 @@ def load_config() -> Config:
         apns_topic=os.environ.get("APNS_TOPIC", ""),
         apns_sandbox=os.environ.get("APNS_SANDBOX", "0") == "1",
         fcm_service_account_json=_secret_or_file("FCM_SERVICE_ACCOUNT_JSON"),
+        # Play Integrity attestation of Android registrations (app.integrity).
+        # Its own service account when given, else the FCM one: the plan is one
+        # Google Cloud project for both. REQUIRED=0 is for local and dev
+        # servers only; production must run with 1.
+        play_integrity_service_account_json=(
+            _secret_or_file("PLAY_INTEGRITY_SERVICE_ACCOUNT_JSON")
+            or _secret_or_file("FCM_SERVICE_ACCOUNT_JSON")),
+        play_integrity_required=os.environ.get("PLAY_INTEGRITY_REQUIRED", "1") != "0",
         # How long a relay may hold a push for an offline phone. Slots vanish
         # in minutes; a notification delivered an hour late is noise.
         push_ttl_seconds=int(os.environ.get("PUSH_TTL_SECONDS", "1800")),

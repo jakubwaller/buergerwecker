@@ -46,6 +46,23 @@ token, see repo.register_device) may call only `GET /device`, which tells it
 nothing but `{"verified": false}`, and the two verify routes
 (`any_credential`).
 
+Attestation (Android only). A registration needs a Play Integrity verdict
+showing the real app on a real device (`app.integrity`), else a headless FCM
+receiver mints verified devices at will: the body carries `integrity_token`,
+bound to the FCM token by its request hash. It is required exactly when a new
+FCM row would come into existence or a row takes a new token: `POST /devices`
+with a token no row holds, and `PUT /device` with a new token (checked against
+the new one, or one attested row could rotate to scripted tokens). A known
+token registering again creates no row and is not checked; neither is a
+language-only PUT; iOS is out of scope. The check runs after `_token_gate` and
+the validation, so a refused request never costs a Google call, and outside
+the database transaction. It fails closed: 400 `integrity_missing`, 403
+`integrity_failed`, 503 `integrity_unavailable`. PLAY_INTEGRITY_REQUIRED=0
+skips it for local servers; production runs with 1. Each decode spends
+Google's daily quota, so a network that has failed three checks in ten
+minutes (ten per IPv6 /48) is answered 429 without a call, and a token
+that is not a JWE fails without one.
+
 Every POST and PUT must be `application/json` (else 415): a cross-site form
 or a `text/plain` fetch is sent without a CORS preflight, and would let any
 web page register devices from its visitors' addresses. Every response but
@@ -86,7 +103,8 @@ from app.db import connect, transaction
 from app.models import Filter
 from app.planning import refused_by_plan_cap
 from app.ratelimit import (GLOBAL_IP_LIMITER, db_rate_hit, db_rate_hit_all,
-                           record_new_device, unverified_devices)
+                           rate_record, rate_wait, record_new_device,
+                           unverified_devices)
 from app.repo import app_subscriptions_in_city, device_footprint_in_city
 from app.repo import (delete_device, device_by_id,
                       insert_push_subscription, live_subscription_count,
@@ -126,9 +144,11 @@ _TOKEN_PATTERNS = {
     "apns": re.compile(r"[0-9a-f]{64,200}"),
     "fcm": re.compile(r"[A-Za-z0-9_:\-]{64,4096}"),
 }
-# Request body ceiling for /api/v1 (see _body_limit): the largest request the
-# app makes is under 1 kB.
-MAX_BODY_BYTES = 16 * 1024
+# Request body ceiling for /api/v1 (see _body_limit): the largest request is
+# an Android registration, a push token (up to 4 kB) plus a Play Integrity
+# token. Standard-request tokens are encrypted JWTs of several kB, and
+# Google gives no hard bound, so 16 kB was too close for comfort; 32 kB leaves room.
+MAX_BODY_BYTES = 32 * 1024
 # Slot-overview reads one device may make per hour, across workers. The app
 # reads it when the overview opens and the widget on its refresh schedule.
 MAX_SLOT_READS_PER_DEVICE_PER_HOUR = 60
@@ -158,6 +178,18 @@ _API_MESSAGES = {
     "not_subscribed": {
         "de": "Du beobachtest in dieser Stadt noch nichts. Lege zuerst einen Alarm an.",
         "en": "You aren't watching anything in this city yet. Set up an alert first.",
+    },
+    "integrity_missing": {
+        "de": "Die App konnte ihre Echtheit nicht nachweisen. Bitte installiere die App aus Google Play.",
+        "en": "The app could not prove it is genuine. Please install the app from Google Play.",
+    },
+    "integrity_failed": {
+        "de": "Die App muss aus Google Play installiert sein und auf einem zertifizierten Android-Gerät laufen.",
+        "en": "The app must be installed from Google Play and run on a certified Android device.",
+    },
+    "integrity_unavailable": {
+        "de": "Die Echtheitsprüfung ist gerade nicht erreichbar. Versuche es in ein paar Minuten noch einmal.",
+        "en": "The authenticity check is unavailable right now. Please try again in a few minutes.",
     },
     "too_many_services": {
         "de": (f"Pro Stadt kannst du höchstens {MAX_SERVICES_PER_DEVICE_PER_CITY} "
@@ -594,6 +626,10 @@ def register():
         return _error("invalid_push_token", 400, lang)
     known = conn.execute("SELECT 1 FROM push_devices WHERE platform=? AND token=?",
                          (platform, token)).fetchone()
+    if known is None and platform == "fcm":
+        refusal = _integrity_refusal(conn, body, token, lang)
+        if refusal is not None:
+            return refusal
     secret = secrets.token_urlsafe(32)
     with transaction(conn):
         device_id = register_device(conn, platform=platform, token=token,
@@ -603,6 +639,57 @@ def register():
     _push_code(conn, device_id, gate)
     return jsonify({"device_id": device_id, "secret": secret,
                     "language": lang, "verified": False}), 201
+
+
+# Failed Play Integrity checks per client network in the last ten minutes,
+# past which no further check is sent to Google: each decode spends the app's
+# daily quota (10,000 by default), which anonymous junk must not be able to
+# exhaust for the real phones. Ten minutes like the module's other network
+# limits; three is room for a real phone's retries. Ten for a /48: at thirty,
+# one /48 (a free tunnel broker hands them out) could spend 4,320 decodes a
+# day, nearly half the default quota; at ten it is 1,440, and the quota then
+# takes seven /48s, before the higher usage tier DEPLOY.md asks for.
+_INTEGRITY_FAIL_WINDOW = 600
+MAX_INTEGRITY_FAILURES_PER_NETWORK = 3
+MAX_INTEGRITY_FAILURES_PER_IP6_48 = 10
+_INTEGRITY_STATUS = {"integrity_missing": 400, "integrity_failed": 403,
+                     "integrity_unavailable": 503}
+
+
+def _integrity_refusal(conn, body: dict, token: str, lang: str):
+    """The error response when an FCM registration of `token` lacks a passing
+    Play Integrity verdict, else None. Call it after the gate and the
+    validation and outside any transaction: it makes a request to Google.
+
+    A network that has failed `MAX_INTEGRITY_FAILURES_PER_NETWORK` checks (or
+    its /48 `..._PER_IP6_48`) in ten minutes gets a 429 and no Google call;
+    only `integrity_failed` counts (a missing token makes no call, an
+    unavailable check is our side). A token that is plainly not a JWE fails
+    without a call and counts."""
+    cfg = _cfg()
+    if not cfg.play_integrity_required:
+        return None
+    from app.integrity import looks_like_integrity_token, verify_play_integrity
+    raw = body.get("integrity_token")
+    if not isinstance(raw, str) or not raw.strip():
+        return _error("integrity_missing", 400, lang)
+    limits = [(_network_bucket("intfail"), MAX_INTEGRITY_FAILURES_PER_NETWORK)]
+    ip6_48 = _client_ip6_48()
+    if ip6_48 is not None:
+        limits.append((_network_bucket("intfail48", ip6_48),
+                       MAX_INTEGRITY_FAILURES_PER_IP6_48))
+    wait = max(rate_wait(conn, bucket, limit, _INTEGRITY_FAIL_WINDOW)
+               for bucket, limit in limits)
+    if wait:
+        return _error("rate_limited", 429, lang, retry_after=wait)
+    key = ("integrity_failed" if not looks_like_integrity_token(raw.strip())
+           else verify_play_integrity(cfg, raw, token))
+    if key is None:
+        return None
+    if key == "integrity_failed":
+        with transaction(conn):
+            rate_record(conn, [bucket for bucket, _ in limits])
+    return _error(key, _INTEGRITY_STATUS[key], lang)
 
 
 def _send_verification(conn, device_id: int) -> None:
@@ -656,6 +743,10 @@ def device_update():
         gate = _token_gate(g.conn)
         if gate.wait:
             return _error("rate_limited", 429, lang, retry_after=gate.wait)
+        if g.device["platform"] == "fcm":
+            refusal = _integrity_refusal(g.conn, body, token, lang)
+            if refusal is not None:
+                return refusal
     with transaction(g.conn):
         outcome = update_device(g.conn, g.device["id"], secret_hash=g.secret_hash,
                                 token=token, language=language)

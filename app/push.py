@@ -371,7 +371,9 @@ def config_fingerprint(cfg, platform: str) -> str:
 
 
 _apns_jwt: dict[str, tuple[str, float]] = {}      # key id -> (token, issued at)
-_fcm_token: dict[str, tuple[str, float]] = {}     # client_email -> (token, expires at)
+# (client_email, scope) -> (token, expires at). One service account can hold
+# tokens for several Google APIs (FCM here, Play Integrity in app.integrity).
+_fcm_token: dict[tuple[str, str], tuple[str, float]] = {}
 _clients: dict[str, httpx.Client] = {}
 
 
@@ -407,27 +409,33 @@ def _fcm_account(cfg) -> dict:
     return json.loads(cfg.fcm_service_account_json)
 
 
-def _fcm_access_token(cfg) -> str:
-    """OAuth2 access token for the FCM scope via the service account's signed
-    JWT assertion. Cached until a minute before it expires."""
-    acct = _fcm_account(cfg)
-    cached = _fcm_token.get(acct["client_email"])
+def _google_access_token(acct: dict, scope: str, platform: str = "fcm") -> str:
+    """OAuth2 access token for `scope` via the service account's signed JWT
+    assertion. Cached per account and scope until a minute before it
+    expires. `platform` only names the HTTP client `_post` uses."""
+    key = (acct["client_email"], scope)
+    cached = _fcm_token.get(key)
     if cached and time.time() < cached[1] - 60:
         return cached[0]
     now = int(time.time())
     assertion = jwt.encode(
-        {"iss": acct["client_email"], "scope": FCM_SCOPE,
+        {"iss": acct["client_email"], "scope": scope,
          "aud": acct["token_uri"], "iat": now, "exp": now + 3600},
         acct["private_key"], algorithm="RS256")
-    resp = _post("fcm", acct["token_uri"], data={
+    resp = _post(platform, acct["token_uri"], data={
         "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
         "assertion": assertion})
     if resp.status_code != 200:
-        raise PushAuthError(f"fcm token exchange: status {resp.status_code}")
+        raise PushAuthError(f"{scope} token exchange: status {resp.status_code}")
     body = resp.json()
-    _fcm_token[acct["client_email"]] = (
+    _fcm_token[key] = (
         body["access_token"], time.time() + int(body.get("expires_in", 3600)))
     return body["access_token"]
+
+
+def _fcm_access_token(cfg) -> str:
+    """OAuth2 access token for the FCM scope."""
+    return _google_access_token(_fcm_account(cfg), FCM_SCOPE)
 
 
 # What a relay request can fail with on the way: a timeout, a refused or reset

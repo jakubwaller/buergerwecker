@@ -33,6 +33,8 @@ _ENV = {
     "RENEWAL_REMINDER_DAYS_BEFORE": "10", "MAX_PLANS_PER_CITY": "10",
     "PARSER_CANARY_THRESHOLD_HOURS": "2", "DEVELOPER_EMAIL": "dev@x",
     "KOFI_URL": "https://k", "APP_API_ENABLED": "1",
+    # Attestation has its own tests (test_integrity.py); these register devices.
+    "PLAY_INTEGRITY_REQUIRED": "0",
     # Every test client is one address; the tests of the limits lower them.
     "MAX_UNVERIFIED_DEVICES_PER_IP_PER_HOUR": "999",
     "MAX_UNVERIFIED_DEVICES_PER_IP6_48_PER_HOUR": "999",

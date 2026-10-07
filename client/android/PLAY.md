@@ -50,6 +50,34 @@ A build without the file compiles and runs; `PushGatePlugin` tells the page that
 pushes are unavailable, so it shows a hint instead of crashing in
 `PushNotifications.register()`.
 
+## Play Integrity
+
+The server only creates an Android device, or takes a new push token for one, with
+a Play Integrity verdict showing the genuine app on a genuine device
+(`IntegrityPlugin`, `app/integrity.py`); without it a headless FCM receiver could
+mint verified devices. One-time setup:
+
+1. Play Console → the app → **Test and release → App integrity → Play Integrity
+   API → Link a Cloud project**: pick the Google Cloud project behind the Firebase
+   project (its number is the sender ID in `google-services.json`, which the plugin
+   reads, so the two cannot drift apart).
+2. In that Google Cloud project, enable the **Play Integrity API**.
+3. The server decodes verdicts with a service account, and that account must
+   belong to the Google Cloud project linked in step 1. A service account from
+   any other project is refused by Google with 403 on every decode, which the
+   server answers as 503 to every Android registration. Use the FCM service
+   account of the linked Firebase project (`FCM_SERVICE_ACCOUNT_JSON(_FILE)`);
+   it is the default, and `PLAY_INTEGRITY_SERVICE_ACCOUNT_JSON(_FILE)` should stay
+   unset unless it is another account of the same project (`docs/DEPLOY.md`,
+   "Push delivery (the app)").
+
+Only builds installed from Google Play pass, closed testing included. A sideloaded
+or debug build cannot register against a production server (it gets
+`integrity_failed`, "must be installed from Google Play and run on a certified Android device"); to try one, point it at a
+dev server running with `PLAY_INTEGRITY_REQUIRED=0`. The Play Console **data safety**
+form must mention it: the app sends an integrity token to our server at
+registration, and Google Play processes the request.
+
 ## First release, once
 
 1. Play Console → **Create app**: name `Bürgerwecker`, default language German, App, Free.

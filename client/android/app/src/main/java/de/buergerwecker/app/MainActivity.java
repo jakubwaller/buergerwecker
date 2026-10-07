@@ -11,6 +11,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(PushGatePlugin.class);
         registerPlugin(WidgetBridgePlugin.class);
         registerPlugin(SecureStorePlugin.class);
+        registerPlugin(IntegrityPlugin.class);
         super.onCreate(savedInstanceState);
     }
 }

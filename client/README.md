@@ -304,6 +304,8 @@ TestFlight shows now. This is PapaMap's process unchanged; its README has the de
 
 `android/PLAY.md`: the upload key, Firebase, the first Play release, the `play` task.
 
+An Android registration also carries a Play Integrity token (`IntegrityPlugin.java`, `integrity_token` in `www/push.js`); only builds installed from Google Play get a passing verdict, so a sideloaded build registers only against a server with `PLAY_INTEGRITY_REQUIRED=0` (PLAY.md, "Play Integrity").
+
 ## This version needs a new TestFlight build
 
 The credential's move into the Keychain / AndroidKeyStore, the widget's credential and the

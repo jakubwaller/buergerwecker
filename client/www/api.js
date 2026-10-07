@@ -174,8 +174,10 @@ export const api = {
   // otherwise), and a special-category service only to a device watching it.
   slots: (slug, lang) => request("GET", `/cities/${encodeURIComponent(slug)}/slots${q(lang)}`, { auth: true }),
 
-  registerDevice: (platform, token, language) =>
-    request("POST", "/devices", { body: { platform, token, language } }),
+  // `integrityToken` is the Play Integrity token of an Android registration
+  // (push.js); undefined drops out of the JSON, as on iOS.
+  registerDevice: (platform, token, language, integrityToken) =>
+    request("POST", "/devices", { body: { platform, token, language, integrity_token: integrityToken } }),
   device: () => request("GET", "/device", { auth: true }),
   updateDevice: (fields) => request("PUT", "/device", { body: fields, auth: true }),
   deleteDevice: () => request("DELETE", "/device", { auth: true }),

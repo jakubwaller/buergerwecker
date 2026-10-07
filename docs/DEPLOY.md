@@ -440,10 +440,32 @@ APNS_KEY_P8_FILE=/run/secrets/apns.p8       # or APNS_KEY_P8=<PEM inline>
 APNS_TOPIC=<bundle id of the app>
 APNS_SANDBOX=0                              # 1 only for Xcode development builds
 FCM_SERVICE_ACCOUNT_JSON_FILE=/run/secrets/fcm.json   # or ..._JSON=<inline>
+PLAY_INTEGRITY_REQUIRED=1                   # 0 only on a local/dev server; production must be 1
+# PLAY_INTEGRITY_SERVICE_ACCOUNT_JSON_FILE=/run/secrets/play-integrity.json   # unset by default: falls back to the FCM account. Set to a missing file, load_config fails and web, poller and housekeeping stop.
 PUSH_TTL_SECONDS=1800                       # how long a relay holds a push
 PUSH_BUDGET_PER_CYCLE=200                   # digest pushes tried per cycle (0 = no bound)
 PUSH_BUDGET_SECONDS=20                      # no new push after this many seconds (0 = no bound)
 ```
+
+**Play Integrity (Android).** `POST /devices` with a new FCM token and `PUT
+/device` with a new FCM token need an `integrity_token`; `web` sends it to
+Google's `decodeIntegrityToken` and refuses (400 `integrity_missing`, 403
+`integrity_failed`, 503 `integrity_unavailable`) unless it shows the Play-
+recognised app on a device that meets device integrity, minted for that very
+token and within ten minutes. It fails closed: with no credentials, or with
+Google unreachable, Android registration stops (`integrity: ...` in the web
+log); iOS and tokens already registered are unaffected. One-time setup, in
+the owner's hands: link the Firebase project's Google Cloud project in the
+Play Console (App integrity), enable the Play Integrity API in it, and give
+the service account in use (the FCM one, or a separate one in
+`PLAY_INTEGRITY_SERVICE_ACCOUNT_JSON[_FILE]`) permission to call it. Only
+builds installed from Google Play pass; set `PLAY_INTEGRITY_REQUIRED=0` only on
+a dev server. Each check is one `decodeIntegrityToken` call against the app's
+daily quota (10,000 by default); a network with 3 failed checks in ten minutes
+(10 per IPv6 /48) is refused with 429 without a call. **Before the public
+release, request the higher Play Integrity usage tier in the Play Console**
+(App integrity → Play Integrity API), or real registrations can hit 503 on the
+quota.
 
 **The push budget.** Push goes out one relay request per device, serially, in
 the poller's single loop: without a bound a few thousand app subscriptions
