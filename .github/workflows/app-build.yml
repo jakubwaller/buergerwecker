@@ -1,7 +1,8 @@
 # The store app (client/), compiled where Xcode and the Android SDK exist: on
 # GitHub's runners, not on a laptop. Adapted from PapaMap's app-build.yml.
-# This repository is private, so macOS minutes count against the plan (at ten
-# times the Linux rate): the Mac jobs run only when client/ or this file
+# This repository is public: anyone signed in to GitHub can download a run's
+# artifacts, the `play` job's signed bundle included (client/README.md, "Before
+# the public release"). The Mac jobs run only when client/ or this file
 # changed, and the signed ones only when asked for.
 #
 # Every push to a PR that touches client/ gets the node tests and the two

@@ -368,8 +368,8 @@ Repository variables (optional): `ASC_BETA_GROUP`, `PLAY_TRACK`, `PLAY_RELEASE_S
 ## Before the public release
 
 Internal, not for the store texts. `APP_API_ENABLED` was opened on 2026-10-07 for TestFlight and
-closed again the same day, when the review below found a hole; it stays closed until every fix
-listed there is deployed.
+closed again the same day, when the review below found a hole; it was reopened that evening, once
+every fix listed there was deployed.
 
 A verified device is not a real phone on Android. `google-services.json` ships in every APK,
 and a headless FCM receiver can register real tokens under the project and receive the
@@ -392,12 +392,42 @@ token. Every review here assumes scripted, unlimited verified Android devices.
         credential and without Art. 9 alerts, a push-URL allowlist.
       - #111, #112: the privacy page for the app, the network identifier, Apple and Google, the
         right to object, backups.
-- [ ] **A final combined review** of the API, `app/planning.py` and the client after all of the
+- [x] **A final combined review** of the API, `app/planning.py` and the client after all of the
       above, **before the first `play` run**: its signed AAB, `google-services.json` inside, is
       uploaded as an Actions artifact of this public repository, and from then on anyone holding
       it can mint verified devices. The same holds for any other Android build that leaves the
       team, Play internal testing included. Check the per-network gate, the per-token budget
       and the app's share of the plan cap against a scripted fleet.
+      **Done 2026-10-07** at `56eba44`: a read of `app/api.py`, `app/planning.py`, the device and
+      cap queries in `app/repo.py`, the verification push, the Android and iOS client and
+      `app-build.yml`, plus a fleet run through the test client at the production limits, each
+      device verified the moment it registered, as a headless FCM receiver would. No new hole,
+      and nothing the `play` run exposes beyond what this section already assumes. Measured:
+      - The gate: one IPv4 address mints 60 verified devices an hour, one IPv6 /48 600 (its /64s
+        at ten each per ten minutes). A device that verifies leaves the unverified count, so the
+        sweep defers none of them; the gate is the only bound on the rate.
+      - The per-token budget does not bind a fleet, which uses a new token per device. It is
+        what keeps a known token from being made to buzz, and that holds.
+      - The share: 60 devices in Bonn (62 services, cap 16) got 26 alerts; app-held services
+        stopped at 8 (`cap // 2`), and a new service was still open to mail and closed to the
+        app. A city is polled for at most `cap + cap // 2` services, whatever the fleet does.
+      - The ceiling: 33 devices fill a city's 100 app places (`MAX_APP_SUBSCRIPTIONS_PER_CITY`),
+        about half an hour from one IPv4 address and at once from one /48; all 38 tenants take about
+        1,250 devices, a day from one address or two hours from one /48. After that, new app
+        sign-ups there get 503 `waitlist_full`. A subscriber who renews within the term keeps
+        the place, and the website is not affected.
+      - The client: nothing found. CSP, push URLs on the site's own origin only, the credential
+        in Keystore and Keychain (`ThisDeviceOnly`) and out of backups, the widget's fixed API
+        base and encoded slug, no HTML sinks, and no handler for the `buergerwecker://` scheme.
+- [ ] **Before production, decide on the fleet residual** above: anyone can keep new app users
+      out of every city for as long as they keep renewing. The only fix that makes a verified
+      device a real phone is attestation at registration (Play Integrity on Android, App Attest
+      on iOS). Short of that, a city at its ceiling shows only as a log line (`api: <city> is
+      at MAX_APP_SUBSCRIPTIONS_PER_CITY`), and nothing alerts on it.
+- [ ] **Hardening, not urgent**: the `testflight` job sets the App Store Connect key in the job's
+      `env`, so `npm ci` and `npx cap sync` run with it. No package in the lockfile has an
+      install script today. Moving the key to the steps that use it, or `npm ci --ignore-scripts`,
+      keeps it that way.
 - [ ] **Firebase**: accept the Data Processing and Security Terms in the Firebase project, then
       add Google to the privacy page's list of processors with a DPA.
 

@@ -54,7 +54,9 @@ pushes are unavailable, so it shows a hint instead of crashing in
 
 1. Play Console → **Create app**: name `Bürgerwecker`, default language German, App, Free.
 2. Actions → App build → Run workflow → task **play**. The run's artifact
-   `buergerwecker-aab-<n>` is the signed bundle.
+   `buergerwecker-aab-<n>` is the signed bundle. This repository is public, so anyone signed
+   in to GitHub can download that artifact, `google-services.json` included, for its 30 days.
+   The gate for that is "Before the public release" in `client/README.md`.
 3. Console → Testing → **Closed testing** → create track → Create release →
    accept Play App Signing (Google-generated key) → drag the `.aab` in.
 4. Testers: a Google Group or an email list, and the opt-in link to them.
