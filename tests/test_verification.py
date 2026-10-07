@@ -78,9 +78,31 @@ def _age_deliveries(dev, minutes=2):
 
 
 def _attempts(platform="apns", name="tok-1"):
+    """The attempts that count toward the token's daily budget: deliveries
+    and refusals with evidence that the platform works."""
+    cols = {r["name"] for r in _db().execute("PRAGMA table_info(verify_attempts)")}
+    credited = " AND credited=1" if "credited" in cols else ""
     return [(r["kind"]) for r in _db().execute(
-        "SELECT kind FROM verify_attempts WHERE token_key=? ORDER BY at, rowid",
+        f"SELECT kind FROM verify_attempts WHERE token_key=?{credited} ORDER BY at, rowid",
         (token_key(platform, tok(name, platform)),))]
+
+
+def _ceiling():
+    from app import repo
+    return getattr(repo, "MAX_VERIFY_ATTEMPTS_PER_TOKEN_PER_DAY", 20)
+
+
+def _time_passes(minutes=2):
+    """Every verification clock `minutes` older: attempts, codes, not-befores."""
+    db = _db()
+    age = f"-{minutes} minutes"
+    db.execute("UPDATE verify_attempts SET at=datetime(at, ?)", (age,))
+    db.execute("UPDATE sent_idempotency SET sent_at=datetime(sent_at, ?), "
+               "idem_key=idem_key || '-' || abs(random()) WHERE idem_key LIKE 'verify|%'",
+               (age,))
+    db.execute("UPDATE push_devices SET verify_code_at=datetime(verify_code_at, ?), "
+               "verify_next_at=datetime(verify_next_at, ?), "
+               "verify_requested_at=datetime(verify_requested_at, ?)", (age, age, age))
 
 
 def _backdate(dev, column, modifier):
@@ -832,7 +854,8 @@ def test_a_token_change_under_a_misconfiguration_does_not_pause_subscriptions_fo
             _age_deliveries(dev)
             assert app_client.post("/api/v1/device/verify/resend", json={},
                                    headers=own).status_code == 202
-    assert len(wrong.calls) == 6
+    # The token change, two sweeps (the third waits out the backoff), two resends.
+    assert len(wrong.calls) == 5
     assert active_subscriptions(_db()) == []           # paused, as any token change
     row = _row(dev)
     assert row["retired_at"] is None and row["verify_failures"] == 0
@@ -865,6 +888,172 @@ def test_rows_of_a_platform_this_process_cannot_send_do_not_starve_the_sweep(
     assert len(r.calls) == 1 and r.calls[0]["url"].endswith("/" + tok("a1"))
     # Untouched: a process with FCM credentials sends them as before.
     assert all(_row(d)["verify_code_hash"] is None for d in fcm)
+
+
+def test_a_junk_token_has_a_daily_ceiling_on_the_request_path(client, monkeypatch):
+    """On a platform that delivers to nobody, a refusal had no evidence and
+    was recorded nowhere: registering, deleting and registering the token
+    again from ever new networks pushed it without end."""
+    app_client = _relay_client(monkeypatch)
+    refusing = Relay(status=400, reason="BadDeviceToken")
+    with patch("app.push._post", refusing):
+        for i in range(_ceiling() + 10):
+            r = app_client.post("/api/v1/devices",
+                                json={"platform": "apns", "token": tok("junk")},
+                                headers={"X-Forwarded-For": f"2001:db8:{i:x}::1"})
+            assert r.status_code == 201
+            body = r.get_json()
+            assert app_client.delete("/api/v1/device", headers=_auth(
+                body["device_id"], body["secret"])).status_code == 204
+            _time_passes()
+    assert len(refusing.calls) == _ceiling()
+
+
+def test_a_junk_token_has_a_daily_ceiling_on_resend(client, monkeypatch):
+    app_client = _relay_client(monkeypatch)
+    refusing = Relay(status=400, reason="BadDeviceToken")
+    with patch("app.push._post", refusing):
+        r = app_client.post("/api/v1/devices", json={"platform": "apns",
+                                                     "token": tok("junk")})
+        auth = _auth(r.get_json()["device_id"], r.get_json()["secret"])
+        answers = []
+        for _ in range(_ceiling() + 10):
+            _time_passes()
+            answers.append(app_client.post("/api/v1/device/verify/resend",
+                                           json={}, headers=auth))
+    assert len(refusing.calls) == _ceiling()
+    assert answers[-1].status_code == 429 and answers[-1].get_json()["retry_after"] > 3600
+
+
+def test_a_device_with_nothing_to_lose_is_retired_after_three_unconfirmed_refusals(
+        client, monkeypatch):
+    """The sweep retried a junk registration every minute for a day when the
+    platform delivered to nobody else."""
+    app_client = _relay_client(monkeypatch)
+    refusing = Relay(status=400, reason="BadDeviceToken")
+    with patch("app.push._post", refusing):
+        r = app_client.post("/api/v1/devices", json={"platform": "apns",
+                                                     "token": tok("junk")})
+        dev, secret = r.get_json()["device_id"], r.get_json()["secret"]
+        for _ in range(20):
+            _time_passes(minutes=61)       # past any backoff
+            send_verifications(_db(), load_config())
+    assert len(refusing.calls) == 3
+    assert _row(dev)["retired_at"] is not None
+    gone = app_client.get("/api/v1/device", headers=_auth(dev, secret))
+    assert gone.status_code == 410 and gone.get_json()["error"] == "device_retired"
+    assert _attempts(name="junk") == []                # still no budget spent
+
+
+def test_a_paused_device_backs_off_and_stays_under_the_ceiling(client, monkeypatch):
+    """A token change on a device with subscriptions is never retired on
+    unconfirmed answers; it backs off instead, and the ceiling bounds it."""
+    app_client = _relay_client(monkeypatch)
+    with patch("app.push._post", Relay()):
+        dev, secret = _register(app_client)
+    own = _auth(dev, secret)
+    _subscribe(app_client, own)
+    refusing = Relay(status=400, reason="BadDeviceToken")
+
+    def due_in():
+        return _db().execute(
+            "SELECT CAST(strftime('%s', verify_next_at) - strftime('%s','now') "
+            "AS INTEGER) FROM push_devices WHERE id=?", (dev,)).fetchone()[0]
+    with patch("app.push._post", refusing):
+        _age_deliveries(dev)
+        app_client.put("/api/v1/device", json={"token": tok("new")}, headers=own)
+        waits = [due_in()]
+        for _ in range(3):
+            _time_passes(minutes=61)
+            send_verifications(_db(), load_config())
+            waits.append(due_in())
+        assert waits[0] < waits[1] < waits[2] < waits[3]          # backs off
+        for _ in range(18):                                       # still inside a day
+            _time_passes(minutes=61)
+            send_verifications(_db(), load_config())
+    assert len(refusing.calls) == _ceiling()
+    assert _row(dev)["retired_at"] is None and active_subscriptions(_db()) == []
+
+
+def test_a_misconfiguration_that_spent_the_ceiling_is_forgiven_once_anyone_gets_a_push(
+        client, monkeypatch):
+    app_client = _relay_client(monkeypatch)
+    wrong = Relay(status=400, reason="BadDeviceToken")
+    with patch("app.push._post", wrong):
+        for _ in range(_ceiling()):
+            _time_passes()
+            r = app_client.post("/api/v1/devices", json={"platform": "apns",
+                                                         "token": tok()})
+    dev = r.get_json()["device_id"]
+    assert len(wrong.calls) == _ceiling()
+    _time_passes()
+    assert verify_push_wait(_db(), dev) > 3600                # the ceiling holds...
+    with patch("app.push._post", Relay()) as fixed:
+        _register(app_client, token="someone-else", verified=False)
+        assert len(fixed.calls) == 1
+        assert verify_push_wait(_db(), dev) == 0              # ...until the platform works
+        _register(app_client, verified=False)
+    assert len(fixed.calls) == 2 and _attempts() == ["open"]
+
+
+def test_junk_on_one_platform_cannot_crowd_out_the_other(client, monkeypatch):
+    """Sixty refused FCM rows, older than three APNs ones: the APNs rows
+    still all go out in the first sweep."""
+    from test_push import SERVICE_ACCOUNT
+    fcm = [_register(client, platform="fcm", token=f"f{i}", verified=False)[0]
+           for i in range(60)]
+    for d in fcm:
+        _backdate(d, "verify_requested_at", "-10 minutes")
+    apns = [_register(client, token=f"a{i}", verified=False)[0] for i in range(3)]
+    for d in apns:
+        _backdate(d, "verify_requested_at", "-5 minutes")
+    _enable_push(monkeypatch)
+    monkeypatch.setenv("FCM_SERVICE_ACCOUNT_JSON", SERVICE_ACCOUNT)
+    calls = []
+
+    def relay(platform, url, *, headers=None, json=None, data=None):
+        if data is not None:                                   # FCM token exchange
+            return httpx.Response(200, json={"access_token": "t", "expires_in": 3600})
+        calls.append(platform)
+        if platform == "fcm":
+            return httpx.Response(404, json={"error": {"status": "NOT_FOUND"}})
+        return httpx.Response(200, json={})
+    with patch("app.push._post", relay):
+        assert send_verifications(_db(), load_config()) == 3
+    assert calls.count("apns") == 3 and calls.count("fcm") <= 25
+
+
+def test_a_real_row_is_reached_within_a_bounded_time_behind_a_queue_of_junk(client):
+    """However many junk rows are due, the sweep works through them in due
+    order, 50 a cycle, and every row it tried goes behind the rest."""
+    from app.repo import register_device
+    db = _db()
+    for i in range(120):
+        register_device(db, platform="apns", token=tok(f"j{i}"), secret_hash="h" * 64,
+                        language="de")
+    real = register_device(db, platform="apns", token=tok("real"), secret_hash="h" * 64,
+                           language="de")
+    db.execute("UPDATE push_devices SET verify_requested_at=datetime('now','-10 minutes'), "
+               "verify_next_at=datetime('now','-5 minutes')")
+    db.execute("UPDATE push_devices SET verify_next_at=datetime('now','-1 minutes') "
+               "WHERE id=?", (real,))                         # due last
+    import os
+    for k, v in _APNS_ENV.items():
+        os.environ[k] = v
+    try:
+        refusing_junk = ByToken([f"j{i}" for i in range(120)], status=400,
+                                reason="BadDeviceToken")
+        sweeps = 0
+        with patch("app.push._post", refusing_junk):
+            while _row(real)["verify_sent_at"] is None and sweeps < 10:
+                send_verifications(_db(), load_config())
+                sweeps += 1
+                _time_passes(minutes=1)
+    finally:
+        for k in _APNS_ENV:
+            os.environ.pop(k, None)
+    # 120 junk rows due first, 50 a sweep: the real one in the third.
+    assert _row(real)["verify_sent_at"] is not None and sweeps == 3
 
 
 def test_rows_an_outage_left_undelivered_go_to_the_back_of_the_queue(client, monkeypatch):

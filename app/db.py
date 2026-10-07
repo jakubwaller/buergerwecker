@@ -105,18 +105,24 @@ CREATE TABLE IF NOT EXISTS push_devices (
   -- platform showed it works (push.PushResult.failed); the sweep gives up on
   -- it at repo.MAX_VERIFY_FAILURES. A new request starts over.
   verify_failures      INTEGER NOT NULL DEFAULT 0,
-  -- Not before: a minute after any try that did not deliver, or when the
-  -- budget says wait, so the sweep rotates through the queue instead of
-  -- retrying its head.
-  verify_next_at       TIMESTAMP
+  -- Not before: after any try that did not deliver (a minute, longer after
+  -- each refusal: verify_tries), or when the budget says wait, so the sweep
+  -- rotates through the queue instead of retrying its head.
+  verify_next_at       TIMESTAMP,
+  -- Refusals of the outstanding request, with evidence or without: the
+  -- sweep's backoff, and an unverified device with no subscription is
+  -- retired at repo.MAX_UNCONFIRMED_REFUSALS. A new request starts over.
+  verify_tries         INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_push_devices_token
   ON push_devices(platform, token);
 
--- Verification pushes attempted per push token: delivered, or refused while
--- the platform showed it works. Neither an outage nor a refusal from a
--- platform that delivers to nobody (a misconfiguration answers the same for
--- every device) is counted: they say nothing about the token.
+-- Verification pushes attempted per push token, every one the relay answered.
+-- `credited` is 1 for a delivery or a refusal while the platform showed it
+-- works, and only those count toward the daily budgets; 0 is a refusal from a
+-- platform that delivered to nobody (a misconfiguration answers the same for
+-- every device), which counts only toward the hard ceiling and only until the
+-- platform delivers to anyone after it. An outage is not recorded at all.
 -- `token_key` is the SHA-256 of "<platform>|<token>", so the count outlives
 -- the device row: deleting a device and registering its token again starts no
 -- new budget. `kind` is the request's (see push_devices.verify_kind). Read
@@ -125,7 +131,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_push_devices_token
 CREATE TABLE IF NOT EXISTS verify_attempts (
   token_key  TEXT NOT NULL,
   kind       TEXT NOT NULL,
-  at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+  at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  platform   TEXT NOT NULL DEFAULT '',
+  credited   INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_verify_attempts_key ON verify_attempts(token_key, at);
 
@@ -423,6 +431,11 @@ def init_schema(conn: sqlite3.Connection) -> None:
         "verify_kind": "TEXT",
         "verify_failures": "INTEGER NOT NULL DEFAULT 0",
         "verify_next_at": "TIMESTAMP",
+        "verify_tries": "INTEGER NOT NULL DEFAULT 0",
+    })
+    _add_missing_columns(conn, "verify_attempts", {
+        "platform": "TEXT NOT NULL DEFAULT ''",
+        "credited": "INTEGER NOT NULL DEFAULT 1",
     })
     # best_time: the earliest time told under a day key. Existing day-key rows
     # get NULL, which has_seen_slot reads as "told at an unknown time" and

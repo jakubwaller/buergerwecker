@@ -102,9 +102,19 @@ MAX_VERIFY_PUSHES_PER_DAY = 5
 # change, a resend): a budget of its own, so a stranger who re-registers the
 # token cannot spend it and lock the real app out of its next token change.
 MAX_OWNER_VERIFY_PUSHES_PER_DAY = 5
-# Refused attempts after which the sweep gives up on a request (a junk token
-# answers the same every minute for the 24 hours the request lives).
+# Refused attempts, with evidence that the platform works, after which the
+# sweep gives up on a request.
 MAX_VERIFY_FAILURES = 3
+# Every attempt the relay answered for one token per rolling day, whatever the
+# evidence and whoever asked: the hard ceiling on what anyone can make us send
+# to one token. Above the two budgets together, so it never binds a token the
+# relay delivers to; it binds the refusals that count toward no budget, those
+# from a platform that delivers to nobody.
+MAX_VERIFY_ATTEMPTS_PER_TOKEN_PER_DAY = 20
+# Refusals, with evidence or without, after which an unverified device with
+# no subscription is retired: it has nothing to lose, the app re-registers on
+# its 410, and a junk registration stops costing the sweep anything.
+MAX_UNCONFIRMED_REFUSALS = 3
 
 
 def token_key(platform: str, token: str) -> str:
@@ -113,27 +123,48 @@ def token_key(platform: str, token: str) -> str:
     return hashlib.sha256(f"{platform}|{token}".encode("utf-8")).hexdigest()
 
 
-def token_verify_wait(conn: sqlite3.Connection, key: str, kind: str) -> int:
+def platform_last_delivery(conn: sqlite3.Connection, platform: str) -> str | None:
+    """When `platform` last delivered a push to anyone (SQLite's shape), or
+    None: what forgives the refusals a misconfiguration produced."""
+    row = conn.execute("SELECT sent_at FROM sent_idempotency WHERE provider=? "
+                       "ORDER BY sent_at DESC LIMIT 1", (platform,)).fetchone()
+    return row[0] if row else None
+
+
+def token_verify_wait(conn: sqlite3.Connection, key: str, kind: str,
+                      last_delivery: str | None) -> int:
     """Seconds until the token `key` may be sent another verification push on
-    a request of `kind` (0 = now): at least 60 s after the last attempt of
-    either kind, and at most the kind's daily budget per rolling day. Counted
-    from `verify_attempts`, every attempt the relay answered, delivered or
-    refused, so the rules hold across workers, the poller, and a deleted and
-    re-created row."""
+    a request of `kind` (0 = now), from `verify_attempts`, so the rules hold
+    across workers, the poller, and a deleted and re-created row:
+
+    - 60 s after the last attempt the relay answered, of either kind;
+    - the kind's daily budget, counting deliveries and refusals with evidence
+      that the platform works (`credited`);
+    - MAX_VERIFY_ATTEMPTS_PER_TOKEN_PER_DAY, counting every answered attempt,
+      except a refusal without evidence made before the platform's
+      `last_delivery`: once the platform delivers to anyone again, what a
+      misconfiguration refused is forgiven, while on a platform that delivers
+      to nobody it stays counted."""
     rows = conn.execute(
-        "SELECT kind, CAST(strftime('%s','now') - strftime('%s', at) AS INTEGER) "
-        "AS age FROM verify_attempts WHERE token_key=? "
+        "SELECT kind, credited, at, "
+        "CAST(strftime('%s','now') - strftime('%s', at) AS INTEGER) AS age "
+        "FROM verify_attempts WHERE token_key=? "
         "AND at > datetime('now','-1 day') ORDER BY at DESC", (key,)).fetchall()
     wait = 0
     if rows:
         wait = max(wait, 60 - rows[0]["age"])
     cap = (MAX_OWNER_VERIFY_PUSHES_PER_DAY if kind == "owner"
            else MAX_VERIFY_PUSHES_PER_DAY)
-    ages = [r["age"] for r in rows if r["kind"] == kind]
-    if len(ages) >= cap:
-        # The window frees when the attempt that made the count reach the cap
-        # ages out.
-        wait = max(wait, 1, 86400 - ages[cap - 1])
+
+    def frees(ages: list[int], limit: int) -> int:
+        # The window frees when the attempt that made the count reach the
+        # limit ages out.
+        return max(1, 86400 - ages[limit - 1]) if len(ages) >= limit else 0
+    wait = max(wait, frees([r["age"] for r in rows
+                            if r["credited"] and r["kind"] == kind], cap))
+    counted = [r["age"] for r in rows
+               if r["credited"] or last_delivery is None or r["at"] > last_delivery]
+    wait = max(wait, frees(counted, MAX_VERIFY_ATTEMPTS_PER_TOKEN_PER_DAY))
     return max(0, wait)
 
 
@@ -163,15 +194,18 @@ def verify_push_wait(conn: sqlite3.Connection, device_id: int, *,
         return 0
     return max(device_verify_wait(conn, device_id),
                token_verify_wait(conn, token_key(row["platform"], row["token"]),
-                                 kind or row["verify_kind"] or "open"))
+                                 kind or row["verify_kind"] or "open",
+                                 platform_last_delivery(conn, row["platform"])))
 
 
 def record_verify_attempts(conn: sqlite3.Connection,
-                           attempts: list[tuple[str, str]]) -> None:
-    """One row per (token_key, kind): a delivery, or a refusal the platform's
-    evidence stands behind (see push.send_verifications)."""
-    conn.executemany("INSERT INTO verify_attempts (token_key, kind) VALUES (?,?)",
-                     attempts)
+                           attempts: list[tuple[str, str, str, bool]]) -> None:
+    """One row per (token_key, kind, platform, credited) the relay answered:
+    credited for a delivery or a refusal the platform's evidence stands
+    behind (see push.send_verifications)."""
+    conn.executemany("INSERT INTO verify_attempts (token_key, kind, platform, credited) "
+                     "VALUES (?,?,?,?)",
+                     [(k, kind, p, 1 if c else 0) for k, kind, p, c in attempts])
 
 
 def devices_awaiting_verification(conn: sqlite3.Connection, *,
@@ -224,15 +258,40 @@ def defer_verification(conn: sqlite3.Connection, device_id: int,
                  "WHERE id=?", (f"+{int(seconds)} seconds", device_id))
 
 
-def record_verify_failures(conn: sqlite3.Connection,
-                           device_ids: list[int]) -> None:
-    """The relay refused these devices' verification push, with evidence
-    that the platform works: count it, and send the device to the back of
-    the sweep's queue for at least a minute."""
+def record_verify_refusals(conn: sqlite3.Connection, device_ids: list[int], *,
+                           confirmed: bool) -> None:
+    """The relay refused these devices' verification push. Every refusal
+    counts toward `verify_tries` and sends the device to the back of the
+    sweep's queue, a minute after the first and twice as long after each
+    further one, up to an hour; only a `confirmed` one (the platform showed it
+    works) counts toward MAX_VERIFY_FAILURES."""
     conn.executemany(
-        "UPDATE push_devices SET verify_failures=verify_failures+1, "
-        "verify_next_at=datetime('now','+60 seconds') WHERE id=?",
-        [(d,) for d in device_ids])
+        "UPDATE push_devices SET verify_failures=verify_failures+?, "
+        "verify_next_at=datetime('now', '+' || "
+        "  min(3600, 60 << min(verify_tries, 6)) || ' seconds'), "
+        "verify_tries=verify_tries+1 WHERE id=?",
+        [(1 if confirmed else 0, d) for d in device_ids])
+
+
+def retire_unconfirmed(conn: sqlite3.Connection,
+                       refused: list[tuple[int, str]]) -> list[int]:
+    """Retire each (device_id, token) refused MAX_UNCONFIRMED_REFUSALS times
+    on its outstanding request that is unverified and holds no subscription:
+    without evidence the platform works it is never retired as dead, and a
+    junk registration would otherwise be retried for its whole day. Nothing
+    is lost: the app's next call answers 410 and it registers afresh. The
+    ids retired."""
+    retired = []
+    for device_id, token in refused:
+        row = conn.execute(
+            "SELECT 1 FROM push_devices d WHERE d.id=? AND d.token=? "
+            "AND d.verified_at IS NULL AND d.verify_tries >= ? "
+            "AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.device_id=d.id "
+            "                AND s.deleted_at IS NULL)",
+            (device_id, token, MAX_UNCONFIRMED_REFUSALS)).fetchone()
+        if row and retire_device(conn, device_id, "unconfirmed_refusals", token=token):
+            retired.append(device_id)
+    return retired
 
 
 def set_verify_code(conn: sqlite3.Connection, device_id: int,
@@ -266,7 +325,7 @@ def request_verification(conn: sqlite3.Connection, device_id: int, *,
                          kind: str, code: str = "drop") -> None:
     """Stamp a new verification request: `verify_requested_at` restarts (so
     the poller's sweep grace always covers the web request's own send),
-    `verify_sent_at`, the failure count and the not-before clear, whatever
+    `verify_sent_at`, the refusal counts and the not-before clear, whatever
     the sender's rules then decide. `kind` is whose request it is ("owner",
     the device's main credential; "open", anyone else) and picks the budget
     the push is counted against; an owner request still waiting for its push
@@ -301,6 +360,7 @@ def request_verification(conn: sqlite3.Connection, device_id: int, *,
         "UPDATE push_devices SET verify_requested_at=CURRENT_TIMESTAMP, "
         f"verify_kind=CASE WHEN {joins_owner} THEN 'owner' ELSE :kind END, "
         f"verify_failures=CASE WHEN {joins_owner} THEN verify_failures ELSE 0 END, "
+        f"verify_tries=CASE WHEN {joins_owner} THEN verify_tries ELSE 0 END, "
         f"verify_next_at=CASE WHEN {joins_owner} THEN verify_next_at ELSE NULL END, "
         f"verify_sent_at=NULL, {clear}WHERE id=:id",
         {"kind": kind, "id": device_id})

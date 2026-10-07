@@ -551,22 +551,39 @@ minute per token (and one delivered push a minute per device row), and per
 rolling day five on requests that need no credential (a registration, the same
 token again, a pending secret's resend) and, separately, five on the main
 secret's own requests (a token change, a resend), so a stranger re-registering
-somebody's token cannot spend the owner's. A delivered attempt counts, and so
-does a refused one, but only while the platform shows it works: it delivered
-to someone in the same pass, or, for a dead token, since the device first
-answered dead. An outage does not count, nor does a refusal from a platform
-that delivers to nobody: a wrong `APNS_TOPIC`, `APNS_SANDBOX` or FCM project
-must not leave every phone that registered in that window locked out of
-verification for a day after the fix. Register and token change
+somebody's token cannot spend the owner's. A delivered attempt counts toward
+the budgets, and so does a refused one, but only while the platform shows it
+works: it delivered to someone in the same pass, or, for a dead token, since
+the device first answered dead. An outage counts toward nothing, and a
+refusal from a platform that delivers to nobody counts toward no budget: a
+wrong `APNS_TOPIC`, `APNS_SANDBOX` or FCM project must not leave every phone
+that registered in that window locked out of verification for a day after
+the fix. Above the budgets sits a hard ceiling of 20 answered attempts per
+token per rolling day (`repo.MAX_VERIFY_ATTEMPTS_PER_TOKEN_PER_DAY`), on the
+request path (register, resend, `PUT /device`) and the sweep alike. It counts
+every attempt the relay answered, refusals without evidence included, so a
+junk token costs at most that much even on a platform that delivers to
+nobody (FCM before any Android phone gets pushes). A refusal without
+evidence stops counting toward it once the platform delivers to anyone
+after it, so a fixed misconfiguration is forgiven as soon as any push goes
+out. On a platform with a single device that is not enough: after fixing
+the config there, `DELETE FROM verify_attempts WHERE credited=0` clears it.
+Register and token change
 never refuse, they stamp the request and the sender decides when it goes out
-(resend answers 429 with `retry_after`); a device over its budget is left
-alone until it frees (`push_devices.verify_next_at`). A request refused three
-times with that evidence (`verify_failures`) is given up until the next one.
-The poller's sweep sends to at most 50 devices a cycle (`push.MAX_SWEEP_DEVICES`),
-only of the platforms it has credentials for, least recently tried first:
-every device a pass tried and did not deliver to (refused, an outage, a claim
-another sender holds) waits a minute at the back of the queue, so rows that
-cannot go out never fill the sweep. The minute is also an atomic claim on the
+(resend answers 429 with `retry_after`); a device over its budget or the
+ceiling is left alone until it frees (`push_devices.verify_next_at`). A
+request refused three times with evidence (`verify_failures`) is given up
+until the next one. An unverified device with no subscription that is
+refused three times without evidence (`verify_tries`) is retired
+(`retire_reason` `unconfirmed_refusals`); the app answers the 410 by
+registering afresh. The poller's sweep sends to at most 50 devices a cycle
+(`push.MAX_SWEEP_DEVICES`), split evenly between the platforms it has
+credentials for, in due order: every device a pass tried and did not deliver
+to goes to the back of the queue, a minute after an outage or a claim
+another sender holds, and after a refusal twice as long as after the one
+before, up to an hour. A junk backlog on one platform cannot hold up the
+other, and a real device waits behind at most the rows that fell due before
+it, 25 or 50 a minute. The minute is also an atomic claim on the
 idempotency key `verify|<device_id>|<UTC minute>`. The operator dashboard counts only subscriptions that run. `GET /device` shows an unverified device no subscriptions. A device that never verified and
 holds no subscription is purged after a day (housekeeping). An app that shows
 "waiting for the test notification" forever therefore means `APNS_*`/`FCM_*`

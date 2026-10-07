@@ -49,10 +49,11 @@ PLATFORMS = ("apns", "fcm")
 # deliver a code, the phone would get two (only the last hash is valid) and
 # two of the five daily pushes would be gone.
 SWEEP_GRACE_SECONDS = 30
-# Devices one sweep (a poller cycle) sends a verification push to, at most:
-# the sweep runs serially ahead of the city polls, and a queue of junk
-# registrations must not hold them up. The rest wait their turn, least
-# recently tried first (repo.devices_awaiting_verification).
+# Devices one sweep (a poller cycle) sends a verification push to, at most,
+# split evenly between the configured platforms: the sweep runs serially
+# ahead of the city polls, and a queue of junk registrations must not hold
+# them up. The rest wait their turn, in due order
+# (repo.devices_awaiting_verification).
 MAX_SWEEP_DEVICES = 50
 
 
@@ -100,8 +101,12 @@ class PushResult:
     # could not even be sent here. Neither an outage nor a refusal from a
     # platform that delivers nothing, which is what a wrong APNS_TOPIC,
     # APNS_SANDBOX or FCM project answers for every device: those say nothing
-    # about the item. The verification sender counts only these.
+    # about the item. The verification sender counts only these toward the
+    # budgets.
     failed: set[str] = field(default_factory=set)
+    # Every idem_key refused for that one item, with evidence or without
+    # (`failed` is the part with): what the hard per-token ceiling counts.
+    refused: set[str] = field(default_factory=set)
 
 
 # ---------------------------------------------------------------------------
@@ -201,51 +206,69 @@ def send_verifications(conn: sqlite3.Connection, cfg, *,
     nothing but the hash of a code is in the database.
 
     The budget is a read before the send: one delivered push a minute per
-    device row (`repo.device_verify_wait`), and per token one attempt a
-    minute and a daily count per request kind, kept in `verify_attempts`
-    (`repo.token_verify_wait`). Under concurrency it is approximate, bounded
-    by the one-a-minute claim. A device over it is left alone until the
-    budget frees (`verify_next_at`). Every delivered attempt is counted, and
-    every refused one the platform's evidence stands behind (`PushResult.
-    failed`: it delivered to someone this batch, or, for a dead token, since
-    the device first answered dead); that refusal also counts toward the
-    device's MAX_VERIFY_FAILURES, after which the sweep gives up on the
-    request. An outage, or a refusal from a platform that delivers to nobody
-    (a wrong APNS_TOPIC, APNS_SANDBOX or FCM project), counts toward neither:
-    it would lock everyone who registered in that window out for a day after
-    the fix. `verify_sent_at` is stamped only for a delivered push whose code
-    the row still holds, so a device whose push could not go out (relay down,
-    refused) is picked up again by the poller's sweep, for as long as the
-    request is under 24 hours old; every device a pass tried and did not
-    deliver to waits a minute (`verify_next_at`), so whatever cannot go out
-    rotates to the back instead of filling every sweep. Only devices of a
-    platform this process has credentials for are considered at all. Two
-    callers: the web process right after a registration, a token change or a
-    resend (`device_ids`), and the poller once per cycle, MAX_SWEEP_DEVICES
-    at a time."""
+    device row (`repo.device_verify_wait`), and per token
+    (`repo.token_verify_wait`, from `verify_attempts`) one answered attempt a
+    minute, a daily budget per request kind, and a hard daily ceiling on
+    every answered attempt. Under concurrency it is approximate, bounded by
+    the one-a-minute claim. A device over it is left alone until it frees
+    (`verify_next_at`).
+
+    What counts where. A delivery counts toward everything. A refusal the
+    platform's evidence stands behind (`PushResult.failed`: it delivered to
+    someone this batch, or, for a dead token, since the device first answered
+    dead) counts toward the budget and the device's MAX_VERIFY_FAILURES,
+    after which the sweep gives up on the request. A refusal without that
+    evidence (`PushResult.refused` minus `failed`: a wrong APNS_TOPIC,
+    APNS_SANDBOX or FCM project answers so for every device) counts toward
+    neither, which would lock everyone who registered in that window out for
+    a day after the fix, but it counts toward the ceiling until the platform
+    delivers to anyone after it, and an unverified device with no
+    subscription is retired after MAX_UNCONFIRMED_REFUSALS of either kind.
+    So a junk token costs at most the ceiling a day even on a platform that
+    delivers to nobody. An outage counts toward nothing.
+
+    `verify_sent_at` is stamped only for a delivered push whose code the row
+    still holds, so a device whose push could not go out is picked up again
+    by the poller's sweep, for as long as the request is under 24 hours old.
+    Every device a pass tried and did not deliver to goes to the back of the
+    queue: a minute, and after a refusal twice as long as after the one
+    before, up to an hour. Only devices of a platform this process has
+    credentials for are considered, and each platform has an equal share of
+    MAX_SWEEP_DEVICES, so one platform's backlog cannot hold up the other's.
+    Two callers: the web process right after a registration, a token change
+    or a resend (`device_ids`), and the poller once per cycle."""
     import secrets
     from app.api import _hash
     from app.db import transaction
-    from app.repo import (defer_verification, device_verify_wait,
-                          devices_awaiting_verification, mark_verification_sent,
-                          record_verify_attempts, record_verify_failures,
+    from app.repo import (MAX_UNCONFIRMED_REFUSALS, defer_verification,
+                          device_verify_wait, devices_awaiting_verification,
+                          mark_verification_sent,
+                          platform_last_delivery, record_verify_attempts,
+                          record_verify_refusals, retire_unconfirmed,
                           set_verify_code, token_key, token_verify_wait)
     platforms = [p for p in PLATFORMS if configured(cfg, p)]
     if not platforms:
         return 0
-    candidates = devices_awaiting_verification(
-        conn, device_ids=device_ids, platforms=platforms,
-        min_age_seconds=0 if device_ids else SWEEP_GRACE_SECONDS,
-        limit=None if device_ids else MAX_SWEEP_DEVICES)
+    if device_ids is not None:
+        candidates = devices_awaiting_verification(
+            conn, device_ids=device_ids, platforms=platforms)
+    else:
+        share = max(1, MAX_SWEEP_DEVICES // len(platforms))
+        candidates = [row for p in platforms for row in devices_awaiting_verification(
+            conn, platforms=[p], min_age_seconds=SWEEP_GRACE_SECONDS, limit=share)]
+    last_delivery: dict[str, str | None] = {}
     items: list[OutgoingPush] = []
-    # idem_key -> (device_id, code hash, token key, request kind)
-    sent: dict[str, tuple[int, str, str, str]] = {}
+    # idem_key -> (device_id, code hash, token key, request kind, platform, token)
+    sent: dict[str, tuple[int, str, str, str, str, str]] = {}
     # Devices this pass tried to send to (claimed or not).
     touched: list[int] = []
     for row in candidates:
         kind = row["verify_kind"] or "open"
-        tkey = token_key(row["platform"], row["token"])
-        wait = max(token_verify_wait(conn, tkey, kind),
+        platform = row["platform"]
+        tkey = token_key(platform, row["token"])
+        if platform not in last_delivery:
+            last_delivery[platform] = platform_last_delivery(conn, platform)
+        wait = max(token_verify_wait(conn, tkey, kind, last_delivery[platform]),
                    device_verify_wait(conn, row["id"]))
         if wait > 0:
             defer_verification(conn, row["id"], wait)
@@ -267,7 +290,7 @@ def send_verifications(conn: sqlite3.Connection, cfg, *,
             body=t(lang, "push.verify_body"), idem_key=key,
             data={"type": "verify", "code": code},
             collapse_id=f"verify-{row['id']}", token=row["token"]))
-        sent[key] = (row["id"], code_hash, tkey, kind)
+        sent[key] = (row["id"], code_hash, tkey, kind, platform, row["token"])
     if not touched:
         return 0
     result = PushResult()
@@ -277,18 +300,27 @@ def send_verifications(conn: sqlite3.Connection, cfg, *,
         except Exception as exc:
             print(f"push: verification batch failed: {exc!r}", flush=True)
     delivered = [sent[k] for k in result.delivered if k in sent]
-    refused = [sent[k] for k in result.failed if k in sent]
-    settled = {d for d, _, _, _ in delivered + refused}
+    confirmed = [sent[k] for k in result.failed if k in sent]
+    unconfirmed = [sent[k] for k in result.refused - result.failed if k in sent]
+    settled = {s[0] for s in delivered + confirmed + unconfirmed}
     with transaction(conn):
-        record_verify_attempts(conn, [(tkey, kind) for _, _, tkey, kind
-                                      in delivered + refused])
-        mark_verification_sent(conn, [(d, h) for d, h, _, _ in delivered])
-        record_verify_failures(conn, [d for d, _, _, _ in refused])
-        # Undeliverable, deferred, refused without evidence, or claimed by
-        # another sender: a minute at the back of the queue.
+        record_verify_attempts(
+            conn, [(tkey, kind, p, True) for _, _, tkey, kind, p, _ in delivered + confirmed]
+            + [(tkey, kind, p, False) for _, _, tkey, kind, p, _ in unconfirmed])
+        mark_verification_sent(conn, [(s[0], s[1]) for s in delivered])
+        record_verify_refusals(conn, [s[0] for s in confirmed], confirmed=True)
+        record_verify_refusals(conn, [s[0] for s in unconfirmed], confirmed=False)
+        # Refused with evidence, a device is retired as dead or given up on
+        # after MAX_VERIFY_FAILURES; without, it would only ever be retried.
+        retired = retire_unconfirmed(conn, [(s[0], s[5]) for s in unconfirmed])
+        # Undeliverable, deferred, or claimed by another sender: a minute at
+        # the back of the queue.
         for d in touched:
             if d not in settled:
                 defer_verification(conn, d, 60)
+    for d in retired:
+        print(f"push: retired unverified device {d} after "
+              f"{MAX_UNCONFIRMED_REFUSALS} refused verification pushes", flush=True)
     return len(delivered)
 
 
@@ -610,9 +642,11 @@ def send_push_batch(conn: sqlite3.Connection, items: list[OutgoingPush],
         # for every device. Only a refusal from a platform that delivered to
         # someone in this batch says something about this item; one we could
         # not even send always does.
+        result.refused.add(it.idem_key)
         if local or result.sent_by_platform.get(platform):
             result.failed.add(it.idem_key)
     for platform, answers in dead.items():
+        result.refused.update(it.idem_key for it, _ in answers)
         # The relay said "dead token". That is also what a wrong APNS_TOPIC,
         # APNS_SANDBOX or FCM project says, for every device at once, and
         # retiring on it would end every app user's subscriptions with no way
