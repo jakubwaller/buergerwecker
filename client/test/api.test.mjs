@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { toApiError, errorText, request, configure, isUnavailable, BASE_URL } from "../www/api.js";
+import { toApiError, errorText, request, configure, isUnavailable, siteUrl, api, BASE_URL } from "../www/api.js";
+import { STRINGS } from "../www/i18n.js";
 
 const res = (status, body) => ({ status, text: async () => (body === undefined ? "" : typeof body === "string" ? body : JSON.stringify(body)) });
 
@@ -18,15 +19,128 @@ test("an error answer keeps the server's key and sentence", () => {
   assert.deepEqual(toApiError(500, "<html>"), { status: 500, error: "http_500", message: null });
 });
 
-test("what a person reads: own wording for the cases that ask something of them", () => {
-  assert.deepEqual(errorText({ status: 503, error: "waitlist_full", message: "x" }), { key: "err.waitlist_full", vars: {} });
+test("what a person reads: the server's sentence whenever there is one", () => {
+  // The waitlist has causes the app cannot tell apart (the city's plan, a
+  // per-device or per-city app limit): the server's sentence names the one.
+  assert.deepEqual(errorText({ status: 503, error: "waitlist_full", message: "Dieses Gerät hat schon …" }), { text: "Dieses Gerät hat schon …" });
+  assert.deepEqual(errorText({ status: 409, error: "too_many_subscriptions", message: "Schon 10.", limit: 10 }), { text: "Schon 10." });
+  assert.deepEqual(errorText({ status: 413, error: "too_large", message: "Die Anfrage ist zu groß." }), { text: "Die Anfrage ist zu groß." });
+  assert.deepEqual(errorText({ status: 415, error: "unsupported_media_type", message: "Nur JSON." }), { text: "Nur JSON." });
+  assert.deepEqual(errorText({ status: 400, error: "invalid_token", message: "Kein Push-Token." }), { text: "Kein Push-Token." });
+  assert.deepEqual(errorText({ status: 400, error: "invalid_time", message: "Ungültige Uhrzeit." }), { text: "Ungültige Uhrzeit." });
+});
+
+test("rate_limited always reads the app's own neutral sentence, never the website's sign-up one", () => {
+  // What the server sends with every 429, the slots route's included.
+  const website = "Too many sign-ups were made in a short time. Please wait a moment and try again.";
+  for (const message of [website, "Es wurden in kurzer Zeit zu viele Anmeldungen vorgenommen.", null]) {
+    assert.deepEqual(errorText({ status: 429, error: "rate_limited", message, retryAfter: 600 }), { key: "err.rate_limited", vars: {} });
+  }
+  for (const lang of ["de", "en"]) assert.doesNotMatch(STRINGS[lang]["err.rate_limited"], /Anmeldung|sign-up/i, lang);
+});
+
+test("what a person reads without one: our own fallback per key, else the generic sentence", () => {
+  assert.deepEqual(errorText({ status: 503, error: "waitlist_full", message: null }), { key: "err.waitlist_full", vars: {} });
   assert.deepEqual(errorText({ status: 409, error: "too_many_subscriptions", message: null, limit: 10 }), {
     key: "err.too_many_subscriptions", vars: { limit: 10 },
   });
   assert.deepEqual(errorText({ status: 0, error: "timeout", message: null }), { key: "err.timeout", vars: {} });
-  assert.deepEqual(errorText({ status: 400, error: "invalid_time", message: "Ungültige Uhrzeit." }), { text: "Ungültige Uhrzeit." });
+  assert.deepEqual(errorText({ status: 0, error: "network", message: null }), { key: "err.network", vars: {} });
+  assert.deepEqual(errorText({ status: 429, error: "rate_limited", message: null, retryAfter: 60 }), { key: "err.rate_limited", vars: {} });
+  assert.deepEqual(errorText({ status: 413, error: "too_large", message: null }), { key: "err.too_large", vars: {} });
+  assert.deepEqual(errorText({ status: 403, error: "not_subscribed", message: null }), { key: "err.not_subscribed", vars: {} });
+  assert.deepEqual(errorText({ status: 415, error: "http_415", message: null }), { key: "err.generic", vars: {} });
+  assert.deepEqual(errorText({ status: 400, error: "invalid_time", message: "  " }), { key: "err.generic", vars: {} });
   assert.deepEqual(errorText({ status: 400, error: "invalid_time", message: null }), { key: "err.generic", vars: {} });
   assert.deepEqual(errorText(new Error("boom")), { key: "err.generic", vars: {} });
+  for (const k of ["err.waitlist_full", "err.rate_limited", "err.too_large", "err.not_subscribed", "err.network", "err.timeout"]) {
+    assert.ok(STRINGS.de[k] && STRINGS.en[k], k);
+  }
+});
+
+test("every request with a body says it is JSON, and every API write has one", async () => {
+  configure({ getCredentials: () => ({ id: 7, secret: "s3cret" }) });
+  const seen = [];
+  const fetchImpl = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    seen.push({ url, method: opts.method, headers: opts.headers, body: opts.body });
+    return res(200, {});
+  };
+  try {
+    await api.registerDevice("apns", "tok", "de");
+    await api.updateDevice({ language: "en" });
+    await api.verify("code");
+    await api.resendVerification();
+    await api.createSubscription({ city: "leipzig" });
+    await api.updateSubscription(1, { city: "leipzig" });
+    await api.renewSubscription(1);
+    await api.deleteSubscription(1);
+    await api.deleteDevice();
+    await api.subscriptions();
+  } finally {
+    globalThis.fetch = fetchImpl;
+  }
+  const writes = seen.filter((s) => s.method === "POST" || s.method === "PUT");
+  assert.equal(writes.length, 7);
+  for (const s of writes) {
+    assert.equal(s.headers["Content-Type"], "application/json", `${s.method} ${s.url}`);
+    assert.doesNotThrow(() => JSON.parse(s.body), `${s.method} ${s.url} sends JSON`);
+  }
+  for (const s of seen.filter((s) => s.body === undefined)) assert.equal(s.headers["Content-Type"], undefined, s.url);
+});
+
+test("the slots route sends the device credential and passes not_subscribed on as itself", async () => {
+  configure({ getCredentials: () => ({ id: 7, secret: "s3cret" }) });
+  const fetchImpl = globalThis.fetch;
+  let seen;
+  globalThis.fetch = async (url, opts) => {
+    seen = { url, opts };
+    return res(403, { error: "not_subscribed", message: "Für diese Stadt hast du keinen Alarm." });
+  };
+  try {
+    await assert.rejects(api.slots("leipzig", "de"), { status: 403, error: "not_subscribed", message: "Für diese Stadt hast du keinen Alarm." });
+  } finally {
+    globalThis.fetch = fetchImpl;
+  }
+  assert.equal(seen.url, `${BASE_URL}/cities/leipzig/slots?lang=de`);
+  assert.equal(seen.opts.headers.Authorization, "Bearer 7.s3cret");
+  // No device yet: a local 401, nothing sent.
+  configure({ getCredentials: () => null });
+  let sent = false;
+  globalThis.fetch = async () => { sent = true; return res(200, {}); };
+  try {
+    await assert.rejects(api.slots("leipzig", "de"), { status: 401 });
+  } finally {
+    globalThis.fetch = fetchImpl;
+  }
+  assert.equal(sent, false);
+});
+
+test("a push's url opens only on https://buergerwecker.de itself", () => {
+  assert.equal(siteUrl("https://buergerwecker.de/go/leipzig"), "https://buergerwecker.de/go/leipzig");
+  assert.equal(siteUrl("https://buergerwecker.de/go/sub/abc?lang=en"), "https://buergerwecker.de/go/sub/abc?lang=en");
+  assert.equal(siteUrl("https://BUERGERWECKER.de:443/go/bonn"), "https://buergerwecker.de/go/bonn", "the same origin, normalised");
+  for (const bad of [
+    "http://buergerwecker.de/go/leipzig",
+    "https://buergerwecker.de.example.com/go/leipzig",
+    "https://example.com/?https://buergerwecker.de/",
+    "https://www.buergerwecker.de/go/leipzig",
+    "https://buergerwecker.de:8443/go/leipzig",
+    "https://user:pw@buergerwecker.de/go/leipzig",
+    "https://buergerwecker.de@example.com/",
+    "//buergerwecker.de/go/leipzig",
+    "/go/leipzig",
+    "javascript:alert(1)",
+    "data:text/html,hi",
+    "buergerwecker://",
+    "",
+    null,
+    undefined,
+    42,
+    { href: "https://buergerwecker.de/" },
+  ]) {
+    assert.equal(siteUrl(bad), null, String(bad));
+  }
 });
 
 test("request: JSON in and out, bearer only when asked, 204 is null", async () => {

@@ -1,15 +1,33 @@
 // One office: per service the earliest free slot and the soonest few after
 // it, from the server's last poll. The snapshot is what buergerwecker.de
-// already fetched for its subscribers; opening this screen asks the city
+// already fetched for its subscribers, and it shows it only to them: the
+// slots route takes the device credential and answers 403 not_subscribed to a
+// device without a live alert in this city, and leaves out a special-category
+// service the device does not itself watch. Opening this screen asks the city
 // nothing. Booking happens on the city's own page, in the system browser.
 import { t, getLang } from "../i18n.js";
-import { h, fill, loading, errorBox } from "../ui.js";
-import { api } from "../api.js";
+import { h, fill, loading, errorBox, errorMessage } from "../ui.js";
+import { api, isApiError } from "../api.js";
 import { openExternal } from "../native.js";
 import { formatInstant, formatSlot, slotPreview } from "../format.js";
 import { cityDetail, go } from "../state.js";
+import * as push from "../push.js";
 
 export const title = () => "";
+
+// What the overview says where the snapshot did not come:
+//  "subscribe"  the server shows a city's slots only to a device with an alert
+//               there (403 not_subscribed), and a phone that never registered
+//               has no credential to ask with (401): set up an alert, then;
+//  "error"      anything else worth passing on, a 429 on the route's
+//               per-device budget say, in the server's own words;
+//  null         nothing to say: no error, or a server without the route.
+export function slotsNotice(err) {
+  if (!err) return null;
+  if (isApiError(err) && (err.error === "not_subscribed" || err.status === 401)) return "subscribe";
+  if (isApiError(err) && err.status === 404) return null;
+  return "error";
+}
 
 // Services with a free slot first (soonest first), then those someone is
 // watching, then the rest in catalog order.
@@ -38,11 +56,14 @@ export function mount(el, params) {
     const lang = getLang();
     Promise.all([
       cityDetail(params.slug),
-      // The snapshot is optional: a server without it, or a hiccup, still
-      // leaves the services and the booking button.
-      api.slots(params.slug, lang).catch(() => null),
+      // The snapshot is optional: no alert here, a server without it, or a
+      // hiccup still leaves the services and the booking button.
+      push.authed(() => api.slots(params.slug, lang)).then(
+        (snapshot) => ({ snapshot, error: null }),
+        (error) => ({ snapshot: null, error }),
+      ),
     ])
-      .then(([detail, snapshot]) => show(body, detail, snapshot, lang))
+      .then(([detail, slots]) => show(body, detail, slots, lang))
       .catch((e) => body.replaceChildren(errorBox(e, load)));
   };
   load();
@@ -57,13 +78,14 @@ function slotLine(slot, lang) {
   );
 }
 
-function show(body, detail, snapshot, lang) {
+function show(body, detail, { snapshot, error }, lang) {
   const book = h(
     "button",
     { class: "btn btn-primary", onclick: () => openExternal(detail.booking_url) },
     t("city.book"),
   );
   const asOf = formatInstant(snapshot?.polled_at, lang);
+  const notice = slotsNotice(error);
   const cards = orderServices(detail.services ?? [], snapshot).map(({ svc, snap }) => {
     const watch = h(
       "button",
@@ -71,8 +93,14 @@ function show(body, detail, snapshot, lang) {
       t("city.watch"),
     );
     let content;
-    if (!snap) {
-      content = h("p", { class: "muted" }, t("city.unwatched"));
+    if (!snapshot) {
+      // No snapshot at all: nothing is known about any service, so no card
+      // claims anything.
+      content = null;
+    } else if (!snap) {
+      // A special-category service is missing from the snapshot whenever this
+      // device does not watch it itself, watched or not by others.
+      content = svc.sensitive ? null : h("p", { class: "muted" }, t("city.unwatched"));
     } else {
       const { earliest, next, more } = slotPreview(snap);
       const svcAsOf = formatInstant(snap.polled_at, lang);
@@ -101,6 +129,8 @@ function show(body, detail, snapshot, lang) {
     detail.note ? h("p", { class: "disclaimer" }, detail.note) : null,
     h("div", { class: "stack" }, book, h("p", { class: "muted small" }, t("city.bookHint"))),
     h("h2", null, t("city.services")),
+    notice === "subscribe" ? h("div", { class: "notice" }, h("p", null, t("city.subscribeHint"))) : null,
+    notice === "error" ? h("p", { class: "muted small" }, errorMessage(error)) : null,
     asOf ? h("p", { class: "muted small" }, t("city.asOf", { time: asOf })) : null,
     ...cards,
   );

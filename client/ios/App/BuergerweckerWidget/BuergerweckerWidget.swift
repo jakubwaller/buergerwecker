@@ -1,26 +1,80 @@
 import WidgetKit
 import SwiftUI
+import Security
 
 // The home-screen widget: the earliest free slot in the cities the person has
 // alerts for, small and medium, refreshed about every twenty minutes. It only
 // shows; tapping it opens the app, and nothing here books anything.
 //
 // The page (client/www/widget.js) writes the city list, the language and the
-// words to show into the App Group's UserDefaults; the widget fetches
-// GET /api/v1/cities/<slug>/slots itself (a public route, so no credential is
-// shared with it) and keeps the last answer in the same place. While the
-// server's API gate is closed (404) or the network is down, it shows that last
-// answer with its time, or, with none, the neutral "set up an alert" text.
+// words to show into the App Group's UserDefaults (never a special-category
+// alert: those are left out of the list entirely); the widget fetches
+// GET /api/v1/cities/<slug>/slots itself, with the device credential it reads
+// from the keychain group it shares with the app (App/SecureStorePlugin.swift),
+// and keeps the last answer in the App Group. While the server's API gate is
+// closed (404), the network is down or the route's per-device budget is spent
+// (429), it shows that last answer with its time, or, with none, "no data
+// yet". A credential the server refuses (401, 410, 403), or none at all (the
+// app not opened since it moved there, "Delete my data"), shows nothing but
+// "open the app", and the cached answers go, so nothing stale can pass for
+// live later. A city where the device has no live alert any more (403
+// not_subscribed) drops out of the widget until the app updates the list.
 
 // MARK: - Storage (repeated in App/WidgetBridgePlugin.swift; client/test/widget.test.mjs checks)
 
 enum Shared {
     static let group = "group.de.buergerwecker.app"
     static let configKey = "widget_config"
-    static let cacheKey = "widget_cache"
+    // www/widget.js CONFIG_VERSION. A list without `v`, or with a lower one,
+    // comes from an app version that still put special-category (Art. 9)
+    // alerts in it, and counts as no list at all.
+    static let configVersion = 3
+    static let cacheKey = "widget_cache_v3"
+    // The cache before configVersion 3, which may hold such an alert's slot:
+    // never read, deleted on every load.
+    static let legacyCacheKey = "widget_cache"
+    static let lockedKey = "widget_locked"
     static let apiBase = "https://buergerwecker.de/api/v1"
     static let openURL = URL(string: "buergerwecker://")!
     static var defaults: UserDefaults? { UserDefaults(suiteName: group) }
+}
+
+// MARK: - The device credential (written by App/SecureStorePlugin.swift; client/test/widget.test.mjs checks)
+
+enum Credential {
+    static let service = "de.buergerwecker.device"
+    static let account = "credential"
+
+    enum State {
+        case bearer(String)   // "Bearer <id>.<secret>"
+        case absent           // the app has stored none (or nothing usable)
+        case unreadable       // the Keychain would not say right now (before the first unlock)
+    }
+
+    // No access group is named: the read searches every group this extension
+    // has, the shared one among them.
+    static func read() -> State {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecAttrSynchronizable as String: false,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var out: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &out)
+        if status == errSecItemNotFound { return .absent }
+        guard status == errSecSuccess, let data = out as? Data else { return .unreadable }
+        guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let secret = obj["secret"] as? String, !secret.isEmpty else { return .absent }
+        let id: String
+        if let n = obj["id"] as? NSNumber { id = n.stringValue }
+        else if let s = obj["id"] as? String { id = s }
+        else { return .absent }
+        guard !id.isEmpty else { return .absent }
+        return .bearer("Bearer \(id).\(secret)")
+    }
 }
 
 // MARK: - What the page wrote
@@ -49,14 +103,18 @@ struct Config: Decodable {
             if let ids = try? c.decode([String].self) { self = .list(ids) } else { self = .all }
         }
     }
+    let v: Int?
     let lang: String?
     let strings: [String: String]?
     let cities: [City]
 
+    // nil for no list, and for a list older than Shared.configVersion.
     static func load() -> Config? {
         guard let raw = Shared.defaults?.string(forKey: Shared.configKey),
-              let data = raw.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(Config.self, from: data)
+              let data = raw.data(using: .utf8),
+              let config = try? JSONDecoder().decode(Config.self, from: data),
+              (config.v ?? 0) >= Shared.configVersion else { return nil }
+        return config
     }
 }
 
@@ -71,11 +129,21 @@ struct Slot: Codable, Equatable {
 }
 
 // One city's last answer. `slot == nil && hasData` means "polled, nothing
-// free"; `!hasData` means the server has no snapshot for it yet.
+// free"; `!hasData` means the server has no snapshot for it yet; `gone` means
+// the server said the device has no live alert there (403 not_subscribed).
 struct Snapshot: Codable {
     var slot: Slot?
     var polledAt: Date?
     var hasData: Bool
+    var gone: Bool? = nil
+}
+
+// What one city's fetch came to.
+enum Fetched {
+    case ok(Snapshot)
+    case gone      // 403 not_subscribed: no live alert in this city any more
+    case refused   // 401, 410, any other 403: the credential does not work
+    case failed    // network, 404 (gate closed), 429, 5xx, bad JSON: keep the last answer
 }
 
 private struct SlotsResponse: Decodable {
@@ -93,20 +161,35 @@ private struct SlotsResponse: Decodable {
     let services: [Service]
 }
 
+private struct ErrorBody: Decodable {
+    let error: String?
+}
+
 enum SlotsAPI {
-    // nil on any failure (network, 404 while the gate is closed, bad JSON):
-    // the caller falls back to the cache.
-    static func fetch(slug: String, alerts: [Config.Alert], lang: String) async -> Snapshot? {
+    // `bearer` is Credential.bearer(): the route answers only a verified
+    // device with a live alert in that city.
+    static func fetch(slug: String, alerts: [Config.Alert], lang: String, bearer: String) async -> Fetched {
         var comps = URLComponents(string: "\(Shared.apiBase)/cities/\(slug)/slots")
         comps?.queryItems = [URLQueryItem(name: "lang", value: lang)]
-        guard let url = comps?.url else { return nil }
+        guard let url = comps?.url else { return .failed }
         var req = URLRequest(url: url)
         req.timeoutInterval = 15
+        req.cachePolicy = .reloadIgnoringLocalCacheData
         req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue(bearer, forHTTPHeaderField: "Authorization")
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
-              (resp as? HTTPURLResponse)?.statusCode == 200,
-              let body = try? JSONDecoder().decode(SlotsResponse.self, from: data) else { return nil }
-        return snapshot(from: body, alerts: alerts)
+              let http = resp as? HTTPURLResponse else { return .failed }
+        switch http.statusCode {
+        case 200:
+            guard let body = try? JSONDecoder().decode(SlotsResponse.self, from: data) else { return .failed }
+            return .ok(snapshot(from: body, alerts: alerts))
+        case 403 where (try? JSONDecoder().decode(ErrorBody.self, from: data))?.error == "not_subscribed":
+            return .gone
+        case 401, 403, 410:
+            return .refused
+        default:
+            return .failed
+        }
     }
 
     // The earliest slot that would also trigger one of the alerts: the
@@ -171,31 +254,36 @@ enum Cache {
 
 // MARK: - Words
 
-// The page sends every string; these are only for a widget the page has not
-// configured yet (the app never opened since install), in the device language.
+// The page sends every string; these are for a widget the page has not
+// configured yet (the app never opened since install), and for a key a list
+// written by an older version of the app does not carry, in the device language.
 private let fallbackStrings: [String: [String: String]] = [
     "de": ["widget.openApp": "Lege in der App einen Alarm an, dann zeigt dieses Widget den frühesten freien Termin.",
+           "widget.reopen": "Öffne die App, dann zeigt dieses Widget wieder freie Termine.",
            "widget.noMatch": "Gerade kein passender Termin", "widget.noSnapshot": "Noch keine Daten",
            "widget.asOf": "Stand {time}"],
     "en": ["widget.openApp": "Set up an alert in the app and this widget shows the earliest free slot.",
+           "widget.reopen": "Open the app and this widget shows free slots again.",
            "widget.noMatch": "No matching slot right now", "widget.noSnapshot": "No data yet",
            "widget.asOf": "As of {time}"],
 ]
 
 struct Words {
     let strings: [String: String]
+    private let fallback: [String: String]
 
     init(_ strings: [String: String]?) {
+        let lang = Locale.current.language.languageCode?.identifier == "de" ? "de" : "en"
+        fallback = fallbackStrings[lang] ?? [:]
         if let strings, !strings.isEmpty {
             self.strings = strings
         } else {
-            let lang = Locale.current.language.languageCode?.identifier == "de" ? "de" : "en"
-            self.strings = fallbackStrings[lang] ?? [:]
+            self.strings = fallback
         }
     }
 
     func callAsFunction(_ key: String, _ vars: [String: String] = [:]) -> String {
-        var s = strings[key] ?? key
+        var s = strings[key] ?? fallback[key] ?? key
         for (k, v) in vars { s = s.replacingOccurrences(of: "{\(k)}", with: v) }
         return s
     }
@@ -247,6 +335,7 @@ struct SlotEntry: TimelineEntry {
     let date: Date
     let words: Words
     let rows: [Row]  // empty: not configured, or every alert is gone
+    var locked = false  // the credential is missing or refused: "open the app", nothing else
 }
 
 struct SlotProvider: TimelineProvider {
@@ -277,19 +366,26 @@ struct SlotProvider: TimelineProvider {
     }
 
     private func load() async -> SlotEntry {
-        guard let config = Config.load() else { return SlotEntry(date: Date(), words: Words(nil), rows: []) }
+        Shared.defaults?.removeObject(forKey: Shared.legacyCacheKey)
+        // No list, or one from an older app version: "set up an alert", and
+        // nothing kept from before.
+        guard let config = Config.load() else {
+            Shared.defaults?.removeObject(forKey: Shared.cacheKey)
+            Shared.defaults?.removeObject(forKey: Shared.lockedKey)
+            return SlotEntry(date: Date(), words: Words(nil), rows: [])
+        }
         let lang = config.lang ?? "de"
         let cities = config.cities
-        var cache = Cache.load()
-        var fresh: [String: Snapshot] = [:]
-        await withTaskGroup(of: (String, Snapshot?).self) { group in
-            for c in cities {
-                group.addTask { (c.slug, await SlotsAPI.fetch(slug: c.slug, alerts: c.alerts ?? [], lang: lang)) }
+        let credential = Credential.read()
+        var outcomes: [String: Fetched] = [:]
+        if case .bearer(let bearer) = credential {
+            await withTaskGroup(of: (String, Fetched).self) { group in
+                for c in cities {
+                    group.addTask { (c.slug, await SlotsAPI.fetch(slug: c.slug, alerts: c.alerts ?? [], lang: lang, bearer: bearer)) }
+                }
+                for await (slug, out) in group { outcomes[slug] = out }
             }
-            for await (slug, snap) in group { if let snap { fresh[slug] = snap } }
         }
-        // Only the cities still in the list stay in the cache, so a removed
-        // alert leaves nothing behind.
         // The fetch above can take a while; "Delete my data" may have cleared
         // the list meanwhile. Re-read it: with it gone nothing is saved (or
         // kept), and only slugs the current list still names are.
@@ -297,12 +393,48 @@ struct SlotProvider: TimelineProvider {
             Shared.defaults?.removeObject(forKey: Shared.cacheKey)
             return SlotEntry(date: Date(), words: Words(nil), rows: [])
         }
+        let words = Words(current.strings)
+        // No credential, or one the server refused: "open the app" and nothing
+        // else, and the cache goes, so no answer in it can later pass for a
+        // live one. An answer that proves the credential works lifts that, and
+        // so does a credential with nothing to ask about (an empty list: the
+        // app has been opened and wrote both, and "set up an alert" is the
+        // right text). A run with only failures (offline, 429, an unreadable
+        // Keychain) keeps whatever the last run decided.
+        var absent = false
+        var nothingToAsk = false
+        if case .absent = credential { absent = true }
+        if case .bearer = credential, cities.isEmpty { nothingToAsk = true }
+        let refused = absent || outcomes.values.contains { if case .refused = $0 { return true }; return false }
+        let accepted = nothingToAsk || outcomes.values.contains {
+            switch $0 {
+            case .ok, .gone: return true
+            case .refused, .failed: return false
+            }
+        }
+        let locked = refused || (!accepted && Shared.defaults?.bool(forKey: Shared.lockedKey) == true)
+        if locked {
+            Shared.defaults?.removeObject(forKey: Shared.cacheKey)
+            Shared.defaults?.set(true, forKey: Shared.lockedKey)
+            return SlotEntry(date: Date(), words: words, rows: [], locked: true)
+        }
+        Shared.defaults?.removeObject(forKey: Shared.lockedKey)
+        // Only the cities still in the list stay in the cache, so a removed
+        // alert leaves nothing behind.
         let slugs = Set(current.cities.map { $0.slug })
-        cache = cache.filter { slugs.contains($0.key) }
-        for (slug, snap) in fresh where slugs.contains(slug) { cache[slug] = snap }
+        var cache = Cache.load().filter { slugs.contains($0.key) }
+        for (slug, out) in outcomes where slugs.contains(slug) {
+            switch out {
+            case .ok(let snap): cache[slug] = snap
+            case .gone: cache[slug] = Snapshot(slot: nil, polledAt: nil, hasData: false, gone: true)
+            case .refused, .failed: break
+            }
+        }
         Cache.save(cache)
-        let rows = current.cities.map { Row(id: $0.slug, name: $0.name, office: $0.office ?? "", snapshot: cache[$0.slug]) }
-        return SlotEntry(date: Date(), words: Words(current.strings), rows: rows)
+        let rows = current.cities
+            .filter { cache[$0.slug]?.gone != true }
+            .map { Row(id: $0.slug, name: $0.name, office: $0.office ?? "", snapshot: cache[$0.slug]) }
+        return SlotEntry(date: Date(), words: words, rows: rows)
     }
 }
 
@@ -325,7 +457,9 @@ struct SlotView: View {
 
     var body: some View {
         Group {
-            if entry.rows.isEmpty {
+            if entry.locked {
+                Text(entry.words("widget.reopen")).font(.footnote).multilineTextAlignment(.leading)
+            } else if entry.rows.isEmpty {
                 Text(entry.words("widget.openApp")).font(.footnote).multilineTextAlignment(.leading)
             } else if family == .systemSmall {
                 small(ordered(entry.rows)[0])

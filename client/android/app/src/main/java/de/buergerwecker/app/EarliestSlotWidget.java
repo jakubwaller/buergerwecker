@@ -15,6 +15,8 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -37,11 +39,17 @@ import java.util.concurrent.TimeUnit;
  * alerts for. It only shows; tapping opens the app, and nothing here books.
  *
  * The page (client/www/widget.js, through WidgetBridgePlugin) stores the city
- * list, the language and the words to show; this fetches
- * GET /api/v1/cities/slug/slots itself (a public route, so no credential is
- * shared with it) and keeps the last answer next to the list. While the
- * server's API gate is closed (404) or the network is down it shows that last
- * answer with its time, or, with none, the neutral "set up an alert" text.
+ * list, the language and the words to show (never a special-category alert:
+ * those are left out of the list entirely); this fetches
+ * GET /api/v1/cities/slug/slots itself, with the device credential it reads
+ * from SecureStore, and keeps the last answer next to the list. While the
+ * server's API gate is closed (404), the network is down or the route's
+ * per-device budget is spent (429) it shows that last answer with its time,
+ * or, with none, "no data yet". A credential the server refuses (401, 410,
+ * 403), or none at all (the app not opened since it moved there, "Delete my
+ * data"), shows nothing but "open the app", and the cached answers go, so
+ * nothing stale can pass for live later. A city where the device has no live
+ * alert any more (403 not_subscribed) drops out until the app updates the list.
  *
  * Refresh: the platform's updatePeriodMillis (30 minutes, its floor), plus an
  * update broadcast whenever the page changes the list. The fetch runs inside
@@ -51,7 +59,16 @@ import java.util.concurrent.TimeUnit;
 public class EarliestSlotWidget extends AppWidgetProvider {
     static final String PREFS = "buergerwecker_widget";
     static final String KEY_CONFIG = "widget_config";
-    static final String KEY_CACHE = "widget_cache";
+    /**
+     * www/widget.js CONFIG_VERSION. A list without `v`, or with a lower one,
+     * comes from an app version that still put special-category (Art. 9)
+     * alerts in it, and counts as no list at all.
+     */
+    static final int CONFIG_VERSION = 3;
+    static final String KEY_CACHE = "widget_cache_v3";
+    /** The cache before CONFIG_VERSION 3, which may hold such an alert's slot: never read, deleted. */
+    static final String KEY_LEGACY_CACHE = "widget_cache";
+    static final String KEY_LOCKED = "widget_locked";
     private static final String API_BASE = "https://buergerwecker.de/api/v1";
     private static final int TIMEOUT_MS = 8_000;
     private static final int[] ROWS = {R.id.row1, R.id.row2, R.id.row3};
@@ -88,6 +105,7 @@ public class EarliestSlotWidget extends AppWidgetProvider {
         String date, time, office; // date "2026-10-08", time "09:30", both optional but date
         long polledAt;             // epoch ms of the server's last poll, 0 = unknown
         boolean hasData;           // false: the server has no snapshot for it yet
+        boolean gone;              // 403 not_subscribed: no live alert in this city any more
 
         boolean hasSlot() { return date != null; }
         String sortKey() { return date + " " + (time == null ? "" : time); }
@@ -96,7 +114,7 @@ public class EarliestSlotWidget extends AppWidgetProvider {
             return new JSONObject().put("date", date == null ? JSONObject.NULL : date)
                 .put("time", time == null ? JSONObject.NULL : time)
                 .put("office", office == null ? JSONObject.NULL : office)
-                .put("polledAt", polledAt).put("hasData", hasData);
+                .put("polledAt", polledAt).put("hasData", hasData).put("gone", gone);
         }
 
         static Snap fromJson(JSONObject o) {
@@ -106,8 +124,23 @@ public class EarliestSlotWidget extends AppWidgetProvider {
             s.office = o.isNull("office") ? null : o.optString("office");
             s.polledAt = o.optLong("polledAt", 0);
             s.hasData = o.optBoolean("hasData", false);
+            s.gone = o.optBoolean("gone", false);
             return s;
         }
+    }
+
+    /** What one city's fetch came to. */
+    private static final class Fetched {
+        static final int OK = 0;      // 200: `snap`
+        static final int GONE = 1;    // 403 not_subscribed
+        static final int REFUSED = 2; // 401, 410, any other 403: the credential does not work
+        static final int FAILED = 3;  // network, 404 (gate closed), 429, 5xx, bad JSON: keep the last answer
+        static final Fetched FAIL = new Fetched(FAILED, null);
+
+        final int kind;
+        final Snap snap;
+
+        Fetched(int kind, Snap snap) { this.kind = kind; this.snap = snap; }
     }
 
     private static final class Row {
@@ -120,44 +153,77 @@ public class EarliestSlotWidget extends AppWidgetProvider {
 
     private static void refresh(Context context, AppWidgetManager manager, int[] ids) throws Exception {
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        prefs.edit().remove(KEY_LEGACY_CACHE).apply();
         JSONObject config = readConfig(prefs);
-        if (config != null) {
+        if (config == null) {
+            // No list, or one from an older app version: "set up an alert",
+            // and nothing kept from before.
+            prefs.edit().remove(KEY_CACHE).remove(KEY_LOCKED).apply();
+        } else {
             JSONArray cities = config.optJSONArray("cities");
             String lang = config.optString("lang", "de");
+            SecureStore.Bearer bearer = SecureStore.bearer(context);
+            final String auth = bearer.header;
             JSONObject cache = readCache(prefs);
-            JSONObject next = new JSONObject();
-            ExecutorService pool = Executors.newFixedThreadPool(5);
-            try {
-                List<String> slugs = new ArrayList<>();
-                List<Future<Snap>> futures = new ArrayList<>();
-                for (int i = 0; cities != null && i < cities.length(); i++) {
-                    final JSONObject city = cities.getJSONObject(i);
-                    final String slug = city.getString("slug");
-                    final JSONArray alerts = city.optJSONArray("alerts");
-                    slugs.add(slug);
-                    futures.add(pool.submit(() -> fetch(slug, alerts, lang)));
-                }
-                for (int i = 0; i < slugs.size(); i++) {
-                    Snap snap = null;
-                    try {
-                        snap = futures.get(i).get(TIMEOUT_MS * 2L, TimeUnit.MILLISECONDS);
-                    } catch (Exception ignored) {
-                        // fall through to the cache
+            // Without a credential to ask with, the cache stands as it is.
+            JSONObject next = auth == null ? cache : new JSONObject();
+            // No credential, or one the server refused: "open the app" and
+            // nothing else, and the cache goes. An answer that proves the
+            // credential works lifts that, and so does a credential with
+            // nothing to ask about (an empty list: the app has been opened and
+            // wrote both, and "set up an alert" is the right text). A run with
+            // only failures (offline, 429, a Keystore that would not answer)
+            // keeps the last decision.
+            boolean refused = auth == null && !bearer.unreadable;
+            boolean nothingToAsk = auth != null && (cities == null || cities.length() == 0);
+            boolean accepted = nothingToAsk;
+            if (auth != null) {
+                ExecutorService pool = Executors.newFixedThreadPool(5);
+                try {
+                    List<String> slugs = new ArrayList<>();
+                    List<Future<Fetched>> futures = new ArrayList<>();
+                    for (int i = 0; cities != null && i < cities.length(); i++) {
+                        final JSONObject city = cities.getJSONObject(i);
+                        final String slug = city.getString("slug");
+                        final JSONArray alerts = city.optJSONArray("alerts");
+                        slugs.add(slug);
+                        futures.add(pool.submit(() -> fetch(slug, alerts, lang, auth)));
                     }
-                    if (snap != null) next.put(slugs.get(i), snap.toJson());
-                    else if (cache.has(slugs.get(i))) next.put(slugs.get(i), cache.get(slugs.get(i)));
+                    for (int i = 0; i < slugs.size(); i++) {
+                        String slug = slugs.get(i);
+                        Fetched got = Fetched.FAIL;
+                        try {
+                            got = futures.get(i).get(TIMEOUT_MS * 2L, TimeUnit.MILLISECONDS);
+                        } catch (Exception ignored) {
+                            // fall through to the cache
+                        }
+                        if (got.kind == Fetched.REFUSED) refused = true;
+                        if (got.kind == Fetched.OK || got.kind == Fetched.GONE) accepted = true;
+                        if (got.kind == Fetched.OK) {
+                            next.put(slug, got.snap.toJson());
+                        } else if (got.kind == Fetched.GONE) {
+                            Snap gone = new Snap();
+                            gone.gone = true;
+                            next.put(slug, gone.toJson());
+                        } else if (cache.has(slug)) {
+                            next.put(slug, cache.get(slug));
+                        }
+                    }
+                } finally {
+                    pool.shutdownNow();
                 }
-            } finally {
-                pool.shutdownNow();
             }
+            boolean locked = refused || (!accepted && prefs.getBoolean(KEY_LOCKED, false));
             // The fetch above can take a while; "Delete my data" may have
             // cleared the list meanwhile. Re-read it: with it gone nothing is
             // saved, and only the cities the current list still names are kept.
             JSONObject current = readConfig(prefs);
             if (current == null) {
                 prefs.edit().remove(KEY_CACHE).apply();
+            } else if (locked) {
+                prefs.edit().remove(KEY_CACHE).putBoolean(KEY_LOCKED, true).apply();
             } else {
-                prefs.edit().putString(KEY_CACHE, keepOnly(next, current).toString()).apply();
+                prefs.edit().putString(KEY_CACHE, keepOnly(next, current).toString()).remove(KEY_LOCKED).apply();
             }
         }
         render(context, manager, ids);
@@ -174,8 +240,12 @@ public class EarliestSlotWidget extends AppWidgetProvider {
         return out;
     }
 
-    /** null on any failure (network, 404 while the gate is closed, bad JSON). */
-    private static Snap fetch(String slug, JSONArray alerts, String lang) {
+    /**
+     * One city's answer. `auth` is the device's "Bearer id.secret"
+     * (SecureStore.bearer): the route answers only a verified device with a
+     * live alert in that city.
+     */
+    private static Fetched fetch(String slug, JSONArray alerts, String lang, String auth) {
         HttpURLConnection conn = null;
         try {
             URL url = new URL(API_BASE + "/cities/" + URLEncoder.encode(slug, "UTF-8")
@@ -183,18 +253,40 @@ public class EarliestSlotWidget extends AppWidgetProvider {
             conn = (HttpURLConnection) url.openConnection();
             conn.setConnectTimeout(TIMEOUT_MS);
             conn.setReadTimeout(TIMEOUT_MS);
+            conn.setUseCaches(false);
             conn.setRequestProperty("Accept", "application/json");
-            if (conn.getResponseCode() != 200) return null;
-            StringBuilder body = new StringBuilder();
-            try (BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream(), "UTF-8"))) {
-                String line;
-                while ((line = in.readLine()) != null) body.append(line);
+            conn.setRequestProperty("Authorization", auth);
+            int code = conn.getResponseCode();
+            if (code == 200) {
+                JSONObject body = new JSONObject(readAll(conn.getInputStream()));
+                return new Fetched(Fetched.OK, parse(body, alerts, Calendar.getInstance()));
             }
-            return parse(new JSONObject(body.toString()), alerts, Calendar.getInstance());
+            if (code == 403 && "not_subscribed".equals(errorKey(conn))) return new Fetched(Fetched.GONE, null);
+            if (code == 401 || code == 403 || code == 410) return new Fetched(Fetched.REFUSED, null);
+            return Fetched.FAIL;
         } catch (Exception e) {
-            return null;
+            return Fetched.FAIL;
         } finally {
             if (conn != null) conn.disconnect();
+        }
+    }
+
+    private static String readAll(InputStream stream) throws IOException {
+        if (stream == null) return "";
+        StringBuilder body = new StringBuilder();
+        try (BufferedReader in = new BufferedReader(new InputStreamReader(stream, "UTF-8"))) {
+            String line;
+            while ((line = in.readLine()) != null) body.append(line);
+        }
+        return body.toString();
+    }
+
+    /** The `error` key of an error answer's JSON body, or "". */
+    private static String errorKey(HttpURLConnection conn) {
+        try {
+            return new JSONObject(readAll(conn.getErrorStream())).optString("error", "");
+        } catch (Exception e) {
+            return "";
         }
     }
 
@@ -313,10 +405,13 @@ public class EarliestSlotWidget extends AppWidgetProvider {
 
     // --- Draw ----------------------------------------------------------------
 
+    /** The page's list, or null: none, unreadable, or older than CONFIG_VERSION. */
     private static JSONObject readConfig(SharedPreferences prefs) {
         try {
             String raw = prefs.getString(KEY_CONFIG, null);
-            return raw == null ? null : new JSONObject(raw);
+            if (raw == null) return null;
+            JSONObject config = new JSONObject(raw);
+            return config.optInt("v", 0) >= CONFIG_VERSION ? config : null;
         } catch (JSONException e) {
             return null;
         }
@@ -334,15 +429,18 @@ public class EarliestSlotWidget extends AppWidgetProvider {
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         JSONObject config = readConfig(prefs);
         JSONObject strings = config == null ? null : config.optJSONObject("strings");
+        boolean locked = config != null && prefs.getBoolean(KEY_LOCKED, false);
         List<Row> rows = new ArrayList<>();
-        if (config != null && strings != null) {
+        if (config != null && strings != null && !locked) {
             JSONObject cache = readCache(prefs);
             JSONArray cities = config.optJSONArray("cities");
             for (int i = 0; cities != null && i < cities.length(); i++) {
                 JSONObject c = cities.optJSONObject(i);
                 if (c == null) continue;
                 JSONObject s = cache.optJSONObject(c.optString("slug"));
-                rows.add(new Row(c.optString("name"), c.optString("office"), s == null ? null : Snap.fromJson(s)));
+                Snap snap = s == null ? null : Snap.fromJson(s);
+                if (snap != null && snap.gone) continue;
+                rows.add(new Row(c.optString("name"), c.optString("office"), snap));
             }
         }
         // Cities with a slot first, earliest first; the rest keep the app's order.
@@ -356,11 +454,11 @@ public class EarliestSlotWidget extends AppWidgetProvider {
             Bundle options = manager.getAppWidgetOptions(id);
             int minHeight = options == null ? 110 : options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 110);
             int fit = Math.max(1, Math.min(3, (minHeight - 24 - 16) / 36));
-            manager.updateAppWidget(id, views(context, strings, withSlot, fit));
+            manager.updateAppWidget(id, views(context, strings, withSlot, fit, locked));
         }
     }
 
-    private static RemoteViews views(Context context, JSONObject strings, List<Row> rows, int fit) {
+    private static RemoteViews views(Context context, JSONObject strings, List<Row> rows, int fit, boolean locked) {
         RemoteViews v = new RemoteViews(context.getPackageName(), R.layout.widget_slot);
         Intent open = context.getPackageManager().getLaunchIntentForPackage(context.getPackageName());
         if (open != null) {
@@ -369,6 +467,11 @@ public class EarliestSlotWidget extends AppWidgetProvider {
         }
         for (int r : ROWS) v.setViewVisibility(r, View.GONE);
         v.setViewVisibility(R.id.as_of, View.GONE);
+        if (locked) {
+            v.setViewVisibility(R.id.message, View.VISIBLE);
+            v.setTextViewText(R.id.message, context.getString(R.string.widget_reopen));
+            return v;
+        }
         if (rows.isEmpty()) {
             v.setViewVisibility(R.id.message, View.VISIBLE);
             v.setTextViewText(R.id.message, context.getString(R.string.widget_open_app));

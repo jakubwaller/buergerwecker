@@ -3,7 +3,9 @@
 // The device is the subscriber: no account, no address. On every launch with
 // permission the app asks the OS for its push token; the first time, it
 // registers that token (POST /devices) and keeps the returned id and secret in
-// Preferences — only there, and never logged. A rotated token is sent with
+// the secure store (store.js: the Keychain on iOS, the AndroidKeyStore on
+// Android), never in Preferences and never logged; the rest of the record
+// (token, platform, verified) stays in Preferences. A rotated token is sent with
 // PUT /device. A 401 or 410 device_retired drops the stored device and
 // registers afresh: the same token is the same device on the server, so its
 // subscriptions carry over (a retired one's have ended with it).
@@ -30,16 +32,35 @@ let handlers = { changed() {}, error() {}, received() {}, tapped() {} };
 export const getDevice = () => device;
 export const credentials = () => (device ? { id: device.id, secret: device.secret } : null);
 
+// The record in Preferences ({ token, platform, verified }) and the credential
+// in the secure store, put back together. Moves a credential an older build
+// left in Preferences first (store.migrateCredential).
 export async function loadDevice() {
-  const d = await store.get(DEVICE_KEY);
-  device = d && d.id && d.secret ? d : null;
+  const fallback = await store.migrateCredential(DEVICE_KEY).catch(() => null);
+  const record = await store.get(DEVICE_KEY);
+  let cred = fallback ?? (await store.getCredential().catch(() => null));
+  if (!record || typeof record !== "object") {
+    // A credential with no record beside it belongs to no install here: iOS
+    // keeps Keychain items when an app is deleted, so a reinstall finds the
+    // previous install's. A reinstall has always started afresh (the same
+    // token registers as the same device on the server), and still does.
+    if (cred) await store.removeCredential().catch(() => {});
+    cred = null;
+  }
+  device = record && cred ? { ...record, id: cred.id, secret: cred.secret } : null;
   return device;
 }
 
 async function saveDevice(d) {
   device = d;
-  if (d) await store.set(DEVICE_KEY, d);
-  else await store.remove(DEVICE_KEY);
+  if (d) {
+    await store.setCredential({ id: d.id, secret: d.secret });
+    const { id, secret, ...record } = d;
+    await store.set(DEVICE_KEY, record);
+  } else {
+    await store.removeCredential().catch(() => {});
+    await store.remove(DEVICE_KEY);
+  }
   handlers.changed(device);
 }
 
@@ -245,7 +266,11 @@ export async function deleteEverything() {
   }
   device = null;
   // Everything this app kept, except the language the person chose: deleting
-  // their data is no reason to switch the app to another language.
+  // their data is no reason to switch the app to another language. The
+  // credential first: it is the part that must not outlive this. Should the
+  // secure store fail to delete it, it is dead on the server already, and the
+  // next launch drops it anyway (no record beside it, loadDevice).
+  await store.removeCredential().catch(() => {});
   const lang = await store.get("lang");
   await store.clear();
   if (lang) await store.set("lang", lang);

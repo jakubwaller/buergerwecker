@@ -7,7 +7,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BUNDLE_IDS, APP_GROUP, ids, profiles, profileName } from "./asc.mjs";
+import { BUNDLE_IDS, APP_GROUP, KEYCHAIN_GROUP, ids, profiles, profileName } from "./asc.mjs";
 
 const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
 process.env.ASC_ISSUER_ID = "test-issuer";
@@ -98,7 +98,8 @@ test("profiles: both profiles are made, and one without the App Group is refused
   silence(t);
   const bundles = BUNDLE_IDS.map((b) => ({ identifier: b.identifier, caps: b.capabilities }));
   const dir = () => mkdtempSync(join(tmpdir(), "buergerwecker-profiles-"));
-  const full = (identifier) => `aps-environment ${APP_GROUP} ${identifier}`;
+  // What Apple puts in every profile: keychain-access-groups <team>.*.
+  const full = (identifier) => `aps-environment ${APP_GROUP} keychain-access-groups TEAM.* ${identifier}`;
   const calls = fakeAccount(t, { bundles, profileText: full });
   await profiles(dir());
   const names = calls.filter((c) => c.method === "POST" && c.body.data.type === "profiles").map((c) => c.body.data.attributes.name);
@@ -107,6 +108,9 @@ test("profiles: both profiles are made, and one without the App Group is refused
   fakeAccount(t, { bundles, profileText: (identifier) => (identifier.endsWith(".widget") ? "nothing" : full(identifier)) });
   await assert.rejects(() => profiles(dir()), (e) => e.message.includes(APP_GROUP) && e.message.includes("de.buergerwecker.app.widget"));
 
-  fakeAccount(t, { bundles, profileText: (identifier) => `${APP_GROUP} ${identifier}` });
+  fakeAccount(t, { bundles, profileText: (identifier) => `${APP_GROUP} keychain-access-groups ${identifier}` });
   await assert.rejects(() => profiles(dir()), /Push Notifications/, "the app still needs its aps-environment");
+
+  fakeAccount(t, { bundles, profileText: (identifier) => `aps-environment ${APP_GROUP} ${identifier}` });
+  await assert.rejects(() => profiles(dir()), (e) => e.message.includes(KEYCHAIN_GROUP), "the keychain group needs the wildcard");
 });

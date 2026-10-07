@@ -1,10 +1,11 @@
 // Start-up, the frame (header, tab bar, banner) and what a notification does.
 import { t, setLang, getLang, detectLang } from "./i18n.js";
-import { configure, isUnavailable } from "./api.js";
+import { configure, isUnavailable, siteUrl } from "./api.js";
 import { h, banner, toast, errorMessage } from "./ui.js";
 import { plugin, openExternal } from "./native.js";
 import * as push from "./push.js";
 import * as store from "./store.js";
+import * as widget from "./widget.js";
 import {
   state, TABS, onRender, render, currentTab, stack, top, back, switchTab,
   refreshSubs, forgetCaches,
@@ -81,11 +82,14 @@ function frame() {
 }
 
 // What tapping a notification (or its in-app banner) does. The app never
-// books: a slots push opens the city's booking page in the system browser.
+// books: a slots push opens the city's booking page in the system browser,
+// through the server's /go/ redirect, and a `url` anywhere but on
+// https://buergerwecker.de is ignored (siteUrl).
 function act(n) {
   const data = n?.data ?? {};
   if (data.type === "slots") {
-    if (data.url) openExternal(data.url);
+    const url = siteUrl(data.url);
+    if (url) openExternal(url);
     if (data.city) switchTab("cities", [{ name: "cities" }, { name: "city", params: { slug: data.city } }]);
   } else if (data.type === "checkin") {
     state.checkin = Number(data.sub) || null;
@@ -165,6 +169,10 @@ async function boot() {
       const flipped = verified !== knownVerified;
       knownDeviceId = id;
       knownVerified = verified;
+      // The widget fetches with the credential: a new device, or one that
+      // just got verified (or lost it), changes what it may see even when the
+      // city list stays the same, so the next sync goes through regardless.
+      if (newId || flipped) widget.invalidate();
       if (!ready) return;
       if (flipped) render();
       if (id && (newId || (flipped && verified !== false))) refreshSubs();

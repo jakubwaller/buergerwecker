@@ -4,9 +4,11 @@ import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
 const prefs = new Map();
+// The native SecureStore (Keychain / AndroidKeyStore): one JSON text or none.
+const secure = { value: null, writes: 0, failSet: false, dropOnSet: false };
 globalThis.Capacitor = {
   isNativePlatform: () => true,
-  isPluginAvailable: (n) => n === "Preferences",
+  isPluginAvailable: (n) => n === "Preferences" || n === "SecureStore",
   getPlatform: () => "ios",
   Plugins: {
     Preferences: {
@@ -15,7 +17,21 @@ globalThis.Capacitor = {
       remove: async ({ key }) => void prefs.delete(key),
       clear: async () => prefs.clear(),
     },
+    SecureStore: {
+      get: async () => (secure.value == null ? {} : { value: secure.value }),
+      set: async ({ value }) => {
+        if (secure.failSet) throw new Error("Keychain write failed (-34018)");
+        secure.writes++;
+        if (!secure.dropOnSet) secure.value = value;
+      },
+      clear: async () => void (secure.value = null),
+    },
   },
+};
+
+// Nothing secret may sit in Preferences, under any key.
+const assertNoSecretInPrefs = (secret) => {
+  for (const [k, v] of prefs) assert.ok(!String(v).includes(secret), `Preferences "${k}" holds the secret`);
 };
 
 const { configure } = await import("../www/api.js");
@@ -35,18 +51,95 @@ globalThis.fetch = async (url, opts) => {
 
 beforeEach(async () => {
   prefs.clear();
+  Object.assign(secure, { value: null, writes: 0, failSet: false, dropOnSet: false });
   routes = [];
   calls = [];
   await push.loadDevice();
 });
 
-test("first token registers the device and keeps id and secret in Preferences", async () => {
-  routes = [{ method: "POST", path: "/devices", reply: [201, { device_id: 5, secret: "sec", language: "de", verified: false }] }];
+test("first token registers the device: id and secret in the secure store, the rest in Preferences", async () => {
+  routes = [{ method: "POST", path: "/devices", reply: [201, { device_id: 5, secret: "sec-first", language: "de", verified: false }] }];
   await push.onToken("tok-1");
   assert.deepEqual(calls[0].body, { platform: "apns", token: "tok-1", language: "de" });
   assert.equal(push.getDevice().id, 5);
   assert.equal(push.awaitingVerification(), true);
-  assert.deepEqual(JSON.parse(prefs.get("device")), { id: 5, secret: "sec", token: "tok-1", platform: "apns", verified: false });
+  assert.deepEqual(JSON.parse(secure.value), { id: 5, secret: "sec-first" });
+  assert.deepEqual(JSON.parse(prefs.get("device")), { token: "tok-1", platform: "apns", verified: false });
+  assertNoSecretInPrefs("sec-first");
+  // And the next launch puts the two together again.
+  assert.deepEqual(await push.loadDevice(), { id: 5, secret: "sec-first", token: "tok-1", platform: "apns", verified: false });
+});
+
+test("an older build's record moves its id and secret into the secure store on launch", async () => {
+  prefs.set("device", JSON.stringify({ id: 5, secret: "sec-legacy", token: "tok-1", platform: "apns", verified: true }));
+  prefs.set("lang", JSON.stringify("en"));
+  const d = await push.loadDevice();
+  assert.deepEqual(d, { id: 5, secret: "sec-legacy", token: "tok-1", platform: "apns", verified: true });
+  assert.deepEqual(JSON.parse(secure.value), { id: 5, secret: "sec-legacy" });
+  assert.deepEqual(JSON.parse(prefs.get("device")), { token: "tok-1", platform: "apns", verified: true });
+  assert.equal(JSON.parse(prefs.get("lang")), "en", "nothing else is touched");
+  assertNoSecretInPrefs("sec-legacy");
+  // The second launch has nothing left to move and still finds the device.
+  const writes = secure.writes;
+  assert.deepEqual(await push.loadDevice(), d);
+  assert.equal(secure.writes, writes);
+});
+
+test("a secure store that refuses the write leaves the record as it was, for the next launch", async () => {
+  const legacy = { id: 5, secret: "sec-legacy", token: "tok-1", platform: "apns", verified: true };
+  prefs.set("device", JSON.stringify(legacy));
+  secure.failSet = true;
+  assert.deepEqual(await push.loadDevice(), legacy, "this launch still works with it");
+  assert.deepEqual(JSON.parse(prefs.get("device")), legacy, "nothing deleted that did not arrive");
+  secure.failSet = false;
+  assert.deepEqual(await push.loadDevice(), legacy);
+  assertNoSecretInPrefs("sec-legacy");
+});
+
+test("a secure store that does not hand the credential back counts as a refusal", async () => {
+  const legacy = { id: 5, secret: "sec-legacy", token: "tok-1", platform: "apns", verified: true };
+  prefs.set("device", JSON.stringify(legacy));
+  secure.dropOnSet = true;
+  assert.deepEqual(await push.loadDevice(), legacy);
+  assert.deepEqual(JSON.parse(prefs.get("device")), legacy);
+});
+
+test("a credential with no record beside it (iOS keeps the Keychain over a reinstall) is dropped", async () => {
+  secure.value = JSON.stringify({ id: 5, secret: "sec-old-install" });
+  assert.equal(await push.loadDevice(), null);
+  assert.equal(secure.value, null);
+  routes = [{ method: "POST", path: "/devices", reply: [201, { device_id: 8, secret: "sec-new", verified: false }] }];
+  await push.onToken("tok-9");
+  assert.equal(calls[0].path, "/devices", "a reinstall registers afresh, as it always has");
+  assert.deepEqual(JSON.parse(secure.value), { id: 8, secret: "sec-new" });
+});
+
+test("a record whose credential is not on this phone (a backup restored elsewhere) is no device", async () => {
+  prefs.set("device", JSON.stringify({ token: "tok-1", platform: "apns", verified: true }));
+  assert.equal(await push.loadDevice(), null);
+  assert.equal(push.credentials(), null);
+});
+
+test("a change that keeps the credential does not write it again", async () => {
+  prefs.set("device", JSON.stringify({ id: 5, secret: "sec", token: "tok-1", platform: "apns", verified: false }));
+  await push.loadDevice();
+  const writes = secure.writes;
+  routes = [{ method: "POST", path: "/device/verify", reply: [200, { verified: true }] }];
+  assert.equal(await push.verify("good"), true);
+  assert.equal(JSON.parse(prefs.get("device")).verified, true);
+  assert.equal(secure.writes, writes, "every write reloads the widget");
+});
+
+test("Delete my data removes the credential with everything else, and keeps the language", async () => {
+  prefs.set("device", JSON.stringify({ id: 5, secret: "sec", token: "tok-1", platform: "apns", verified: true }));
+  prefs.set("lang", JSON.stringify("en"));
+  await push.loadDevice();
+  routes = [{ method: "DELETE", path: "/device", reply: [204] }];
+  await push.deleteEverything();
+  assert.equal(secure.value, null);
+  assert.equal(prefs.get("device"), undefined);
+  assert.equal(JSON.parse(prefs.get("lang")), "en");
+  assert.equal(push.getDevice(), null);
 });
 
 test("a server without verification leaves verified unknown, which is not waiting", async () => {

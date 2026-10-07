@@ -21,15 +21,17 @@ globalThis.Capacitor = {
   },
 };
 
-const { buildConfig, sync, clear, widgetStrings, MAX_CITIES } = await import("../www/widget.js");
+const { buildConfig, sync, clear, invalidate, widgetStrings, MAX_CITIES, CONFIG_VERSION } = await import("../www/widget.js");
 const { STRINGS } = await import("../www/i18n.js");
-const { BUNDLE_IDS, APP_GROUP } = await import("../ios/asc.mjs");
+const { BUNDLE_IDS, APP_GROUP, KEYCHAIN_GROUP } = await import("../ios/asc.mjs");
 
 const here = (p) => new URL(`../${p}`, import.meta.url);
 const read = (p) => readFileSync(here(p), "utf8");
 const IOS = "ios/App/BuergerweckerWidget/BuergerweckerWidget.swift";
 const IOS_PLUGIN = "ios/App/App/WidgetBridgePlugin.swift";
+const IOS_SECURE = "ios/App/App/SecureStorePlugin.swift";
 const JAVA = "android/app/src/main/java/de/buergerwecker/app";
+const ENTITLEMENTS = ["ios/App/App/App.entitlements", "ios/App/BuergerweckerWidget/BuergerweckerWidget.entitlements"];
 
 const sub = (city, appointment_type, active = true, extra = {}) => ({
   id: `${city}-${appointment_type}`, city, appointment_type, active,
@@ -43,12 +45,26 @@ const cityList = [
 
 test("the config lists the cities of the active alerts, each alert with its own filter", () => {
   const c = buildConfig([sub("leipzig", "a"), sub("leipzig", "b"), sub("bonn", "c"), sub("leipzig", "x", false)], cityList, "de");
-  assert.equal(c.v, 2);
+  assert.equal(c.v, 3);
+  assert.equal(c.v, CONFIG_VERSION);
   assert.equal(c.lang, "de");
   assert.deepEqual(c.cities, [
     { slug: "leipzig", name: "Leipzig", office: "Bürgeramt", alerts: [{ service: "a", ...open }, { service: "b", ...open }] },
     { slug: "bonn", name: "Bonn", office: "Bürgerdienste", alerts: [{ service: "c", ...open }] },
   ]);
+});
+
+test("a special-category alert (Art. 9) never reaches the widget, nor does a city it alone watches", () => {
+  const special = { consent_special: true };
+  const c = buildConfig(
+    [sub("leipzig", "sensitive", true, special), sub("leipzig", "a", true, { consent_special: false }), sub("bonn", "sensitive", true, special)],
+    cityList,
+    "de",
+  );
+  assert.deepEqual(c.cities, [{ slug: "leipzig", name: "Leipzig", office: "Bürgeramt", alerts: [{ service: "a", ...open }] }]);
+  assert.doesNotMatch(JSON.stringify(c), /sensitive|bonn|Bonn/);
+  // Only special ones: as if there were no alert at all.
+  assert.deepEqual(buildConfig([sub("bonn", "sensitive", true, special)], cityList, "de").cities, []);
 });
 
 test("offices, weekdays, time window and days ahead travel with the alert, as the server's filter has them", () => {
@@ -75,7 +91,7 @@ test("an unknown city falls back to its slug, and the list is capped", () => {
 test("the widget gets the page's own words and date tables, in the chosen language", () => {
   for (const lang of ["de", "en"]) {
     const s = widgetStrings(lang);
-    for (const k of ["widget.openApp", "widget.noMatch", "widget.noSnapshot", "widget.asOf", "date.today", "date.tomorrow",
+    for (const k of ["widget.openApp", "widget.reopen", "widget.noMatch", "widget.noSnapshot", "widget.asOf", "date.today", "date.tomorrow",
                      "date.dayMonth", "date.atTime", "date.time"]) assert.ok(s[k], `${lang} ${k}`);
     for (let i = 1; i <= 7; i++) assert.ok(s[`weekday.${i}`], `${lang} weekday.${i}`);
     for (let i = 1; i <= 12; i++) assert.ok(s[`month.${i}`], `${lang} month.${i}`);
@@ -97,6 +113,34 @@ test("sync hands the plugin one JSON string and never a credential; clear forget
   assert.doesNotMatch(arg.config, /secret|Bearer|token/i);
   await clear();
   assert.deepEqual(calls[1], ["clear"]);
+});
+
+test("an unchanged list is not handed over twice: every setConfig costs the widget a fetch per city", async () => {
+  calls.length = 0;
+  await sync([sub("leipzig", "a")], cityList, "de");
+  await sync([sub("leipzig", "a")], cityList, "de");
+  assert.equal(calls.length, 1, "a resume with the same list");
+  await sync([sub("leipzig", "a"), sub("bonn", "c")], cityList, "de");
+  await sync([sub("leipzig", "a"), sub("bonn", "c")], cityList, "en");
+  assert.equal(calls.length, 3, "a new alert, a new language");
+  await clear();
+  await sync([sub("leipzig", "a"), sub("bonn", "c")], cityList, "en");
+  assert.deepEqual(calls.map((c) => c[0]), ["setConfig", "setConfig", "setConfig", "clear", "setConfig"], "after a clear it goes again");
+  // A new or newly verified device changes what the widget may fetch: the
+  // same list goes over again, which reloads the widget.
+  invalidate();
+  await sync([sub("leipzig", "a"), sub("bonn", "c")], cityList, "en");
+  assert.equal(calls.length, 6, "after invalidate() it goes again");
+  await sync([sub("leipzig", "a"), sub("bonn", "c")], cityList, "en");
+  assert.equal(calls.length, 6, "and then dedupes as before");
+  await clear();
+});
+
+test("the app invalidates the widget's last list whenever the device or its verification changes", () => {
+  const app = read("www/app.js");
+  const changed = app.slice(app.indexOf("changed: (d) =>"), app.indexOf("error: (e) =>"));
+  assert.match(changed, /if \(newId \|\| flipped\) widget\.invalidate\(\);/);
+  assert.ok(changed.indexOf("widget.invalidate()") < changed.indexOf("if (!ready) return;"), "also before start-up finished");
 });
 
 test("without the plugin (web, an older build) sync and clear do nothing", async () => {
@@ -150,14 +194,56 @@ test("the App Group is one name: asc.mjs, both entitlements, both Swift files", 
 
 test("the two Swift targets agree on the storage keys, Android on one preference file", () => {
   const key = (src, name) => new RegExp(`${name} = "(\\w+)"`).exec(src)?.[1];
-  for (const name of ["configKey", "cacheKey"]) {
+  for (const name of ["configKey", "cacheKey", "lockedKey"]) {
     assert.ok(key(read(IOS), name), name);
     assert.equal(key(read(IOS), name), key(read(IOS_PLUGIN), name), name);
   }
   const java = read(`${JAVA}/EarliestSlotWidget.java`);
   assert.equal(/KEY_CONFIG = "(\w+)"/.exec(java)[1], key(read(IOS), "configKey"), "same key on both platforms");
   assert.equal(/KEY_CACHE = "(\w+)"/.exec(java)[1], key(read(IOS), "cacheKey"));
+  assert.equal(/KEY_LOCKED = "(\w+)"/.exec(java)[1], key(read(IOS), "lockedKey"));
   assert.doesNotMatch(read(`${JAVA}/WidgetBridgePlugin.java`), /"widget_config"|getSharedPreferences\("/, "the plugin uses the widget's constants");
+  // "Delete my data" forgets the lock with the rest.
+  assert.match(read(IOS_PLUGIN), /removeObject\(forKey: Self\.lockedKey\)/);
+  assert.match(read(`${JAVA}/WidgetBridgePlugin.java`), /remove\(EarliestSlotWidget\.KEY_LOCKED\)/);
+});
+
+test("a list older than CONFIG_VERSION is no list on either platform, and the old cache is never read", () => {
+  const swift = read(IOS);
+  const java = read(`${JAVA}/EarliestSlotWidget.java`);
+  assert.equal(Number(/static let configVersion = (\d+)/.exec(swift)[1]), CONFIG_VERSION, "iOS");
+  assert.equal(Number(/static final int CONFIG_VERSION = (\d+);/.exec(java)[1]), CONFIG_VERSION, "Android");
+  assert.match(swift, /\(config\.v \?\? 0\) >= Shared\.configVersion else \{ return nil \}/);
+  assert.match(java, /config\.optInt\("v", 0\) >= CONFIG_VERSION \? config : null/);
+  // The cache written under the old list may hold a special-category slot: a
+  // new key, the old one deleted on every load and on "Delete my data".
+  const legacy = "widget_cache";
+  assert.notEqual(/cacheKey = "(\w+)"/.exec(swift)[1], legacy);
+  assert.equal(/legacyCacheKey = "(\w+)"/.exec(swift)[1], legacy);
+  assert.equal(/legacyCacheKey = "(\w+)"/.exec(read(IOS_PLUGIN))[1], legacy);
+  assert.equal(/KEY_LEGACY_CACHE = "(\w+)"/.exec(java)[1], legacy);
+  const load = swift.slice(swift.indexOf("private func load()"));
+  assert.ok(load.indexOf("removeObject(forKey: Shared.legacyCacheKey)") < load.indexOf("guard let config = Config.load()"));
+  assert.match(load, /guard let config = Config\.load\(\) else \{\s*Shared\.defaults\?\.removeObject\(forKey: Shared\.cacheKey\)\s*Shared\.defaults\?\.removeObject\(forKey: Shared\.lockedKey\)/);
+  const refresh = java.slice(java.indexOf("private static void refresh"), java.indexOf("static JSONObject keepOnly"));
+  assert.ok(refresh.indexOf("remove(KEY_LEGACY_CACHE)") < refresh.indexOf("readConfig(prefs)"));
+  assert.match(refresh, /if \(config == null\) \{[\s\S]*?remove\(KEY_CACHE\)\.remove\(KEY_LOCKED\)/);
+  assert.match(read(IOS_PLUGIN), /removeObject\(forKey: Self\.legacyCacheKey\)/);
+  assert.match(read(`${JAVA}/WidgetBridgePlugin.java`), /remove\(EarliestSlotWidget\.KEY_LEGACY_CACHE\)/);
+});
+
+test("a credential with nothing to ask about lifts the lock on both platforms", () => {
+  // An empty list (no alert, or only special-category ones) never fetches,
+  // so no answer could ever lift a lock set while the credential was missing.
+  const swift = read(IOS);
+  const java = read(`${JAVA}/EarliestSlotWidget.java`);
+  assert.match(swift, /if case \.bearer = credential, cities\.isEmpty \{ nothingToAsk = true \}/);
+  assert.match(swift, /let accepted = nothingToAsk \|\| outcomes\.values\.contains/);
+  assert.match(java, /boolean nothingToAsk = auth != null && \(cities == null \|\| cities\.length\(\) == 0\);/);
+  assert.match(java, /boolean accepted = nothingToAsk;/);
+  // And the lock still only stands when nothing proved the credential works.
+  assert.match(swift, /let locked = refused \|\| \(!accepted && /);
+  assert.match(java, /boolean locked = refused \|\| \(!accepted && /);
 });
 
 test("every string key native code reads is one the page sends", () => {
@@ -249,4 +335,99 @@ test("both platforms mirror app/filters.py matches(): same checks, same bounds",
   // Office id, not name: the slots payload carries `location`.
   assert.match(swift, /location: e\.location,/);
   assert.match(java, /e\.optString\("location"\)/);
+});
+
+// --- The device credential: secure store, keychain group, widget -----------
+
+test("every SecureStore method the page calls exists on iOS and Android, and both bridges register it", () => {
+  const src = read("www/store.js");
+  assert.ok(src.includes('plugin("SecureStore")'));
+  const called = new Set([...src.matchAll(/\bs\??\.(\w+)\(/g)].map((m) => m[1]));
+  assert.deepEqual([...called].sort(), ["clear", "get", "set"]);
+  const swift = read(IOS_SECURE);
+  const java = read(`${JAVA}/SecureStorePlugin.java`);
+  assert.match(swift, /jsName = "SecureStore"/);
+  assert.match(java, /@CapacitorPlugin\(name = "SecureStore"\)/);
+  for (const name of called) {
+    assert.match(swift, new RegExp(`CAPPluginMethod\\(name: "${name}"`), `${name} on iOS`);
+    assert.match(swift, new RegExp(`@objc func ${name}\\(_ call: CAPPluginCall\\)`), `${name} implemented on iOS`);
+    assert.match(java, new RegExp(`@PluginMethod\\s+public void ${name}\\(PluginCall call\\)`), `${name} on Android`);
+  }
+  assert.match(read(`${JAVA}/MainActivity.java`), /registerPlugin\(SecureStorePlugin\.class\)/);
+  assert.match(read("ios/App/App/MainViewController.swift"), /registerPluginInstance\(SecureStorePlugin\(\)\)/);
+  // An app-target file only compiles if the project lists it.
+  const pbx = read("ios/App/App.xcodeproj/project.pbxproj");
+  assert.match(pbx, /\/\* SecureStorePlugin\.swift in Sources \*\/ = \{isa = PBXBuildFile/);
+  assert.match(pbx, /[0-9A-F]{24} \/\* SecureStorePlugin\.swift in Sources \*\/,/);
+  assert.match(read("ios/add-widget-target.rb"), /SecureStorePlugin\.swift/);
+  // A credential change reloads the widget on both platforms.
+  assert.equal((swift.match(/WidgetCenter\.shared\.reloadAllTimelines\(\)/g) ?? []).length, 2, "set and clear");
+  assert.equal((java.match(/WidgetBridgePlugin\.requestUpdate\(getContext\(\)\)/g) ?? []).length, 2, "set and clear");
+});
+
+test("iOS: one keychain group in both entitlements, one Keychain item in both targets, never backed up or synced", () => {
+  assert.equal(KEYCHAIN_GROUP, "de.buergerwecker.shared");
+  for (const f of ENTITLEMENTS) {
+    assert.match(read(f), new RegExp(`<key>keychain-access-groups</key>\\s*<array>\\s*<string>\\$\\(AppIdentifierPrefix\\)${KEYCHAIN_GROUP.replaceAll(".", "\\.")}</string>\\s*</array>`), f);
+  }
+  const plugin = read(IOS_SECURE);
+  const widget = read(IOS);
+  assert.match(plugin, new RegExp(`groupName = "${KEYCHAIN_GROUP}"`));
+  const attr = (src, name) => new RegExp(`static let ${name} = "([\\w.]+)"`).exec(src)?.[1];
+  for (const name of ["service", "account"]) {
+    assert.ok(attr(plugin, name), name);
+    assert.equal(attr(widget, name), attr(plugin, name), `${name}: the widget reads what the app writes`);
+  }
+  // ThisDeviceOnly: not in a backup that restores onto another phone, not in iCloud Keychain.
+  assert.match(plugin, /kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly/);
+  assert.doesNotMatch(plugin, /kSecAttrAccessible(Always|AfterFirstUnlock\b|WhenUnlocked\b)/);
+  for (const src of [plugin, widget]) assert.match(src, /kSecAttrSynchronizable as String: false/);
+  assert.match(read("ios/App/App/Info.plist"), /<key>AppIdentifierPrefix<\/key>\s*<string>\$\(AppIdentifierPrefix\)<\/string>/);
+  // Nothing of the credential goes through Preferences any more.
+  assert.doesNotMatch(read("ios/App/App/PrivacyInfo.xcprivacy"), /keeps the\s+device credentials/);
+});
+
+test("Android: an AndroidKeyStore AES-GCM key, and the file it encrypts into is out of backup and transfer", () => {
+  const store = read(`${JAVA}/SecureStore.java`);
+  assert.match(store, /"AndroidKeyStore"/);
+  assert.match(store, /"AES\/GCM\/NoPadding"/);
+  assert.match(store, /KeyProperties\.BLOCK_MODE_GCM/);
+  assert.doesNotMatch(store, /setUserAuthenticationRequired|setUnlockedDeviceRequired/, "the widget reads it with the screen locked");
+  const file = `${/PREFS = "(\w+)"/.exec(store)[1]}.xml`;
+  assert.notEqual(file, "CapacitorStorage.xml", "not the Preferences plugin's file");
+  const rules = read("android/app/src/main/res/xml/data_extraction_rules.xml");
+  for (const section of ["cloud-backup", "device-transfer"]) {
+    const body = new RegExp(`<${section}>([\\s\\S]*?)</${section}>`).exec(rules)?.[1] ?? "";
+    assert.match(body, new RegExp(`<exclude domain="sharedpref" path="${file.replace(".", "\\.")}" />`), section);
+  }
+  assert.match(read("android/app/src/main/res/xml/backup_rules.xml"), new RegExp(`<exclude domain="sharedpref" path="${file.replace(".", "\\.")}" />`));
+  const manifest = read("android/app/src/main/AndroidManifest.xml");
+  assert.match(manifest, /android:allowBackup="false"/);
+  assert.match(manifest, /android:dataExtractionRules="@xml\/data_extraction_rules"/);
+  assert.match(manifest, /android:fullBackupContent="@xml\/backup_rules"/);
+});
+
+test("both widgets fetch with the device credential, and a refused one shows only 'open the app'", () => {
+  const swift = read(IOS);
+  const java = read(`${JAVA}/EarliestSlotWidget.java`);
+  // To buergerwecker.de and nowhere else.
+  for (const src of [swift, java]) {
+    assert.match(src, /"https:\/\/buergerwecker\.de\/api\/v1"/);
+    assert.ok(src.includes('"not_subscribed"'), "a city without an alert drops out");
+  }
+  assert.match(swift, /req\.setValue\(bearer, forHTTPHeaderField: "Authorization"\)/);
+  assert.match(swift, /Credential\.read\(\)/);
+  assert.match(swift, /case 401, 403, 410:\s*return \.refused/);
+  assert.match(java, /conn\.setRequestProperty\("Authorization", auth\)/);
+  assert.match(java, /SecureStore\.bearer\(context\)/);
+  assert.match(java, /code == 401 \|\| code == 403 \|\| code == 410\) return new Fetched\(Fetched\.REFUSED/);
+  // Locked: the cache goes, the flag stays until an answer proves the credential works.
+  assert.match(swift, /if locked \{\s*Shared\.defaults\?\.removeObject\(forKey: Shared\.cacheKey\)\s*Shared\.defaults\?\.set\(true, forKey: Shared\.lockedKey\)/);
+  assert.match(java, /else if \(locked\) \{\s*prefs\.edit\(\)\.remove\(KEY_CACHE\)\.putBoolean\(KEY_LOCKED, true\)/);
+  assert.match(swift, /if entry\.locked \{\s*Text\(entry\.words\("widget\.reopen"\)\)/);
+  assert.match(java, /if \(locked\) \{[\s\S]{0,200}R\.string\.widget_reopen/);
+  // Android draws that text from its own resources, in both languages.
+  for (const f of ["values", "values-de"]) {
+    assert.match(read(`android/app/src/main/res/${f}/widget.xml`), /<string name="widget_reopen">[^<]+<\/string>/, f);
+  }
 });

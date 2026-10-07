@@ -31,7 +31,8 @@
 			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
 			<key>NSPrivacyAccessedAPITypeReasons</key>
 			<!-- CA92.1: the app's own defaults (the Preferences plugin keeps the
-			     device credentials and the chosen language there).
+			     chosen language and the device record there; the device
+			     credential itself is in the Keychain, SecureStorePlugin.swift).
 			     1C8F.1: the App Group's defaults, where the page writes the city
 			     list the home-screen widget shows (WidgetBridgePlugin.swift). -->
 			<array><string>CA92.1</string><string>1C8F.1</string></array>
