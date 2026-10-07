@@ -417,9 +417,15 @@ FCM_SERVICE_ACCOUNT_JSON_FILE=/run/secrets/fcm.json   # or ..._JSON=<inline>
 PUSH_TTL_SECONDS=1800                       # how long a relay holds a push
 ```
 
-Only the poller needs them. Mount the two key files read-only into the poller
-container and point the `_FILE` variants at them; inline values work too but a
-multi-line PEM in `.env` is fragile. The APNs key is downloadable once from
+Both `web` and `poller` need them: the poller sends the digests, and the web
+container sends the verification push inside the register request (the
+poller's once-a-minute sweep is only the fallback). Put the key files in
+`~/buergerwecker/secrets/` (gitignored, `chmod 600`); `docker-compose.yml`
+mounts that directory read-only at `/run/secrets` in both containers, so the
+`_FILE` paths above work as written. Both must see the files, because
+`load_config` reads every `_FILE` at start and a path it cannot open stops the
+container — the website included. Inline values work too, but a multi-line PEM
+in `.env` is fragile. The APNs key is downloadable once from
 Apple; the FCM file is Firebase → Project settings → Service accounts →
 Generate new private key, for a project whose Cloud Messaging API (v1) is
 enabled. Both are credentials for *sending*: they name the app, not any

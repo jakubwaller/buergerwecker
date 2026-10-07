@@ -13,6 +13,11 @@ services:
     env_file: .env
     volumes:
       - ./data:/data
+      # Push keys (APNS_KEY_P8_FILE, FCM_SERVICE_ACCOUNT_JSON_FILE). Both
+      # containers: load_config reads every *_FILE at start, so a path in the
+      # shared .env that one of them cannot see stops it, and the web
+      # container sends the verification push inside the register request.
+      - ./secrets:/run/secrets:ro
     restart: unless-stopped
     expose:
       - "8000"
@@ -27,6 +32,7 @@ services:
     env_file: .env
     volumes:
       - ./data:/data
+      - ./secrets:/run/secrets:ro
     restart: unless-stopped
 
   backup:
