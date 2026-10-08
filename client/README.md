@@ -38,19 +38,32 @@ gets an id and a secret, kept in the Keychain (iOS) or encrypted under an Androi
    only to a device with a live alert in that city (`GET /cities/<slug>/slots` takes the
    device credential and answers `403 not_subscribed` otherwise), so without one the screen
    says to set up an alert for the city; a special-category service appears only to a device
-   that watches it itself, and its card claims nothing when it is absent.
+   that watches it itself, and its card claims nothing when it is absent. Opened from an alert
+   or a notification, the alert's service comes first. The snapshot is read through a one-minute
+   cache (`citySlots` in `state.js`) shared with My alerts, since the route allows a device about
+   60 reads an hour together with the widget; a push for the city drops that city's copy.
 5. **Subscribe / edit form**: service (with the Art. 9 consent box for a `sensitive`
    service), offices filtered by the service, weekdays, time window, how far ahead.
-6. **My alerts**: each with its filter, "runs until", "Keep looking" on expired ones, edit and
-   stop. Loaded on launch and on resume, never on a timer.
-7. **Home-screen widget** (iOS small + medium, Android resizable): the earliest free slot in the
+6. **My alerts**: each with its filter, "runs until", the soonest slots that alert would notify
+   about right now (the server's `app/filters.py` rules over the city's snapshot, `filters.js`)
+   as a row into the city overview, "Book on the city's site" when there is one, "Keep looking"
+   on expired ones, edit and stop. Loaded on launch and on resume, never on a timer.
+7. **Notifications**: the slots and check-in notifications of the last 30 days (at most 50),
+   newest first, an unread count on the tab, "Clear list". Kept on the phone only, in
+   Preferences (`inbox.js`); "Delete my data" clears it. In: a push received in the foreground,
+   a tapped one, and on iOS what still sits in the notification centre at launch and resume.
+   Android hands that last call the system's copy without the push's data, so there it covers
+   foreground and tapped pushes only; a tap there carries no text, and the list words the entry
+   itself. Tapping an entry opens the city overview at that alert's service, never the booking
+   page: the slots it named may be gone by then.
+8. **Home-screen widget** (iOS small + medium, Android resizable): the earliest free slot in the
    cities of the device's active alerts, special-category (Art. 9) ones left out, "as of" the
    server's last poll. It only shows; a tap opens the app (see "The widget" below).
-8. **Settings**: language (German/English, from the device language at first), delete my data,
+9. **Settings**: language (German/English, from the device language at first), delete my data,
    privacy / imprint / contact on buergerwecker.de, the version.
 
 Notification taps: `slots` opens the booking URL in the system browser and the city's overview
-in the app; `checkin` opens My alerts with "Yes, keep looking" / "No, I've got one" in front;
+in the app (at the alert's service); `checkin` opens My alerts with "Yes, keep looking" / "No, I've got one" in front;
 `verify` sends the code. In the foreground a small in-app banner does the same on tap. A push's
 `url` is opened only when its origin is exactly `https://buergerwecker.de` (`siteUrl` in
 `api.js`); anything else is ignored. While the server's `APP_API_ENABLED` gate is closed (every

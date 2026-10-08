@@ -53,6 +53,8 @@ body {
 main {
   flex: 1;
   overflow-y: auto;
+  /* Never sideways: whatever is too wide wraps or shrinks instead. */
+  overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
   padding: 1rem calc(1rem + var(--safe-right)) 2rem calc(1rem + var(--safe-left));
@@ -93,7 +95,12 @@ a { color: var(--accent); }
   background: none; border: 0; font: inherit; font-size: 0.75rem; color: var(--text-muted);
 }
 .tabs button.active { color: var(--accent); }
-.tab-icon { font-size: 1.3rem; line-height: 1; }
+.tab-icon { font-size: 1.3rem; line-height: 1; position: relative; }
+.tab-badge {
+  position: absolute; top: -0.35rem; left: 100%; margin-left: -0.35rem;
+  min-width: 1.1rem; height: 1.1rem; padding: 0 0.3rem; border-radius: 999px;
+  background: var(--danger); color: #fff; font-size: 0.7rem; font-weight: 600; line-height: 1.1rem; text-align: center;
+}
 
 /* Cards and rows */
 .card {
@@ -160,12 +167,13 @@ a { color: var(--accent); }
 }
 
 /* City overview */
-.service .label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ok); font-weight: 600; }
+.service .label, .slots-row .label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ok); font-weight: 600; }
 .slots { list-style: none; margin: 0.25rem 0 0.5rem; padding: 0; }
 .slots li { display: flex; flex-direction: column; padding: 0.2rem 0; }
 .earliest .when { font-weight: 600; }
 .slots .where { color: var(--text-muted); font-size: 0.9rem; }
 .service .btn { margin-top: 0.5rem; }
+.card.highlight { outline: 2px solid var(--accent); }
 
 /* Form */
 .form label { display: block; margin: 0 0 1rem; font-weight: 500; }
@@ -174,6 +182,10 @@ a { color: var(--accent); }
   font: inherit; color: var(--text); background: var(--card);
   border: 1px solid var(--border-strong); border-radius: var(--radius-input);
 }
+/* WebKit lays a select's chosen text out at full length even where the box
+   cuts it off: a long service name made the whole screen wider than the
+   phone and let it slide sideways. */
+.form select { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .form label.check, label.check {
   display: flex; align-items: flex-start; gap: 0.6rem; font-weight: 400; min-height: 44px; margin: 0 0 0.5rem;
 }
@@ -204,10 +216,22 @@ legend { font-weight: 500; margin-bottom: 0.4rem; padding: 0; }
 
 /* My alerts */
 .sub.inactive { opacity: 0.8; }
-.sub.highlight { outline: 2px solid var(--accent); }
+.slots-row { margin-top: 0.25rem; }
+.slots-body { display: flex; flex-direction: column; min-width: 0; }
+.slots-row .slots { margin: 0.1rem 0 0.25rem; }
 .status.warn { color: #b45309; }
 @media (prefers-color-scheme: dark) { .status.warn { color: #fbbf24; } }
 .checkin-q { font-weight: 600; margin: 0.25rem 0 0; }
+
+/* Notifications */
+.inbox { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+.inbox-row { align-items: flex-start; padding: 0.75rem 0; }
+.inbox-body { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.inbox-text { white-space: pre-line; color: var(--text-muted); overflow-wrap: anywhere; }
+.inbox-row.unread strong::before {
+  content: ""; display: inline-block; width: 0.5rem; height: 0.5rem; margin-right: 0.4rem;
+  border-radius: 50%; background: var(--accent); vertical-align: middle;
+}
 
 /* Settings */
 .segmented { display: flex; border: 1px solid var(--border-strong); border-radius: 999px; overflow: hidden; }

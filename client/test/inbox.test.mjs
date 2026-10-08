@@ -1,0 +1,133 @@
+// The notifications list (www/inbox.js): what goes in, what counts as the
+// same notification, and how long it stays. Against a fake Capacitor.
+import { test, beforeEach } from "node:test";
+import assert from "node:assert/strict";
+
+const prefs = new Map();
+const delivered = { list: [] };
+globalThis.Capacitor = {
+  isNativePlatform: () => true,
+  isPluginAvailable: (n) => n === "Preferences" || n === "PushNotifications",
+  getPlatform: () => "ios",
+  Plugins: {
+    Preferences: {
+      get: async ({ key }) => ({ value: prefs.get(key) ?? null }),
+      set: async ({ key, value }) => void prefs.set(key, value),
+      remove: async ({ key }) => void prefs.delete(key),
+      clear: async () => prefs.clear(),
+    },
+    PushNotifications: {
+      getDeliveredNotifications: async () => ({ notifications: delivered.list }),
+    },
+  },
+};
+
+const inbox = await import("../www/inbox.js");
+
+const DAY = 86400000;
+const T0 = Date.UTC(2026, 9, 8, 9, 0);
+const slotsPush = (over = {}) => ({
+  id: "n1",
+  title: "Neue Termine in Leipzig",
+  body: "Bürgerbüro Mitte: Do. 9. Okt. 09:30",
+  data: { type: "slots", city: "leipzig", sub: "7", url: "https://buergerwecker.de/go/leipzig", aps: { alert: {} } },
+  ...over,
+});
+
+beforeEach(async () => {
+  prefs.clear();
+  delivered.list = [];
+  inbox.reset();
+  await inbox.load(T0);
+});
+
+test("slots and check-in notifications go in; the setup push and strangers do not", () => {
+  const e = inbox.entryOf(slotsPush(), T0);
+  assert.deepEqual(e, {
+    id: "n1",
+    at: T0,
+    type: "slots",
+    title: "Neue Termine in Leipzig",
+    body: "Bürgerbüro Mitte: Do. 9. Okt. 09:30",
+    city: "leipzig",
+    sub: "7",
+  });
+  assert.equal(inbox.entryOf({ id: "c", data: { type: "checkin", sub: 7 } }, T0).sub, "7");
+  assert.equal(inbox.entryOf({ id: "v", data: { type: "verify", code: "123" } }, T0), null);
+  // Android's notification-centre copy: the system's extras, not the push's data.
+  assert.equal(inbox.entryOf({ id: 5, title: "x", body: "y", data: { "android.title": "x" } }, T0), null);
+  assert.equal(inbox.entryOf(null, T0), null);
+});
+
+test("the same notification received and then tapped is one entry, at its first sighting", async () => {
+  assert.equal(await inbox.record(slotsPush(), T0), true);
+  // An Android tap: the data, the id, no text.
+  assert.equal(await inbox.record({ id: "n1", data: slotsPush().data }, T0 + 60000), false);
+  assert.equal(inbox.items().length, 1);
+  assert.equal(inbox.items()[0].at, T0);
+  assert.equal(inbox.items()[0].title, "Neue Termine in Leipzig");
+});
+
+test("a tap without text first, its text later, fills the entry in", async () => {
+  await inbox.record({ id: "n1", data: slotsPush().data }, T0);
+  await inbox.record(slotsPush(), T0 + 1000);
+  assert.equal(inbox.items().length, 1);
+  assert.equal(inbox.items()[0].body, "Bürgerbüro Mitte: Do. 9. Okt. 09:30");
+});
+
+test("two pushes with the same text are two entries when both have ids", async () => {
+  await inbox.record(slotsPush({ id: "n1" }), T0);
+  await inbox.record(slotsPush({ id: "n2" }), T0 + 3600000);
+  assert.deepEqual(inbox.items().map((e) => e.id), ["n2", "n1"], "newest first");
+});
+
+test("without ids, the same alert's same text within a day is one entry", async () => {
+  await inbox.record(slotsPush({ id: undefined }), T0);
+  await inbox.record(slotsPush({ id: undefined }), T0 + 3600000);
+  assert.equal(inbox.items().length, 1);
+  await inbox.record(slotsPush({ id: undefined }), T0 + 2 * DAY);
+  assert.equal(inbox.items().length, 2);
+});
+
+test("iOS: what sits in the notification centre is picked up once, and not again after a clear", async () => {
+  delivered.list = [slotsPush({ id: "n1" }), slotsPush({ id: "n2", body: "other" }), { id: "v", data: { type: "verify" } }];
+  assert.equal(await inbox.harvest(T0), true);
+  assert.equal(inbox.items().length, 2);
+  assert.equal(await inbox.harvest(T0 + 1000), false, "every resume sees them again");
+  await inbox.clear(T0 + 2000);
+  assert.equal(await inbox.harvest(T0 + 3000), false, "a cleared list stays cleared");
+  assert.equal(inbox.items().length, 0);
+  delivered.list.push(slotsPush({ id: "n3", body: "new" }));
+  assert.equal(await inbox.harvest(T0 + 4000), true);
+  assert.deepEqual(inbox.items().map((e) => e.id), ["n3"]);
+});
+
+test("unread until the list is opened", async () => {
+  await inbox.record(slotsPush({ id: "n1" }), T0);
+  await inbox.record(slotsPush({ id: "n2" }), T0 + 1000);
+  assert.equal(inbox.unread(), 2);
+  await inbox.markRead(T0 + 2000);
+  assert.equal(inbox.unread(), 0);
+  await inbox.record(slotsPush({ id: "n3" }), T0 + 3000);
+  assert.equal(inbox.unread(), 1);
+});
+
+test("kept for 30 days and 50 entries, and across launches", async () => {
+  for (let i = 0; i < 60; i++) await inbox.record(slotsPush({ id: `n${i}` }), T0 + i * 1000);
+  assert.equal(inbox.items().length, inbox.MAX_ITEMS);
+  assert.equal(inbox.items()[0].id, "n59");
+  await inbox.load(T0 + 60000);
+  assert.equal(inbox.items().length, inbox.MAX_ITEMS, "read back from Preferences");
+  await inbox.load(T0 + 31 * DAY);
+  assert.equal(inbox.items().length, 0, "older than 30 days");
+});
+
+test("a damaged stored value costs only what is damaged", async () => {
+  prefs.set("inbox", JSON.stringify({ items: [{ at: T0, type: "slots", id: "ok" }, { at: "x" }, null, { at: T0, type: "verify" }], seenAt: "no" }));
+  await inbox.load(T0);
+  assert.deepEqual(inbox.items().map((e) => e.id), ["ok"]);
+  assert.equal(inbox.unread(), 1);
+  prefs.set("inbox", "not json");
+  await inbox.load(T0);
+  assert.deepEqual(inbox.items(), []);
+});

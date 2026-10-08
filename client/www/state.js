@@ -17,10 +17,10 @@ export const state = {
 
 // --- Navigation: three tabs, each with its own stack -----------------------
 
-export const TABS = ["cities", "subs", "settings"];
+export const TABS = ["cities", "subs", "inbox", "settings"];
 const nav = {
   tab: "cities",
-  stacks: { cities: [{ name: "cities" }], subs: [{ name: "subs" }], settings: [{ name: "settings" }] },
+  stacks: Object.fromEntries(TABS.map((t) => [t, [{ name: t }]])),
 };
 
 let renderHook = () => {};
@@ -62,6 +62,7 @@ export function changed(what) {
   const name = top().name;
   if (name === "form") return;
   if (what === "subs" && name !== "subs") return;
+  if (what === "inbox" && name !== "inbox") return;
   render();
 }
 
@@ -94,9 +95,36 @@ export function cities() {
   return citiesCache.get(lang);
 }
 
+// --- Slot snapshots (per city and language, for a minute) -----------------
+
+// The slots route allows a device about 60 reads an hour, shared with the
+// widget. The alerts list and the city overview both read through here, so
+// going back and forth between them costs one read a minute; a push for a
+// city drops its copy (forgetSlots), so what the push announced is never
+// hidden behind an older one. A failure is not kept.
+const SLOTS_TTL_MS = 60_000;
+const slotsCache = new Map();
+
+export function citySlots(slug) {
+  const key = `${slug}|${getLang()}`;
+  const hit = slotsCache.get(key);
+  if (hit && Date.now() - hit.at < SLOTS_TTL_MS) return hit.p;
+  const p = push.authed(() => api.slots(slug, getLang())).catch((e) => {
+    if (slotsCache.get(key)?.p === p) slotsCache.delete(key);
+    throw e;
+  });
+  slotsCache.set(key, { at: Date.now(), p });
+  return p;
+}
+
+export function forgetSlots(slug) {
+  for (const key of [...slotsCache.keys()]) if (!slug || key.startsWith(`${slug}|`)) slotsCache.delete(key);
+}
+
 export function forgetCaches() {
   catalogCache.clear();
   citiesCache = new Map();
+  forgetSlots();
 }
 
 // --- Subscriptions ---------------------------------------------------------

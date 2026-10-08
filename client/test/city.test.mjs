@@ -26,3 +26,11 @@ test("other failures pass the server's word on; nothing to say without one", () 
   assert.equal(slotsNotice({ status: 0, error: "network", message: null }), "error");
   assert.equal(slotsNotice(toApiError(403, { error: "device_unverified" })), "error");
 });
+
+test("the service an alert or notification opened the overview at comes first", async () => {
+  const { orderServices } = await import("../www/screens/city.js");
+  const services = [{ id: "a" }, { id: "b" }, { id: "c" }];
+  const snapshot = { services: [{ id: "b", earliest: { date: "2026-10-09", time: "09:00" } }, { id: "c" }] };
+  assert.deepEqual(orderServices(services, snapshot).map((x) => x.svc.id), ["b", "c", "a"]);
+  assert.deepEqual(orderServices(services, snapshot, "a").map((x) => x.svc.id), ["a", "b", "c"]);
+});
