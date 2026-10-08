@@ -262,6 +262,9 @@
       margin: 0 0.25rem;
     }
     footer a:hover { color: var(--accent); }
+    /* The coffee cup and its words stay together: if the link does not fit,
+       the whole link moves to the next line. */
+    footer a.kofi { white-space: nowrap; }
     .city-switch {
       font-size: 0.9375rem;
       margin: -0.5rem 0 1.25rem;
@@ -402,7 +405,7 @@
       <a href="/datenschutz{% if lang == 'en' %}?lang=en{% endif %}">{% if lang == 'en' %}Privacy{% else %}Datenschutz{% endif %}</a>
       <br>
       {% if lang == 'en' %}Born from weeks of reloading Leipzig's booking page. Free and ad-free ·{% else %}Entstanden nach wochenlangem Neuladen der Leipziger Terminseite. Kostenlos und werbefrei ·{% endif %}
-      <a href="{{ kofi_url or 'https://ko-fi.com/jakubwaller' }}">{% if lang == 'en' %}☕ Buy me a coffee{% else %}☕ Kaffee spendieren{% endif %}</a>
+      <a class="kofi" href="{{ kofi_url or 'https://ko-fi.com/jakubwaller' }}">{% if lang == 'en' %}☕ Buy me a coffee{% else %}☕ Kaffee spendieren{% endif %}</a>
       <br>
       {% if lang == 'en' %}Built by{% else %}Erstellt von{% endif %}
       <a href="https://jakubwaller.eu" rel="author">Jakub Waller</a> ·
