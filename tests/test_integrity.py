@@ -534,6 +534,8 @@ def test_the_failures_expire_after_ten_minutes(client):
 def test_both_token_formats_pass_the_shape_check():
     assert looks_like_integrity_token(INTEGRITY)
     assert looks_like_integrity_token("aaa.bbb.ccc.ddd.eee")    # classic: a compact JWE
+    for junk in ["a b", "a+b/c", "tök", "{}", "a\nb", ""]:
+        assert not looks_like_integrity_token(junk), junk
 
 
 def test_a_token_that_is_not_base64url_fails_without_a_call_and_counts(client):
