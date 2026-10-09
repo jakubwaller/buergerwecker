@@ -456,12 +456,12 @@ def test_datenschutz_states_the_configured_terms(client):
     assert "paused for 14 days" in en
 
 
-
 def test_datenschutz_has_the_deletion_anchor(client):
     """Play Console's data deletion link points at #daten-loeschen."""
     c, _sid = client
     for url in ("/datenschutz", "/datenschutz?lang=en"):
         assert 'id="daten-loeschen"' in c.get(url).data.decode()
+
 
 # ---------- /manage POST validates like /subscribe ----------
 
