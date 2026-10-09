@@ -32,14 +32,16 @@ SCOPE = "https://www.googleapis.com/auth/playintegrity"
 # into the future allows for clock skew between Google and us.
 MAX_AGE_MS = 10 * 60 * 1000
 MAX_FUTURE_MS = 60 * 1000
-_JWE_SHAPE = re.compile(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
+_TOKEN_SHAPE = re.compile(r"[A-Za-z0-9_=.-]+")
 
 
 def looks_like_integrity_token(token: str) -> bool:
-    """A Play Integrity token is a JWE in compact serialization: five
-    base64url segments separated by dots. Anything else cannot decode, so it
-    is refused without asking Google (a decode costs daily quota)."""
-    return bool(_JWE_SHAPE.fullmatch(token))
+    """A Play Integrity token is base64url: one opaque string from a standard
+    request (what IntegrityPlugin makes, no dots), a compact JWE from a
+    classic one. Anything else cannot decode, so it is refused without asking
+    Google (a decode costs daily quota). Checking for the JWE alone refused
+    every real token in production (2026-10-09)."""
+    return bool(_TOKEN_SHAPE.fullmatch(token))
 
 
 def verify_play_integrity(cfg, integrity_token, push_token: str) -> str | None:

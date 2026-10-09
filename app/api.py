@@ -61,7 +61,7 @@ the database transaction. It fails closed: 400 `integrity_missing`, 403
 skips it for local servers; production runs with 1. Each decode spends
 Google's daily quota, so a network that has failed three checks in ten
 minutes (ten per IPv6 /48) is answered 429 without a call, and a token
-that is not a JWE fails without one.
+that is not base64url fails without one.
 
 Every POST and PUT must be `application/json` (else 415): a cross-site form
 or a `text/plain` fetch is sent without a CORS preflight, and would let any
@@ -664,8 +664,8 @@ def _integrity_refusal(conn, body: dict, token: str, lang: str):
     A network that has failed `MAX_INTEGRITY_FAILURES_PER_NETWORK` checks (or
     its /48 `..._PER_IP6_48`) in ten minutes gets a 429 and no Google call;
     only `integrity_failed` counts (a missing token makes no call, an
-    unavailable check is our side). A token that is plainly not a JWE fails
-    without a call and counts."""
+    unavailable check is our side). A token that is plainly not base64url
+    fails without a call and counts."""
     cfg = _cfg()
     if not cfg.play_integrity_required:
         return None
