@@ -339,43 +339,44 @@ A checklist for the parts no workflow can do.
 
 **Apple**
 
-- [ ] Secrets `APPLE_TEAM_ID`, `ASC_ISSUER_ID`, `ASC_KEY_ID`, `ASC_API_KEY_P8` (a team API key,
+- [x] Secrets `APPLE_TEAM_ID`, `ASC_ISSUER_ID`, `ASC_KEY_ID`, `ASC_API_KEY_P8` (a team API key,
       Admin — the PapaMap values work, it is the same account).
-- [ ] developer.apple.com → Identifiers → **App Groups** → +: create `group.de.buergerwecker.app`.
+- [x] developer.apple.com → Identifiers → **App Groups** → +: create `group.de.buergerwecker.app`.
       No API key can do this. Then, after `apple-setup` below has registered the two App IDs,
       open each of `de.buergerwecker.app` and `de.buergerwecker.app.widget` → App Groups →
       Configure → tick the group. (`testflight` stops early, naming this, if a profile lacks it.)
-- [ ] Run task `apple-setup` (registers the App IDs `de.buergerwecker.app` with Push
+- [x] Run task `apple-setup` (registers the App IDs `de.buergerwecker.app` with Push
       Notifications and App Groups and `de.buergerwecker.app.widget` with App Groups, signs the
       certificate); turn its artifact into `IOS_DIST_P12` and
       `IOS_DIST_P12_PASSWORD` as above. The private key is
       `~/gitlab/buergerwecker-ios-signing/distribution.key` on the Mac that wrote the CSR.
-- [ ] App Store Connect → My Apps → + → New App: iOS, name "Bürgerwecker", primary language
+- [x] App Store Connect → My Apps → + → New App: iOS, name "Bürgerwecker", primary language
       German, bundle id `de.buergerwecker.app`, SKU e.g. `buergerwecker`. The first upload fails
       without this record.
-- [ ] developer.apple.com → Keys → + → Apple Push Notifications service (APNs), Production and
+- [x] developer.apple.com → Keys → + → Apple Push Notifications service (APNs), Production and
       Sandbox. Download the `.p8` (once only) and set it on the VPS as `APNS_KEY_P8_FILE`, with
       `APNS_TEAM_ID`, `APNS_KEY_ID`, `APNS_TOPIC=de.buergerwecker.app`, `APNS_SANDBOX=0` —
       `docs/DEPLOY.md`, "Push delivery (the app)".
-- [ ] Run task `testflight` (or put the label on a PR).
+- [x] Run task `testflight` (or put the label on a PR).
 
 **Firebase (Android push)**
 
-- [ ] console.firebase.google.com: a project with an Android app `de.buergerwecker.app`.
-- [ ] Its `google-services.json` into the secret `FCM_GOOGLE_SERVICES_JSON`.
-- [ ] Project settings → Service accounts → Generate new private key: on the VPS as
+- [x] console.firebase.google.com: a project with an Android app `de.buergerwecker.app`.
+- [x] Its `google-services.json` into the secret `FCM_GOOGLE_SERVICES_JSON`.
+- [x] Project settings → Service accounts → Generate new private key: on the VPS as
       `FCM_SERVICE_ACCOUNT_JSON_FILE` (`docs/DEPLOY.md`), for a project with the Cloud
       Messaging API (v1) enabled.
 
 **Google Play** (`android/PLAY.md`)
 
-- [ ] Upload key → `ANDROID_UPLOAD_KEYSTORE`, `ANDROID_UPLOAD_KEYSTORE_PASSWORD`.
-- [ ] Play Console app record, first bundle by hand, then `PLAY_SERVICE_ACCOUNT_JSON`. The
-      widget needs nothing in the Console (no permission, no extra declaration).
+- [x] Upload key → `ANDROID_UPLOAD_KEYSTORE`, `ANDROID_UPLOAD_KEYSTORE_PASSWORD`.
+- [x] Play Console app record, its Cloud project linked for Play Integrity.
+- [ ] First bundle by hand, then `PLAY_SERVICE_ACCOUNT_JSON`. The widget needs nothing in the
+      Console (no permission, no extra declaration).
 
 **Server**
 
-- [ ] `APP_API_ENABLED` open once the app should work against production; until then the app
+- [x] `APP_API_ENABLED` open once the app should work against production; until then the app
       shows "not released yet".
 
 GitHub secrets, all in one place: `APPLE_TEAM_ID`, `ASC_ISSUER_ID`, `ASC_KEY_ID`,
@@ -439,13 +440,15 @@ token. Every review here assumes scripted, unlimited verified Android devices.
         in Keystore and Keychain (`ThisDeviceOnly`) and out of backups, the widget's fixed API
         base (the slug comes from the server; only Android percent-encodes it), no HTML sinks,
         and no handler for the `buergerwecker://` scheme.
-- [ ] **Play Integrity at registration**, decided 2026-10-07 for the fleet residual above, which
+- [x] **Play Integrity at registration**, decided 2026-10-07 for the fleet residual above, which
       let anyone keep new app users out of every city for as long as they kept renewing. A new
       FCM device, or an FCM device's new token, needs a Play Integrity verdict: the app as Google
       Play recognises it, on a device that meets device integrity, bound to that push token. The
       server fails closed, and iOS is unchanged (an APNs token needs a real phone). It goes in
       before the first `play` run, since a build without it cannot register against a server
-      that requires it.
+      that requires it. **Done 2026-10-07** in #114. A probe of production from a real phone on 2026-10-09
+      found the server refusing every real token (it wanted a JWE; a standard request returns
+      none), fixed in #117. Google decodes our tokens; a passing verdict needs a Play install.
 - [ ] **Hardening, not urgent**: the `testflight` job sets the App Store Connect key in the job's
       `env`, so `npm ci`, `npx cap sync` and the archive all run with it, and it writes the key
       file for xcodebuild before the archive, which does not need it. No package in the lockfile
@@ -453,7 +456,8 @@ token. Every review here assumes scripted, unlimited verified Android devices.
       all the same. Closing it takes both: the key in the env of only the steps that use it, and
       the key file written just before the export, its one user.
 - [ ] **Firebase**: accept the Data Processing and Security Terms in the Firebase project, then
-      add Google to the privacy page's list of processors with a DPA.
+      add Google to the privacy page's list of processors with a DPA. The terms are accepted:
+      they came with the project (2026-10-09). Google is not on the processors list yet.
 
 ## Not in this version
 
