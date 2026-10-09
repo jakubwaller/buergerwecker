@@ -482,7 +482,9 @@ def test_fcm_delivery_exchanges_a_service_account_jwt_for_a_bearer(db):
     assert msg["token"] == "fcm-tok"
     assert msg["notification"] == {"title": "t", "body": "b"}
     assert msg["data"]["url"] == "https://x/go/leipzig"
+    assert msg["data"]["title"] == "t" and msg["data"]["body"] == "b"
     assert msg["android"]["collapse_key"] == "sub-1"
+    assert msg["android"]["notification"] == {"channel_id": "slots", "tag": "sub-1"}
     assert msg["android"]["ttl"] == "1800s"
 
 

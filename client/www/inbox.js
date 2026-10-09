@@ -6,11 +6,11 @@
 // Preferences, for MAX_AGE_DAYS; "Delete my data" clears it with the rest.
 //
 // What reaches the page: a push received in the foreground, a tapped one, and
-// on iOS whatever still sits in the notification centre at launch or resume
+// whatever still sits in the notification centre or shade at launch or resume
 // (getDeliveredNotifications). Android hands that last call the system's own
-// copy without the push's data, so there a notification only lands here when
-// it is received in the foreground or tapped; and a tap there carries the data
-// without the text, which the list words itself (screens/inbox.js).
+// copy without the push's data; its tag, the server's collapse id, says whose
+// it is instead (app/push.py). A tap there carries the data and, because
+// Firebase leaves the text out of it, the text as data keys too.
 import * as store from "./store.js";
 import { plugin } from "./native.js";
 
@@ -28,37 +28,58 @@ let box = empty();
 
 const str = (v) => (v == null || v === "" ? null : String(v));
 
+// An Android shade copy's tag: "sub-<id>" a slots digest, "checkin-<id>" the
+// check-in (app/push.py, collapse_id).
+const TAG = /^(sub|checkin)-(\d+)$/;
+
 // The entry a notification makes, or null when it does not belong in the list
 // (the setup push, anything without our `type`). `at` is when the app first
-// saw it, in ms.
+// saw it, in ms, or when Firebase sent it, where a tap says so.
 export function entryOf(n, at) {
   const data = n?.data ?? {};
-  const type = data.type;
+  let type = data.type;
+  let sub = data.sub;
+  // Android's shade copy: no data, the tag instead, and every one of them
+  // numbered 0, so no id either (the text stands in, see keyOf).
+  const shade = type == null ? TAG.exec(String(n?.tag ?? "")) : null;
+  if (shade) [type, sub] = [shade[1] === "sub" ? "slots" : "checkin", shade[2]];
   if (type !== "slots" && type !== "checkin") return null;
+  const sent = Number(data["google.sent_time"]);
   return {
-    id: str(n.id),
-    at,
+    id: shade ? null : str(n.id),
+    at: sent > 0 && sent < at ? sent : at,
     type,
-    title: str(n.title),
-    body: str(n.body),
+    title: str(n.title ?? data.title),
+    body: str(n.body ?? data.body),
     city: str(data.city),
-    sub: str(data.sub),
+    sub: str(sub),
   };
 }
 
 const sameText = (a, b) => a.title && a.body && a.title === b.title && a.body === b.body;
 
+// What `known` remembers an entry by: its id, or without one its alert and
+// text, hashed (FNV-1a) to keep the list small.
+function keyOf(e) {
+  if (e.id) return e.id;
+  if (!e.title && !e.body) return null;
+  let h = 0x811c9dc5;
+  for (const c of `${e.type}|${e.sub}|${e.title}|${e.body}`) h = Math.imul(h ^ c.codePointAt(0), 0x01000193);
+  return `t:${(h >>> 0).toString(16)}`;
+}
+
 // `b` with `entry` added (newest first), pruned to MAX_AGE_DAYS and MAX_ITEMS.
 // The same notification seen twice (received, then tapped; or found in the
 // notification centre on every resume) stays one entry: by id, or, where
-// either lacks one, by type, alert and text within a day. The first sighting's
-// time stays; text the first one lacked is filled in.
+// either lacks one, by type, alert and text within a day. The earlier time
+// stays; text the first one lacked is filled in.
 export function add(b, entry, now) {
   const fresh = (e) => now - e.at < MAX_AGE_DAYS * DAY_MS;
   let items = b.items.filter(fresh);
   let known = b.known;
   if (entry) {
-    if (entry.id && known.includes(entry.id) && !items.some((e) => e.id === entry.id)) {
+    const key = keyOf(entry);
+    if (key && known.includes(key) && !items.some((e) => keyOf(e) === key)) {
       return { ...b, items };
     }
     const i = items.findIndex(
@@ -76,14 +97,16 @@ export function add(b, entry, now) {
       items[i] = {
         ...prev,
         id: prev.id ?? entry.id,
+        at: Math.min(prev.at, entry.at),
         title: prev.title ?? entry.title,
         body: prev.body ?? entry.body,
         city: prev.city ?? entry.city,
       };
     } else {
-      items = [entry, ...items].sort((a, c) => c.at - a.at);
+      items = [entry, ...items];
     }
-    if (entry.id && !known.includes(entry.id)) known = [entry.id, ...known].slice(0, MAX_KNOWN);
+    items.sort((a, c) => c.at - a.at);
+    if (key && !known.includes(key)) known = [key, ...known].slice(0, MAX_KNOWN);
   }
   return { ...b, items: items.slice(0, MAX_ITEMS), known };
 }

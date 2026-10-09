@@ -26,8 +26,9 @@ export function open(entry) {
   else switchTab("subs", [{ name: "subs" }]);
 }
 
-// An Android tap carries the push's data but not its text: worded here, in
-// the push's own words (push.title_city, push.checkin_title).
+// An entry without its text (an Android tap of a push that did not carry it
+// in its data, see inbox.js): worded here, in the push's own words
+// (push.title_city, push.checkin_title).
 function heading(entry, names) {
   if (entry.title) return entry.title;
   if (entry.type === "checkin") return t("inbox.checkinTitle");
