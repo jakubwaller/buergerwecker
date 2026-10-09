@@ -250,3 +250,14 @@ test("Android: a tap joins the shade copy it came from, not an earlier one that 
   await inbox.record(tapOf(T0 - 7230000, "0:1"), T0 + 2000);
   assert.deepEqual(inbox.items().map((e) => [e.at, e.city]), [[T0 - 3600000, "leipzig"], [T0 - 7230000, "leipzig"]]);
 });
+
+test("Android: a shade copy after a tap or foreground copy that reads the same is a later digest", async () => {
+  const seen = androidTap({ id: "0:A", data: { ...androidTap().data, title: "Neue Termine verfügbar", body: "2 neue passende Termine", "google.sent_time": T0 - 4 * 3600000 } });
+  await inbox.record(seen, T0 - 4 * 3600000 + 1000);
+  await inbox.markRead(T0 - 4 * 3600000 + 2000);
+  delivered.list = [sensitive()];
+  delivered.times = { "sub-7": T0 - 3600000 };
+  assert.equal(await inbox.harvest(T0), true);
+  assert.equal(inbox.items().length, 2);
+  assert.equal(inbox.unread(), 1);
+});

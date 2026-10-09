@@ -68,18 +68,18 @@ export function entryOf(n, at) {
 const sameText = (a, b) => a.title && a.body && a.title === b.title && a.body === b.body;
 const fromShade = (e) => !!e.id?.startsWith("shade:");
 
-// Whether two entries with different ids, or none, are one notification seen
-// twice, by alert and text within a day. Two shade copies with post times are
-// two postings. A tap or foreground copy is a shade copy's notification only if
-// it was sent before the shade posted it: otherwise it is a later digest.
-function sameByText(a, b) {
-  if (a.type !== b.type || a.sub !== b.sub || !sameText(a, b) || Math.abs(a.at - b.at) >= DAY_MS) return false;
-  if (fromShade(a) && fromShade(b)) return false;
-  if (fromShade(a) || fromShade(b)) {
-    const [shade, other] = fromShade(a) ? [a, b] : [b, a];
-    return !other.id || other.at <= shade.at + SKEW_MS;
-  }
-  return !a.id || !b.id;
+// Whether `entry` is the listed `prev` seen again, though their ids differ or
+// are missing: same alert and text within a day. A shade copy with a post time
+// is never an entry that has an id (another posting, or a tap or foreground
+// copy: a tapped notification leaves the shade, a foreground one never enters
+// it). A tap is a listed shade copy's notification only if it was sent before
+// the shade posted it; otherwise it is a later digest.
+function sameByText(prev, entry) {
+  if (prev.type !== entry.type || prev.sub !== entry.sub || !sameText(prev, entry)) return false;
+  if (Math.abs(prev.at - entry.at) >= DAY_MS) return false;
+  if (fromShade(entry)) return !prev.id;
+  if (fromShade(prev)) return !entry.id || entry.at <= prev.at + SKEW_MS;
+  return !prev.id || !entry.id;
 }
 
 // What `known` remembers an entry by: its id, or without one its alert and
