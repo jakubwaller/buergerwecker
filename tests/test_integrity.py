@@ -16,7 +16,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from app import push
 from app.api import MAX_INTEGRITY_FAILURES_PER_IP6_48
 from app.db import connect, init_schema
-from app.integrity import PACKAGE_NAME, verify_play_integrity
+from app.integrity import PACKAGE_NAME, looks_like_integrity_token, verify_play_integrity
 from app.ratelimit import GLOBAL_IP_LIMITER
 from app.web import create_app
 
@@ -48,7 +48,9 @@ _ENV = {
 }
 
 
-JWE = "aaa.bbb.ccc.ddd.eee"      # shaped like a compact JWE; never decoded here
+# Shaped like what a standard request returns (563 base64url characters, no
+# dots, on the Honor 9); never decoded here.
+INTEGRITY = "CqMCARCn" + "Ab-_9z" * 92 + "Dox"
 
 
 def fcm_tok(name):
@@ -154,7 +156,7 @@ def _cfg(**over):
     return SimpleNamespace(**base)
 
 
-def _verify(google, token="T" * 100, integrity=JWE):
+def _verify(google, token="T" * 100, integrity=INTEGRITY):
     with patch("app.push._post", google):
         return verify_play_integrity(_cfg(), integrity, token)
 
@@ -166,7 +168,7 @@ def test_a_passing_verdict_returns_none_and_calls_google_as_documented():
     call = google.decode_calls[0]
     assert call["url"] == ("https://playintegrity.googleapis.com/v1/"
                            "de.buergerwecker.app:decodeIntegrityToken")
-    assert call["json"] == {"integrity_token": JWE}
+    assert call["json"] == {"integrity_token": INTEGRITY}
     assert call["headers"]["authorization"] == "Bearer ya29.test"
 
 
@@ -252,7 +254,7 @@ def test_no_credentials_is_unavailable_without_calling_google():
     google = passing("x")
     with patch("app.push._post", google):
         assert verify_play_integrity(_cfg(play_integrity_service_account_json=""),
-                                     JWE, "x") == "integrity_unavailable"
+                                     INTEGRITY, "x") == "integrity_unavailable"
     assert google.decode_calls == []
 
 
@@ -260,7 +262,7 @@ def test_unparsable_credentials_are_unavailable():
     with patch("app.push._post", passing("x")):
         assert verify_play_integrity(
             _cfg(play_integrity_service_account_json="{not json"),
-            JWE, "x") == "integrity_unavailable"
+            INTEGRITY, "x") == "integrity_unavailable"
 
 
 # --- config ----------------------------------------------------------------
@@ -284,7 +286,7 @@ def test_the_fcm_account_is_the_fallback_and_required_defaults_on(monkeypatch):
 def test_a_passing_verdict_registers(client):
     t = fcm_tok("a")
     with patch("app.push._post", passing(t)) as google:
-        r = _post(client, t, integrity_token=JWE)
+        r = _post(client, t, integrity_token=INTEGRITY)
     assert r.status_code == 201
     assert _devices() == 1
     assert len(google.decode_calls) == 1
@@ -298,7 +300,7 @@ def test_a_passing_verdict_registers(client):
 ])
 def test_a_refused_verdict_registers_nothing(client, decode, status, key):
     with patch("app.push._post", FakeGoogle(decode)):
-        r = _post(client, fcm_tok("a"), integrity_token=JWE, language="en")
+        r = _post(client, fcm_tok("a"), integrity_token=INTEGRITY, language="en")
     assert r.status_code == status
     assert r.get_json()["error"] == key
     assert r.get_json()["message"]
@@ -315,7 +317,7 @@ def test_a_missing_token_is_400_and_never_calls_google(client):
 
 def test_no_credentials_fails_closed_over_http(make_client):
     client = make_client(FCM_SERVICE_ACCOUNT_JSON="")
-    r = _post(client, fcm_tok("a"), integrity_token=JWE)
+    r = _post(client, fcm_tok("a"), integrity_token=INTEGRITY)
     assert r.status_code == 503 and r.get_json()["error"] == "integrity_unavailable"
     assert _devices() == 0
 
@@ -338,7 +340,7 @@ def test_apns_registration_is_not_checked(client):
 def test_a_known_token_registering_again_is_not_checked(client):
     t = fcm_tok("a")
     with patch("app.push._post", passing(t)):
-        assert _post(client, t, integrity_token=JWE).status_code == 201
+        assert _post(client, t, integrity_token=INTEGRITY).status_code == 201
     google = passing(t)
     with patch("app.push._post", google):
         r = _post(client, t)
@@ -350,10 +352,10 @@ def test_no_google_call_when_the_gate_refuses(make_client):
     client = make_client(MAX_TOKEN_REQUESTS_PER_IP_PER_10_MIN="1")
     t = fcm_tok("a")
     with patch("app.push._post", passing(t)):
-        assert _post(client, t, integrity_token=JWE).status_code == 201
+        assert _post(client, t, integrity_token=INTEGRITY).status_code == 201
     google = passing(fcm_tok("b"))
     with patch("app.push._post", google):
-        r = _post(client, fcm_tok("b"), integrity_token=JWE)
+        r = _post(client, fcm_tok("b"), integrity_token=INTEGRITY)
     assert r.status_code == 429 and google.decode_calls == []
 
 
@@ -366,14 +368,14 @@ def test_no_google_call_when_the_gate_refuses(make_client):
 def test_no_google_call_for_an_invalid_request(client, payload):
     google = passing("x")
     with patch("app.push._post", google):
-        r = client.post("/api/v1/devices", json={**payload, "integrity_token": JWE})
+        r = client.post("/api/v1/devices", json={**payload, "integrity_token": INTEGRITY})
     assert r.status_code == 400 and google.decode_calls == []
 
 
 def test_a_verdict_for_one_token_cannot_register_another(client):
     google = passing(fcm_tok("minted-for-this-one"))
     with patch("app.push._post", google):
-        r = _post(client, fcm_tok("scripted"), integrity_token=JWE)
+        r = _post(client, fcm_tok("scripted"), integrity_token=INTEGRITY)
     assert r.status_code == 403 and _devices() == 0
 
 
@@ -382,7 +384,7 @@ def test_a_verdict_for_one_token_cannot_register_another(client):
 def _registered(client, name="a"):
     t = fcm_tok(name)
     with patch("app.push._post", passing(t)):
-        body = _post(client, t, integrity_token=JWE).get_json()
+        body = _post(client, t, integrity_token=INTEGRITY).get_json()
     return {"Authorization": f"Bearer {body['device_id']}.{body['secret']}"}
 
 
@@ -392,7 +394,7 @@ def test_a_new_fcm_token_on_put_is_checked_against_the_new_token(client):
     google = passing(new)
     with patch("app.push._post", google):
         r = client.put("/api/v1/device", headers=auth,
-                       json={"token": new, "integrity_token": JWE})
+                       json={"token": new, "integrity_token": INTEGRITY})
     assert r.status_code == 200 and len(google.decode_calls) == 1
 
 
@@ -400,7 +402,7 @@ def test_put_with_a_verdict_for_the_old_token_is_refused(client):
     auth = _registered(client)
     with patch("app.push._post", passing(fcm_tok("a"))):
         r = client.put("/api/v1/device", headers=auth,
-                       json={"token": fcm_tok("scripted"), "integrity_token": JWE})
+                       json={"token": fcm_tok("scripted"), "integrity_token": INTEGRITY})
     assert r.status_code == 403
     row = connect(os.environ["DB_PATH"]).execute("SELECT token FROM push_devices").fetchone()
     assert row["token"] == fcm_tok("a")
@@ -432,9 +434,9 @@ def test_no_google_call_on_put_for_an_invalid_token_or_a_refused_gate(make_clien
     google = passing("x")
     with patch("app.push._post", google):
         bad = client.put("/api/v1/device", headers=auth,
-                         json={"token": "has space", "integrity_token": JWE})
+                         json={"token": "has space", "integrity_token": INTEGRITY})
         gated = client.put("/api/v1/device", headers=auth,
-                           json={"token": fcm_tok("b"), "integrity_token": JWE})
+                           json={"token": fcm_tok("b"), "integrity_token": INTEGRITY})
     assert bad.status_code == 400
     assert gated.status_code == 429
     assert google.decode_calls == []
@@ -469,13 +471,13 @@ def test_malformed_service_accounts_are_unavailable_never_a_500(creds):
     google = passing("x")
     with patch("app.push._post", google):
         assert verify_play_integrity(_cfg(play_integrity_service_account_json=creds),
-                                     JWE, "x") == "integrity_unavailable"
+                                     INTEGRITY, "x") == "integrity_unavailable"
     assert google.decode_calls == []
 
 
 def test_a_malformed_service_account_is_a_503_over_http(make_client):
     client = make_client(FCM_SERVICE_ACCOUNT_JSON="[1, 2]")
-    r = _post(client, fcm_tok("a"), integrity_token=JWE)
+    r = _post(client, fcm_tok("a"), integrity_token=INTEGRITY)
     assert r.status_code == 503 and r.get_json()["error"] == "integrity_unavailable"
 
 
@@ -488,7 +490,7 @@ def _fail_google():
     return FakeGoogle((400, {}))
 
 
-def _from(client, name, addr="203.0.113.7", token=JWE):
+def _from(client, name, addr="203.0.113.7", token=INTEGRITY):
     return client.post("/api/v1/devices", headers={"X-Forwarded-For": addr},
                        json={"platform": "fcm", "token": fcm_tok(name),
                              "integrity_token": token})
@@ -529,10 +531,17 @@ def test_the_failures_expire_after_ten_minutes(client):
     assert len(google.decode_calls) == 4
 
 
-def test_a_token_that_is_not_a_jwe_fails_without_a_call_and_counts(client):
+def test_both_token_formats_pass_the_shape_check():
+    assert looks_like_integrity_token(INTEGRITY)
+    assert looks_like_integrity_token("aaa.bbb.ccc.ddd.eee")    # classic: a compact JWE
+    for junk in ["a b", "a+b/c", "tök", "{}", "a\nb", ""]:
+        assert not looks_like_integrity_token(junk), junk
+
+
+def test_a_token_that_is_not_base64url_fails_without_a_call_and_counts(client):
     google = passing("x")
     with patch("app.push._post", google):
-        for i, junk in enumerate(["x", "a.b.c", "a.b.c.d.e.f", "a b.c.d.e.f", "a..c.d."]):
+        for i, junk in enumerate(["a b", "a+b/c", "tök", "{}", "a\nb"]):
             r = _from(client, f"j{i}", token=junk)
             assert r.status_code == (403 if i < 3 else 429), (junk, r.status_code)
     assert google.decode_calls == []
