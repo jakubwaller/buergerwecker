@@ -57,11 +57,14 @@ a Play Integrity verdict showing the genuine app on a genuine device
 (`IntegrityPlugin`, `app/integrity.py`); without it a headless FCM receiver could
 mint verified devices. One-time setup:
 
-1. Play Console → the app → **Test and release → App integrity → Play Integrity
-   API → Link a Cloud project**: pick the Google Cloud project behind the Firebase
+1. Play Console → the app → **Protected with Play → Play Integrity API → Get
+   started → Link cloud project**: pick the Google Cloud project behind the Firebase
    project (its number is the sender ID in `google-services.json`, which the plugin
-   reads, so the two cannot drift apart).
-2. In that Google Cloud project, enable the **Play Integrity API**.
+   reads, so the two cannot drift apart). The Responses table below it must show
+   Application integrity and Device integrity **On**, the two verdicts the server
+   requires.
+2. In that Google Cloud project, the **Play Integrity API** must be enabled; the link
+   in step 1 enabled it by itself (2026-10-09).
 3. The server decodes verdicts with a service account, and that account must
    belong to the Google Cloud project linked in step 1. A service account from
    any other project is refused by Google with 403 on every decode, which the

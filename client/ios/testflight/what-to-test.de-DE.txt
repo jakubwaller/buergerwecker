@@ -2,5 +2,6 @@ Der erste Test der Bürgerwecker-App.
 – Beim ersten Start: Mitteilungen erlauben. Kommt innerhalb weniger Sekunden die Probe-Mitteilung „Bürgerwecker ist bereit“ an, und geht es danach weiter? Falls nicht: „Erneut senden“ probieren.
 – Eine Stadt öffnen: Stimmen die frühesten Termine und der Stand? Öffnet „Auf der Terminseite der Stadt buchen“ die Seite der Stadt im Browser?
 – Einen Alarm anlegen, bearbeiten und beenden. Kommt eine Mitteilung, sobald etwas frei wird, und öffnet ein Tipp darauf die Terminseite?
+– Meine Alarme: Steht bei jedem Alarm der früheste passende Termin, und öffnet ein Tipp darauf die Stadt? Der Reiter „Mitteilungen“ sollte die Mitteilungen der letzten Tage zeigen, auch die schon geöffneten.
 – Einstellungen: Sprache wechseln, „Meine Daten löschen“.
 Alles, was unklar ist oder hakt: Screenshot machen und über TestFlight schicken.

@@ -6,9 +6,10 @@ import { plugin, openExternal } from "./native.js";
 import * as push from "./push.js";
 import * as store from "./store.js";
 import * as widget from "./widget.js";
+import * as inbox from "./inbox.js";
 import {
   state, TABS, onRender, render, currentTab, stack, top, back, switchTab,
-  refreshSubs, forgetCaches,
+  refreshSubs, forgetCaches, forgetSlots, changed,
 } from "./state.js";
 import * as onboarding from "./screens/onboarding.js";
 import * as unavailable from "./screens/unavailable.js";
@@ -17,10 +18,11 @@ import * as cities from "./screens/cities.js";
 import * as city from "./screens/city.js";
 import * as form from "./screens/form.js";
 import * as subs from "./screens/subs.js";
+import * as inboxScreen from "./screens/inbox.js";
 import * as settings from "./screens/settings.js";
 
-const SCREENS = { cities, city, form, subs, settings };
-const TAB_ICONS = { cities: "⌂", subs: "⏰", settings: "⚙︎" };
+const SCREENS = { cities, city, form, subs, inbox: inboxScreen, settings };
+const TAB_ICONS = { cities: "⌂", subs: "⏰", inbox: "🔔", settings: "⚙︎" };
 
 let ready = false;
 const pending = []; // notifications that arrived before start-up finished
@@ -72,13 +74,33 @@ function frame() {
             else switchTab(tab);
           },
         },
-        h("span", { class: "tab-icon", "aria-hidden": "true" }, TAB_ICONS[tab]),
+        h(
+          "span",
+          { class: "tab-icon", "aria-hidden": "true" },
+          TAB_ICONS[tab],
+          tab === "inbox" ? h("span", { class: "tab-badge", id: "inbox-badge", hidden: true }) : null,
+        ),
         h("span", null, t(`tab.${tab}`)),
       ),
     ),
   );
   root.replaceChildren(header, main, tabs);
+  updateBadge();
   main.scrollTop = 0;
+}
+
+// The unread count on the notifications tab, patched in place: a
+// notification arriving must not redraw a form someone is filling in.
+function updateBadge() {
+  const el = document.getElementById("inbox-badge");
+  if (!el) return;
+  const n = inbox.unread();
+  el.textContent = n > 9 ? "9+" : String(n);
+  el.hidden = n === 0;
+  // The badge sits in the icon, which screen readers skip: the tab says it.
+  const tab = el.closest("button");
+  if (n) tab?.setAttribute("aria-label", `${t("tab.inbox")}, ${t("inbox.unreadCount", { n })}`);
+  else tab?.removeAttribute("aria-label");
 }
 
 // What tapping a notification (or its in-app banner) does. The app never
@@ -90,7 +112,12 @@ function act(n) {
   if (data.type === "slots") {
     const url = siteUrl(data.url);
     if (url) openExternal(url);
-    if (data.city) switchTab("cities", [{ name: "cities" }, { name: "city", params: { slug: data.city } }]);
+    if (data.city) {
+      // Opened at the alert's service, when this phone knows the alert.
+      const sub = (state.subs ?? []).find((s) => String(s.id) === String(data.sub));
+      const service = sub?.city === data.city ? sub.appointment_type : undefined;
+      switchTab("cities", [{ name: "cities" }, { name: "city", params: { slug: data.city, service } }]);
+    }
   } else if (data.type === "checkin") {
     state.checkin = Number(data.sub) || null;
     switchTab("subs", [{ name: "subs" }]);
@@ -119,8 +146,16 @@ function onNotification(n, tapped) {
   }
   const data = n?.data ?? {};
   if (data.type === "verify") return handleVerify(data);
+  // What the city overview shows may now be older than what this announced.
+  if (data.type === "slots") forgetSlots(data.city);
   if (tapped) act(n);
   else banner({ title: n.title, body: n.body, onTap: () => act(n) });
+  inbox.record(n).then((added) => added && changed("inbox"));
+}
+
+// iOS: notifications still in the notification centre, into the list.
+function harvest() {
+  inbox.harvest().then((added) => added && changed("inbox"));
 }
 
 let errorShown = false;
@@ -138,6 +173,7 @@ async function start() {
   if (!state.onboarding && perm === "granted") push.register().catch(() => {});
   ready = true;
   for (const [n, tapped] of pending.splice(0)) onNotification(n, tapped);
+  harvest();
   if (!state.onboarding) await refreshSubs();
 }
 
@@ -152,6 +188,8 @@ async function boot() {
       render();
     },
   });
+  await inbox.load();
+  inbox.onChange(updateBadge);
   const stored = await push.loadDevice();
   knownDeviceId = stored?.id ?? null;
   knownVerified = stored?.verified ?? null;
@@ -191,6 +229,7 @@ async function boot() {
   const App = plugin("App");
   App?.addListener("appStateChange", async ({ isActive }) => {
     if (!isActive || !ready || state.onboarding) return;
+    harvest();
     const before = state.permission;
     state.permission = await push.permission().catch(() => before);
     if (state.permission === "granted" && (before !== "granted" || !push.getDevice())) push.register().catch(() => {});

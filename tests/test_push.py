@@ -273,6 +273,7 @@ def test_apns_delivery_records_the_platform_as_provider(db):
     assert call["headers"]["apns-push-type"] == "alert"
     assert call["json"]["aps"]["alert"] == {"title": "t", "body": "b"}
     assert call["json"]["url"] == "https://x/go/leipzig"
+    assert abs(int(call["json"]["sent"]) - datetime.now().timestamp() * 1000) < 60_000
     # The provider token is an ES256 JWT carrying the key id and team id.
     bearer = call["headers"]["authorization"].split(" ", 1)[1]
     assert jwt.get_unverified_header(bearer) == {"alg": "ES256", "kid": "KEY1234567",
@@ -482,7 +483,9 @@ def test_fcm_delivery_exchanges_a_service_account_jwt_for_a_bearer(db):
     assert msg["token"] == "fcm-tok"
     assert msg["notification"] == {"title": "t", "body": "b"}
     assert msg["data"]["url"] == "https://x/go/leipzig"
+    assert msg["data"]["title"] == "t" and msg["data"]["body"] == "b"
     assert msg["android"]["collapse_key"] == "sub-1"
+    assert msg["android"]["notification"] == {"channel_id": "slots", "tag": "sub-1"}
     assert msg["android"]["ttl"] == "1800s"
 
 

@@ -8,6 +8,7 @@ export const STRINGS = {
     "app.name": "Bürgerwecker",
     "tab.cities": "Städte",
     "tab.subs": "Meine Alarme",
+    "tab.inbox": "Mitteilungen",
     "tab.settings": "Einstellungen",
     "nav.back": "Zurück",
 
@@ -97,6 +98,20 @@ export const STRINGS = {
     "subs.renewed": "Weiter geht's: der Alarm läuft bis {date}.",
     "subs.stopped": "Alarm beendet.",
     "subs.unknownService": "Anliegen",
+    "subs.earliest": "Frühester passender Termin",
+    "subs.noneMatching": "Gerade kein passender Termin frei.",
+    "subs.showSlots": "Alle freien Termine ansehen",
+    "inbox.title": "Mitteilungen",
+    "inbox.hint": "Die Mitteilungen der letzten {days} Tage, auch die schon geöffneten. Tippe auf eine, um zu sehen, was jetzt frei ist.",
+    "inbox.empty":
+      "Noch keine Mitteilungen. Sobald ein Alarm etwas findet, steht die Mitteilung hier, auch nachdem du sie geöffnet hast.",
+    "inbox.clear": "Liste leeren",
+    "inbox.unread": "Neu",
+    "inbox.unreadCount": "{n} neu",
+    "inbox.cleared": "Liste geleert.",
+    "inbox.slotsTitle": "Neue Termine verfügbar",
+    "inbox.slotsTitleCity": "Neue Termine in {city}",
+    "inbox.checkinTitle": "Suchst du noch einen Termin?",
 
     "verify.title": "Gleich geht's los",
     "verify.body":
@@ -182,6 +197,7 @@ export const STRINGS = {
     "app.name": "Bürgerwecker",
     "tab.cities": "Cities",
     "tab.subs": "My alerts",
+    "tab.inbox": "Notifications",
     "tab.settings": "Settings",
     "nav.back": "Back",
 
@@ -270,6 +286,19 @@ export const STRINGS = {
     "subs.renewed": "Carrying on: the alert runs until {date}.",
     "subs.stopped": "Alert stopped.",
     "subs.unknownService": "Service",
+    "subs.earliest": "Earliest matching slot",
+    "subs.noneMatching": "No matching slot free right now.",
+    "subs.showSlots": "See all free slots",
+    "inbox.title": "Notifications",
+    "inbox.hint": "Notifications from the last {days} days, including the ones already opened. Tap one to see what is free now.",
+    "inbox.empty": "No notifications yet. When an alert finds something, its notification shows up here, even after you have opened it.",
+    "inbox.clear": "Clear list",
+    "inbox.unread": "New",
+    "inbox.unreadCount": "{n} new",
+    "inbox.cleared": "List cleared.",
+    "inbox.slotsTitle": "New appointments available",
+    "inbox.slotsTitleCity": "New appointments in {city}",
+    "inbox.checkinTitle": "Still looking for an appointment?",
 
     "verify.title": "Almost there",
     "verify.body":

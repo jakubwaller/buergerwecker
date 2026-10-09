@@ -2,5 +2,6 @@ The first test of the Bürgerwecker app.
 – On first launch: allow notifications. Does the test notification "Bürgerwecker is ready" arrive within a few seconds, and does the app carry on after it? If not, try "Resend".
 – Open a city: do the earliest slots and the "as of" time look right? Does "Book on the city's site" open the city's page in the browser?
 – Create an alert, edit it and stop it. Does a notification arrive when something opens up, and does tapping it open the booking page?
+– My alerts: does each alert show its earliest matching slot, and does tapping it open the city? The Notifications tab should list recent notifications, including ones already opened.
 – Settings: switch the language, "Delete my data".
 Anything unclear or broken: take a screenshot and send it through TestFlight.

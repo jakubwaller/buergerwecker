@@ -7,11 +7,10 @@
 // nothing. Booking happens on the city's own page, in the system browser.
 import { t, getLang } from "../i18n.js";
 import { h, fill, loading, errorBox, errorMessage } from "../ui.js";
-import { api, isApiError } from "../api.js";
+import { isApiError } from "../api.js";
 import { openExternal } from "../native.js";
 import { formatInstant, formatSlot, slotPreview } from "../format.js";
-import { cityDetail, go } from "../state.js";
-import * as push from "../push.js";
+import { cityDetail, citySlots, go } from "../state.js";
 
 export const title = () => "";
 
@@ -29,11 +28,13 @@ export function slotsNotice(err) {
   return "error";
 }
 
-// Services with a free slot first (soonest first), then those someone is
+// The service the screen was opened for (from an alert or a notification)
+// first, then those with a free slot (soonest first), then those someone is
 // watching, then the rest in catalog order.
-export function orderServices(services, snapshot) {
+export function orderServices(services, snapshot, focus = null) {
   const byId = new Map((snapshot?.services ?? []).map((s) => [s.id, s]));
   const rank = (svc) => {
+    if (focus && svc.id === focus) return -1;
     const snap = byId.get(svc.id);
     if (snap?.earliest) return 0;
     if (snap) return 1;
@@ -58,12 +59,12 @@ export function mount(el, params) {
       cityDetail(params.slug),
       // The snapshot is optional: no alert here, a server without it, or a
       // hiccup still leaves the services and the booking button.
-      push.authed(() => api.slots(params.slug, lang)).then(
+      citySlots(params.slug).then(
         (snapshot) => ({ snapshot, error: null }),
         (error) => ({ snapshot: null, error }),
       ),
     ])
-      .then(([detail, slots]) => show(body, detail, slots, lang))
+      .then(([detail, slots]) => show(body, detail, slots, lang, params.service ?? null))
       .catch((e) => body.replaceChildren(errorBox(e, load)));
   };
   load();
@@ -78,7 +79,7 @@ function slotLine(slot, lang) {
   );
 }
 
-function show(body, detail, { snapshot, error }, lang) {
+function show(body, detail, { snapshot, error }, lang, focus) {
   const book = h(
     "button",
     { class: "btn btn-primary", onclick: () => openExternal(detail.booking_url) },
@@ -86,7 +87,7 @@ function show(body, detail, { snapshot, error }, lang) {
   );
   const asOf = formatInstant(snapshot?.polled_at, lang);
   const notice = slotsNotice(error);
-  const cards = orderServices(detail.services ?? [], snapshot).map(({ svc, snap }) => {
+  const cards = orderServices(detail.services ?? [], snapshot, focus).map(({ svc, snap }) => {
     const watch = h(
       "button",
       { class: "btn btn-secondary", onclick: () => go("form", { slug: detail.slug, service: svc.id }) },
@@ -120,7 +121,7 @@ function show(body, detail, { snapshot, error }, lang) {
         svcAsOf && svcAsOf !== asOf ? h("p", { class: "muted small" }, t("city.asOf", { time: svcAsOf })) : null,
       );
     }
-    return h("section", { class: "card service" }, h("h3", null, svc.name), content, watch);
+    return h("section", { class: `card service${svc.id === focus ? " highlight" : ""}` }, h("h3", null, svc.name), content, watch);
   });
   fill(
     body,

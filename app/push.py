@@ -76,7 +76,9 @@ class OutgoingPush:
     # ordinary subscription, `city`.
     data: dict[str, str] = field(default_factory=dict)
     # Relay-side collapse: a newer digest for the same subscription replaces
-    # the one still sitting unread on the lock screen.
+    # the one still sitting unread on the lock screen (apns-collapse-id; on
+    # Android the notification's tag, which the app also reads back from the
+    # notification shade to tell whose notification it is).
     collapse_id: str | None = None
     # The push token this push was made for, recorded when it was queued. It
     # goes out only while the device still holds exactly this token (and,
@@ -489,6 +491,9 @@ def _send_one(cfg, platform: str, item: OutgoingPush, token: str) -> httpx.Respo
                     "sound": "default",
                     "thread-id": item.data.get("city", "buergerwecker")},
             **item.data,
+            # iOS hands the app a notification-centre copy without its date;
+            # the app's notifications list dates it by this (www/inbox.js).
+            "sent": str(int(time.time() * 1000)),
         }
         return _post("apns", endpoint + _apns_path_token(token),
                      headers=headers, json=payload)
@@ -496,10 +501,13 @@ def _send_one(cfg, platform: str, item: OutgoingPush, token: str) -> httpx.Respo
                      "notification": {"channel_id": "slots"}}
     if item.collapse_id:
         android["collapse_key"] = item.collapse_id
+        android["notification"]["tag"] = item.collapse_id
     message = {"message": {
         "token": token,
         "notification": {"title": item.title, "body": item.body},
-        "data": item.data,
+        # Firebase hands a tapped notification's data to the app but not its
+        # text, so the text rides along for the app's notifications list.
+        "data": {**item.data, "title": item.title, "body": item.body},
         "android": android,
     }}
     return _post("fcm", endpoint, headers={"authorization": authorization},

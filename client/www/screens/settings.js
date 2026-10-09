@@ -6,6 +6,7 @@ import { SITE_URL } from "../api.js";
 import * as push from "../push.js";
 import * as store from "../store.js";
 import * as widget from "../widget.js";
+import * as inbox from "../inbox.js";
 import { state, render, forgetCaches, resetNav, syncWidget } from "../state.js";
 
 export const title = () => t("settings.title");
@@ -49,6 +50,7 @@ export function mount(el) {
     try {
       await push.deleteEverything();
       state.subs = null;
+      inbox.reset();
       widget.clear().catch(() => {});
       state.checkin = null;
       forgetCaches();
