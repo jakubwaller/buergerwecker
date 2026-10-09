@@ -215,3 +215,38 @@ test("Android: a shade copy is dated by its post time, not the app's launch", as
   await inbox.harvest(T0);
   assert.deepEqual(inbox.items().map((e) => [e.sub, e.at]), [["8", T0], ["7", T0 - 3 * 3600000]]);
 });
+
+// A special-category digest reads the same for the same count: only the shade's
+// post time tells two of them apart.
+const sensitive = (over = {}) => shadeCopy({ title: "Neue Termine verfügbar", body: "2 neue passende Termine", ...over });
+
+test("Android: digests that read the same are one entry per posting, also after a clear", async () => {
+  delivered.list = [sensitive()];
+  delivered.times = { "sub-7": T0 - 7200000 };
+  assert.equal(await inbox.harvest(T0), true);
+  assert.equal(await inbox.harvest(T0 + 1000), false, "the same posting again");
+  // The next digest replaces it in the shade: same tag, same text, new post time.
+  delivered.times = { "sub-7": T0 - 3600000 };
+  assert.equal(await inbox.harvest(T0 + 2000), true);
+  assert.equal(inbox.items().length, 2);
+  assert.equal(inbox.unread(), 2);
+  await inbox.clear(T0 + 3000);
+  assert.equal(await inbox.harvest(T0 + 4000), false, "a cleared list stays cleared");
+  delivered.times = { "sub-7": T0 + 5000 };
+  assert.equal(await inbox.harvest(T0 + 6000), true, "a later posting is new");
+  assert.equal(inbox.items().length, 1);
+});
+
+test("Android: a tap joins the shade copy it came from, not an earlier one that reads the same", async () => {
+  const tapOf = (sent, id) =>
+    androidTap({ id, data: { ...androidTap().data, title: "Neue Termine verfügbar", body: "2 neue passende Termine", "google.sent_time": sent } });
+  delivered.list = [sensitive()];
+  delivered.times = { "sub-7": T0 - 7200000 };
+  await inbox.harvest(T0);
+  // Sent an hour after that posting: a later digest, whose shade copy was never seen.
+  await inbox.record(tapOf(T0 - 3600000, "0:2"), T0 + 1000);
+  assert.equal(inbox.items().length, 2);
+  // Sent before it: the same notification, now with its city and send time.
+  await inbox.record(tapOf(T0 - 7230000, "0:1"), T0 + 2000);
+  assert.deepEqual(inbox.items().map((e) => [e.at, e.city]), [[T0 - 3600000, "leipzig"], [T0 - 7230000, "leipzig"]]);
+});

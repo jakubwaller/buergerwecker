@@ -24,6 +24,8 @@ export const MAX_AGE_DAYS = 30;
 // back on the next resume.
 const MAX_KNOWN = 200;
 const DAY_MS = 86400000;
+// Google's clock (a tap's send time) against the phone's (the shade's post time).
+const SKEW_MS = 60000;
 
 const empty = () => ({ items: [], seenAt: 0, known: [] });
 let box = empty();
@@ -44,13 +46,16 @@ export function entryOf(n, at) {
   let type = data.type;
   let sub = data.sub;
   // Android's shade copy: no data, the tag instead, and every one of them
-  // numbered 0, so no id either (the text stands in, see keyOf).
+  // numbered 0. Its tag and post time make its id, which tells two digests
+  // apart even when they read the same (a special-category one does for the
+  // same count); without a post time the text stands in (see keyOf).
   const shade = type == null ? TAG.exec(String(n?.tag ?? "")) : null;
+  const posted = Number(n?.postedAt);
   if (shade) [type, sub] = [shade[1] === "sub" ? "slots" : "checkin", shade[2]];
   if (type !== "slots" && type !== "checkin") return null;
   const sent = Number(data["google.sent_time"] ?? data.sent ?? n.postedAt);
   return {
-    id: shade ? null : str(n.id),
+    id: shade ? (posted > 0 ? `shade:${n.tag}:${posted}` : null) : str(n.id),
     at: sent > 0 && sent < at ? sent : at,
     type,
     title: str(n.title ?? data.title),
@@ -61,6 +66,21 @@ export function entryOf(n, at) {
 }
 
 const sameText = (a, b) => a.title && a.body && a.title === b.title && a.body === b.body;
+const fromShade = (e) => !!e.id?.startsWith("shade:");
+
+// Whether two entries with different ids, or none, are one notification seen
+// twice, by alert and text within a day. Two shade copies with post times are
+// two postings. A tap or foreground copy is a shade copy's notification only if
+// it was sent before the shade posted it: otherwise it is a later digest.
+function sameByText(a, b) {
+  if (a.type !== b.type || a.sub !== b.sub || !sameText(a, b) || Math.abs(a.at - b.at) >= DAY_MS) return false;
+  if (fromShade(a) && fromShade(b)) return false;
+  if (fromShade(a) || fromShade(b)) {
+    const [shade, other] = fromShade(a) ? [a, b] : [b, a];
+    return !other.id || other.at <= shade.at + SKEW_MS;
+  }
+  return !a.id || !b.id;
+}
 
 // What `known` remembers an entry by: its id, or without one its alert and
 // text, hashed (FNV-1a) to keep the list small.
@@ -74,9 +94,8 @@ function keyOf(e) {
 
 // `b` with `entry` added (newest first), pruned to MAX_AGE_DAYS and MAX_ITEMS.
 // The same notification seen twice (received, then tapped; or found in the
-// notification centre on every resume) stays one entry: by id, or, where
-// either lacks one, by type, alert and text within a day. The earlier time
-// stays; text the first one lacked is filled in.
+// notification centre on every resume) stays one entry: by id, or else by
+// sameByText. The earlier time stays; text the first one lacked is filled in.
 export function add(b, entry, now) {
   const fresh = (e) => now - e.at < MAX_AGE_DAYS * DAY_MS;
   let items = b.items.filter(fresh);
@@ -86,15 +105,7 @@ export function add(b, entry, now) {
     if (key && known.includes(key) && !items.some((e) => keyOf(e) === key)) {
       return { ...b, items };
     }
-    const i = items.findIndex(
-      (e) =>
-        (entry.id && e.id === entry.id) ||
-        ((!entry.id || !e.id) &&
-          e.type === entry.type &&
-          e.sub === entry.sub &&
-          sameText(e, entry) &&
-          Math.abs(e.at - entry.at) < DAY_MS),
-    );
+    const i = items.findIndex((e) => (entry.id && e.id === entry.id) || sameByText(e, entry));
     if (i >= 0) {
       const prev = items[i];
       items = [...items];

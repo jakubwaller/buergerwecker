@@ -106,6 +106,8 @@ export const STRINGS = {
     "inbox.empty":
       "Noch keine Mitteilungen. Sobald ein Alarm etwas findet, steht die Mitteilung hier, auch nachdem du sie geöffnet hast.",
     "inbox.clear": "Liste leeren",
+    "inbox.unread": "Neu",
+    "inbox.unreadCount": "{n} neu",
     "inbox.cleared": "Liste geleert.",
     "inbox.slotsTitle": "Neue Termine verfügbar",
     "inbox.slotsTitleCity": "Neue Termine in {city}",
@@ -291,6 +293,8 @@ export const STRINGS = {
     "inbox.hint": "Notifications from the last {days} days, including the ones already opened. Tap one to see what is free now.",
     "inbox.empty": "No notifications yet. When an alert finds something, its notification shows up here, even after you have opened it.",
     "inbox.clear": "Clear list",
+    "inbox.unread": "New",
+    "inbox.unreadCount": "{n} new",
     "inbox.cleared": "List cleared.",
     "inbox.slotsTitle": "New appointments available",
     "inbox.slotsTitleCity": "New appointments in {city}",

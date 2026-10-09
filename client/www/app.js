@@ -97,6 +97,10 @@ function updateBadge() {
   const n = inbox.unread();
   el.textContent = n > 9 ? "9+" : String(n);
   el.hidden = n === 0;
+  // The badge sits in the icon, which screen readers skip: the tab says it.
+  const tab = el.closest("button");
+  if (n) tab?.setAttribute("aria-label", `${t("tab.inbox")}, ${t("inbox.unreadCount", { n })}`);
+  else tab?.removeAttribute("aria-label");
 }
 
 // What tapping a notification (or its in-app banner) does. The app never

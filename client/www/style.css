@@ -274,3 +274,13 @@ legend { font-weight: 500; margin-bottom: 0.4rem; padding: 0; }
 .glyph.pulse { animation: pulse 1.6s ease-in-out infinite; }
 @keyframes pulse { 50% { transform: scale(0.94); opacity: 0.8; } }
 @media (prefers-reduced-motion: reduce) { .glyph.pulse { animation: none; } }
+
+/* Read out, not shown. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

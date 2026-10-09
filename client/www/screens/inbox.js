@@ -44,6 +44,7 @@ function row(entry, names, lang, unread) {
       "span",
       { class: "inbox-body" },
       h("span", { class: "muted small" }, formatInstant(new Date(entry.at).toISOString(), lang)),
+      unread ? h("span", { class: "sr-only" }, t("inbox.unread")) : null,
       h("strong", null, heading(entry, names)),
       entry.body ? h("span", { class: "small inbox-text" }, entry.body) : null,
     ),

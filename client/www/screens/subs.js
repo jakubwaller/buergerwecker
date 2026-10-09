@@ -7,7 +7,7 @@ import { t, getLang } from "../i18n.js";
 import { h, loading, errorBox, errorMessage, toast } from "../ui.js";
 import { api } from "../api.js";
 import { openExternal } from "../native.js";
-import { filterSummary, formatInstantDay, formatSlot } from "../format.js";
+import { filterSummary, formatInstant, formatInstantDay, formatSlot } from "../format.js";
 import { matchingSlots } from "../filters.js";
 import * as push from "../push.js";
 import { state, cityDetail, citySlots, go, upsertSub, dropSub, render, refreshSubs } from "../state.js";
@@ -60,10 +60,12 @@ function slotLine(slot, lang, cls = null) {
 }
 
 // What this alert would notify about from the city's snapshot, or null while
-// the snapshot is not there (not loaded yet, or the read failed).
+// the snapshot is not there (not loaded yet, or the read failed). `polledAt`
+// goes with it: the server keeps a failing plan's last snapshot for up to a day.
 function matchesOf(sub, snapshot) {
   if (!snapshot) return null;
-  return matchingSlots(sub, (snapshot.services ?? []).find((s) => s.id === sub.appointment_type));
+  const svc = (snapshot.services ?? []).find((s) => s.id === sub.appointment_type);
+  return { ...matchingSlots(sub, svc), polledAt: svc?.polled_at ?? snapshot.polled_at };
 }
 
 // The alert's soonest matching slot and the next few, as one row that opens
@@ -71,6 +73,8 @@ function matchesOf(sub, snapshot) {
 // the overview, which says why there are no slots.
 function slotsRow(sub, match, lang) {
   let content = h("span", null, t("subs.showSlots"));
+  const time = formatInstant(match?.polledAt, lang);
+  const asOf = time ? h("span", { class: "muted small" }, t("city.asOf", { time })) : null;
   if (match?.slots.length) {
     const [first, ...rest] = match.slots;
     const next = rest.slice(0, NEXT);
@@ -81,9 +85,10 @@ function slotsRow(sub, match, lang) {
       more > 0 || !match.complete
         ? h("span", { class: "muted small" }, match.complete ? t("city.more", { n: more }) : t("subs.showSlots"))
         : null,
+      asOf,
     ];
   } else if (match?.complete) {
-    content = [h("span", { class: "muted" }, t("subs.noneMatching")), h("span", { class: "small" }, t("subs.showSlots"))];
+    content = [h("span", { class: "muted" }, t("subs.noneMatching")), asOf, h("span", { class: "small" }, t("subs.showSlots"))];
   }
   return h(
     "button",
