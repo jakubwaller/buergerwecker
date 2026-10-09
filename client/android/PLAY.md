@@ -8,7 +8,7 @@ task of `.github/workflows/app-build.yml`.
 
 | What | Where |
 |---|---|
-| Upload key (PKCS12, alias `upload`) | made once with openssl (below), kept outside the repository — back it up in the password manager |
+| Upload key (PKCS12, alias `upload`) | made once with openssl (below), kept outside the repository; no backup needed, a lost one is a reset request (below) |
 | `ANDROID_UPLOAD_KEYSTORE` | repo secret: `upload.p12`, base64 |
 | `ANDROID_UPLOAD_KEYSTORE_PASSWORD` | repo secret: the password (store and key share it) |
 | `PLAY_SERVICE_ACCOUNT_JSON` | repo secret: the service account's JSON key (below). Optional — without it the bundle is only a run artifact |
