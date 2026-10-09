@@ -4,10 +4,10 @@ import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
 const prefs = new Map();
-const delivered = { list: [] };
+const delivered = { list: [], times: {} };
 globalThis.Capacitor = {
   isNativePlatform: () => true,
-  isPluginAvailable: (n) => n === "Preferences" || n === "PushNotifications",
+  isPluginAvailable: (n) => n === "Preferences" || n === "PushNotifications" || n === "PushGate",
   getPlatform: () => "ios",
   Plugins: {
     Preferences: {
@@ -19,6 +19,7 @@ globalThis.Capacitor = {
     PushNotifications: {
       getDeliveredNotifications: async () => ({ notifications: delivered.list }),
     },
+    PushGate: { posted: async () => ({ times: delivered.times }) },
   },
 };
 
@@ -37,6 +38,7 @@ const slotsPush = (over = {}) => ({
 beforeEach(async () => {
   prefs.clear();
   delivered.list = [];
+  delivered.times = {};
   inbox.reset();
   await inbox.load(T0);
 });
@@ -101,6 +103,12 @@ test("iOS: what sits in the notification centre is picked up once, and not again
   delivered.list.push(slotsPush({ id: "n3", body: "new" }));
   assert.equal(await inbox.harvest(T0 + 4000), true);
   assert.deepEqual(inbox.items().map((e) => e.id), ["n3"]);
+});
+
+test("iOS: a notification-centre copy is dated by the server's send time, not the app's launch", async () => {
+  delivered.list = [slotsPush({ data: { ...slotsPush().data, sent: String(T0 - 3 * 3600000) } })];
+  await inbox.harvest(T0);
+  assert.equal(inbox.items()[0].at, T0 - 3 * 3600000);
 });
 
 test("unread until the list is opened", async () => {
@@ -199,4 +207,11 @@ test("Android: the shade is picked up once, not again after a clear, and a later
   delivered.list = [shadeCopy({ body: "Bürgerbüro Mitte: Mo. 13. Okt. 10:00" })];
   assert.equal(await inbox.harvest(T0 + 5000), true);
   assert.equal(inbox.items().length, 1);
+});
+
+test("Android: a shade copy is dated by its post time, not the app's launch", async () => {
+  delivered.list = [shadeCopy(), shadeCopy({ tag: "sub-8", body: "Bürgerbüro Grünau: Fr. 10. Okt. 08:00" })];
+  delivered.times = { "sub-7": T0 - 3 * 3600000, ranker_group1: T0 - 60000 };
+  await inbox.harvest(T0);
+  assert.deepEqual(inbox.items().map((e) => [e.sub, e.at]), [["8", T0], ["7", T0 - 3 * 3600000]]);
 });

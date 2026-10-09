@@ -54,8 +54,10 @@ gets an id and a secret, kept in the Keychain (iOS) or encrypted under an Androi
    a tapped one, and what still sits in the notification centre (iOS) or shade (Android) at
    launch and resume. Android's shade copy has no push data, so the server tags it with the
    collapse id (`sub-<id>`, `checkin-<id>`) and repeats the text in the data, which Firebase
-   leaves out of a tap. One swiped away before the app saw it, or replaced by the alert's next
-   digest, is not in the list, on either platform. Tapping an entry opens the city overview at
+   leaves out of a tap. Neither platform's copy says when it came, so iOS dates it by the
+   server's `sent` in the push and Android by the shade's post time (`PushGatePlugin.posted`),
+   not by when the app happened to open. One swiped away before the app saw it, or replaced by
+   the alert's next digest, is not in the list, on either platform. Tapping an entry opens the city overview at
    that alert's service, never the booking page: the slots it named may be gone by then.
 8. **Home-screen widget** (iOS small + medium, Android resizable): the earliest free slot in the
    cities of the device's active alerts, special-category (Art. 9) ones left out, "as of" the

@@ -491,6 +491,9 @@ def _send_one(cfg, platform: str, item: OutgoingPush, token: str) -> httpx.Respo
                     "sound": "default",
                     "thread-id": item.data.get("city", "buergerwecker")},
             **item.data,
+            # iOS hands the app a notification-centre copy without its date;
+            # the app's notifications list dates it by this (www/inbox.js).
+            "sent": str(int(time.time() * 1000)),
         }
         return _post("apns", endpoint + _apns_path_token(token),
                      headers=headers, json=payload)

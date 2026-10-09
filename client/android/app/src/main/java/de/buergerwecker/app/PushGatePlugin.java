@@ -1,9 +1,12 @@
 package de.buergerwecker.app;
 
+import android.app.NotificationManager;
+import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
 import android.provider.Settings;
+import android.service.notification.StatusBarNotification;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -12,7 +15,7 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 /**
- * Two things the push plugin does not offer.
+ * Three things the push plugin does not offer.
  *
  * status(): whether this build can receive pushes at all. The google-services
  * Gradle plugin writes the string resource google_app_id from
@@ -25,9 +28,26 @@ import com.getcapacitor.annotation.CapacitorPlugin;
  * openSettings(): the system page where this app's notifications are switched
  * on, for the "Open Settings" button while permission is denied
  * (client/www/native.js). Android has no app-settings: URL as iOS does.
+ *
+ * posted(): when each of this app's notifications still in the shade was
+ * posted, by tag. getDeliveredNotifications() leaves the time out, and a shade
+ * copy carries none of the push's data, so the notifications list would date
+ * it when the app first saw it (client/www/inbox.js).
  */
 @CapacitorPlugin(name = "PushGate")
 public class PushGatePlugin extends Plugin {
+    @PluginMethod
+    public void posted(PluginCall call) {
+        NotificationManager nm = (NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
+        JSObject times = new JSObject();
+        for (StatusBarNotification n : nm.getActiveNotifications()) {
+            if (n.getTag() != null) times.put(n.getTag(), n.getPostTime());
+        }
+        JSObject ret = new JSObject();
+        ret.put("times", times);
+        call.resolve(ret);
+    }
+
     @PluginMethod
     public void status(PluginCall call) {
         int id = getContext().getResources().getIdentifier("google_app_id", "string", getContext().getPackageName());

@@ -10,7 +10,9 @@
 // (getDeliveredNotifications). Android hands that last call the system's own
 // copy without the push's data; its tag, the server's collapse id, says whose
 // it is instead (app/push.py). A tap there carries the data and, because
-// Firebase leaves the text out of it, the text as data keys too.
+// Firebase leaves the text out of it, the text as data keys too. Neither
+// platform's notification-centre copy says when it came: iOS gets the
+// server's `sent` in the data, Android asks PushGate for the shade's times.
 import * as store from "./store.js";
 import { plugin } from "./native.js";
 
@@ -33,8 +35,10 @@ const str = (v) => (v == null || v === "" ? null : String(v));
 const TAG = /^(sub|checkin)-(\d+)$/;
 
 // The entry a notification makes, or null when it does not belong in the list
-// (the setup push, anything without our `type`). `at` is when the app first
-// saw it, in ms, or when Firebase sent it, where a tap says so.
+// (the setup push, anything without our `type`). `at` is when it was sent or
+// posted, in ms, where the notification says so (Firebase's time on an Android
+// tap, the server's `sent` on iOS, `postedAt` from the shade), else when the
+// app first saw it.
 export function entryOf(n, at) {
   const data = n?.data ?? {};
   let type = data.type;
@@ -44,7 +48,7 @@ export function entryOf(n, at) {
   const shade = type == null ? TAG.exec(String(n?.tag ?? "")) : null;
   if (shade) [type, sub] = [shade[1] === "sub" ? "slots" : "checkin", shade[2]];
   if (type !== "slots" && type !== "checkin") return null;
-  const sent = Number(data["google.sent_time"]);
+  const sent = Number(data["google.sent_time"] ?? data.sent ?? n.postedAt);
   return {
     id: shade ? null : str(n.id),
     at: sent > 0 && sent < at ? sent : at,
@@ -152,7 +156,7 @@ export async function record(n, now = Date.now()) {
   return true;
 }
 
-// iOS: what still sits in the notification centre. true when any of it is new.
+// What still sits in the notification centre or shade. true when any of it is new.
 export async function harvest(now = Date.now()) {
   let delivered = [];
   try {
@@ -160,8 +164,9 @@ export async function harvest(now = Date.now()) {
   } catch {
     return false;
   }
+  const times = (await plugin("PushGate")?.posted?.().catch(() => null))?.times ?? {};
   let changed = false;
-  for (const n of delivered) if (await record(n, now)) changed = true;
+  for (const n of delivered) if (await record({ ...n, postedAt: times[n.tag] }, now)) changed = true;
   return changed;
 }
 
