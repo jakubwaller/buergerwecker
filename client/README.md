@@ -34,8 +34,8 @@ gets an id and a secret, kept in the Keychain (iOS) or encrypted under an Androi
 3. **Cities**, grouped by city like the website's switcher (one city, several offices).
 4. **City overview**: per service the earliest free slot and the soonest few, "as of" the
    server's last poll in local time, "+N more"; "nobody is watching this service yet" where
-   there is no snapshot; "Watch this service" (or "Edit alert", where this device already has
-   a live alert for that service) and "Book on the city's site". The slots come
+   there is no snapshot; "Watch this service" (or "Edit alert" and "Add another alert", where
+   this device already has a live alert for that service) and "Book on the city's site". The slots come
    only to a device with a live alert in that city (`GET /cities/<slug>/slots` takes the
    device credential and answers `403 not_subscribed` otherwise), so without one the screen
    says to set up an alert for the city; a special-category service appears only to a device

@@ -50,7 +50,8 @@ export function orderServices(services, snapshot, focus = null) {
 }
 
 // The live alert this device already has for a service in this city: its
-// card offers to edit that one instead of setting up the same alert again.
+// card offers to edit that one first, and a second alert for the same service
+// below it, as the website allows (other offices, other times).
 export function alertFor(subs, slug, service) {
   return (subs ?? []).find((s) => s.active && s.city === slug && s.appointment_type === service) ?? null;
 }
@@ -95,11 +96,13 @@ function show(body, detail, { snapshot, error }, lang, focus) {
   const notice = slotsNotice(error);
   const cards = orderServices(detail.services ?? [], snapshot, focus).map(({ svc, snap }) => {
     const sub = alertFor(state.subs, detail.slug, svc.id);
+    const newAlert = () => go("form", { slug: detail.slug, service: svc.id });
     const watch = h(
       "button",
-      { class: "btn btn-secondary", onclick: () => go("form", sub ? { sub } : { slug: detail.slug, service: svc.id }) },
+      { class: "btn btn-secondary", onclick: sub ? () => go("form", { sub }) : newAlert },
       t(sub ? "city.editAlert" : "city.watch"),
     );
+    const another = sub ? h("button", { class: "btn btn-link", onclick: newAlert }, t("city.addAlert")) : null;
     let content;
     if (!snapshot) {
       // No snapshot at all: nothing is known about any service, so no card
@@ -128,7 +131,7 @@ function show(body, detail, { snapshot, error }, lang, focus) {
         svcAsOf && svcAsOf !== asOf ? h("p", { class: "muted small" }, t("city.asOf", { time: svcAsOf })) : null,
       );
     }
-    return h("section", { class: `card service${svc.id === focus ? " highlight" : ""}` }, h("h3", null, svc.name), content, watch);
+    return h("section", { class: `card service${svc.id === focus ? " highlight" : ""}` }, h("h3", null, svc.name), content, watch, another);
   });
   fill(
     body,

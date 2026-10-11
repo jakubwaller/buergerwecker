@@ -35,7 +35,7 @@ test("the service an alert or notification opened the overview at comes first", 
   assert.deepEqual(orderServices(services, snapshot, "a").map((x) => x.svc.id), ["a", "b", "c"]);
 });
 
-test("a service this device already watches offers its alert to edit, not a second one", async () => {
+test("a service this device already watches offers its alert to edit, and another one", async () => {
   const { alertFor } = await import("../www/screens/city.js");
   const subs = [
     { id: 1, city: "augsburg", appointment_type: "eid", active: true },
@@ -46,5 +46,5 @@ test("a service this device already watches offers its alert to edit, not a seco
   assert.equal(alertFor(subs, "augsburg", "pass"), null, "an expired alert is not watching");
   assert.equal(alertFor(subs, "augsburg", "other"), null);
   assert.equal(alertFor(null, "augsburg", "eid"), null, "the list not loaded yet");
-  for (const lang of ["de", "en"]) assert.ok(STRINGS[lang]["city.editAlert"], lang);
+  for (const lang of ["de", "en"]) for (const key of ["city.editAlert", "city.addAlert"]) assert.ok(STRINGS[lang][key], `${lang} ${key}`);
 });
