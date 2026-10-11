@@ -56,10 +56,11 @@ function frame() {
     stack().length > 1
       ? h("button", { class: "back", onclick: () => back(), "aria-label": t("nav.back") }, "‹ ", t("nav.back"))
       : h("span", { class: "brand" }, t("app.name")),
-    h("span", { class: "bar-title" }, stack().length > 1 ? titleText : ""),
   );
   screen.mount(main, entry.params ?? {});
-  if (stack().length === 1 && titleText) main.prepend(h("h1", null, titleText));
+  // The heading, in the page, never at the bar's right edge: that is where
+  // iOS puts buttons, and a title there was taken for one.
+  if (titleText) main.prepend(h("h1", null, titleText));
   const tabs = h(
     "nav",
     { class: "tabs", "aria-label": "Tabs" },

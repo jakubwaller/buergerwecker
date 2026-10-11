@@ -85,7 +85,6 @@ a { color: var(--accent); }
   border-bottom: 1px solid var(--border);
 }
 .brand { font-weight: 700; letter-spacing: -0.01em; }
-.bar-title { flex: 1; text-align: right; color: var(--text-muted); font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .back { background: none; border: 0; color: var(--accent); font: inherit; min-height: 44px; padding: 0 0.25rem; }
 .tabs {
   display: flex;

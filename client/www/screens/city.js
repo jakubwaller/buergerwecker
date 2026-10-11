@@ -10,7 +10,7 @@ import { h, fill, loading, errorBox, errorMessage } from "../ui.js";
 import { isApiError } from "../api.js";
 import { openExternal } from "../native.js";
 import { formatInstant, formatSlot, slotPreview } from "../format.js";
-import { cityDetail, citySlots, go } from "../state.js";
+import { state, cityDetail, citySlots, go } from "../state.js";
 
 export const title = () => "";
 
@@ -47,6 +47,12 @@ export function orderServices(services, snapshot, focus = null) {
   return services
     .map((svc, i) => ({ svc, i, snap: byId.get(svc.id) ?? null }))
     .sort((a, b) => rank(a.svc) - rank(b.svc) || when(a.svc).localeCompare(when(b.svc)) || a.i - b.i);
+}
+
+// The live alert this device already has for a service in this city: its
+// card offers to edit that one instead of setting up the same alert again.
+export function alertFor(subs, slug, service) {
+  return (subs ?? []).find((s) => s.active && s.city === slug && s.appointment_type === service) ?? null;
 }
 
 export function mount(el, params) {
@@ -88,10 +94,11 @@ function show(body, detail, { snapshot, error }, lang, focus) {
   const asOf = formatInstant(snapshot?.polled_at, lang);
   const notice = slotsNotice(error);
   const cards = orderServices(detail.services ?? [], snapshot, focus).map(({ svc, snap }) => {
+    const sub = alertFor(state.subs, detail.slug, svc.id);
     const watch = h(
       "button",
-      { class: "btn btn-secondary", onclick: () => go("form", { slug: detail.slug, service: svc.id }) },
-      t("city.watch"),
+      { class: "btn btn-secondary", onclick: () => go("form", sub ? { sub } : { slug: detail.slug, service: svc.id }) },
+      t(sub ? "city.editAlert" : "city.watch"),
     );
     let content;
     if (!snapshot) {
