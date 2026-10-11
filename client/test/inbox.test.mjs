@@ -111,6 +111,16 @@ test("iOS: a notification-centre copy is dated by the server's send time, not th
   assert.equal(inbox.items()[0].at, T0 - 3 * 3600000);
 });
 
+test("iOS: every digest of one alert is its own entry, though iOS gives them all the collapse id", async () => {
+  const digest = (sent, body) => slotsPush({ id: "sub-7", body, data: { ...slotsPush().data, sent: String(sent) } });
+  await inbox.record(digest(T0 - 3600000, "first"), T0 - 3600000);
+  await inbox.record(digest(T0, "second"), T0);
+  delivered.list = [digest(T0, "second")]; // the same push, seen again on resume
+  await inbox.harvest(T0 + 1000);
+  assert.deepEqual(inbox.items().map((e) => [e.at, e.body]), [[T0, "second"], [T0 - 3600000, "first"]]);
+  assert.equal(inbox.unread(), 2);
+});
+
 test("unread until the list is opened", async () => {
   await inbox.record(slotsPush({ id: "n1" }), T0);
   await inbox.record(slotsPush({ id: "n2" }), T0 + 1000);

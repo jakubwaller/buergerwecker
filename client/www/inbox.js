@@ -54,8 +54,11 @@ export function entryOf(n, at) {
   if (shade) [type, sub] = [shade[1] === "sub" ? "slots" : "checkin", shade[2]];
   if (type !== "slots" && type !== "checkin") return null;
   const sent = Number(data["google.sent_time"] ?? data.sent ?? n.postedAt);
+  // iOS's id is the push's apns-collapse-id, the same for every digest of one
+  // alert; the server's `sent` tells them apart.
+  const id = str(n.id) && data.sent ? `${n.id}:${data.sent}` : str(n.id);
   return {
-    id: shade ? (posted > 0 ? `shade:${n.tag}:${posted}` : null) : str(n.id),
+    id: shade ? (posted > 0 ? `shade:${n.tag}:${posted}` : null) : id,
     at: sent > 0 && sent < at ? sent : at,
     type,
     title: str(n.title ?? data.title),
