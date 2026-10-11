@@ -36,15 +36,18 @@ test("the service an alert or notification opened the overview at comes first", 
 });
 
 test("a service this device already watches offers its alert to edit, and another one", async () => {
-  const { alertFor } = await import("../www/screens/city.js");
+  const { alertsFor } = await import("../www/screens/city.js");
   const subs = [
     { id: 1, city: "augsburg", appointment_type: "eid", active: true },
     { id: 2, city: "augsburg", appointment_type: "pass", active: false },
     { id: 3, city: "leipzig", appointment_type: "eid", active: true },
   ];
-  assert.equal(alertFor(subs, "augsburg", "eid")?.id, 1);
-  assert.equal(alertFor(subs, "augsburg", "pass"), null, "an expired alert is not watching");
-  assert.equal(alertFor(subs, "augsburg", "other"), null);
-  assert.equal(alertFor(null, "augsburg", "eid"), null, "the list not loaded yet");
+  const ids = (...a) => alertsFor(...a).map((s) => s.id);
+  assert.deepEqual(ids(subs, "augsburg", "eid"), [1]);
+  assert.deepEqual(ids(subs, "augsburg", "pass"), [], "an expired alert is not watching");
+  assert.deepEqual(ids(subs, "augsburg", "other"), []);
+  assert.deepEqual(ids(null, "augsburg", "eid"), [], "the list not loaded yet");
+  const two = [...subs, { id: 4, city: "augsburg", appointment_type: "eid", active: true }];
+  assert.deepEqual(ids(two, "augsburg", "eid"), [1, 4], "both, so the card can send to the list");
   for (const lang of ["de", "en"]) for (const key of ["city.editAlert", "city.addAlert"]) assert.ok(STRINGS[lang][key], `${lang} ${key}`);
 });
