@@ -28,6 +28,8 @@ if (!OUT) {
   process.exit(1);
 }
 mkdirSync(`${OUT}/raw`, { recursive: true });
+// final/ is rebuilt from scratch: upload.mjs sends every PNG it finds there.
+rmSync(`${OUT}/final`, { recursive: true, force: true });
 mkdirSync(`${OUT}/final`, { recursive: true });
 
 // CSS viewport × deviceScaleFactor must be exactly what Apple lists, or the
