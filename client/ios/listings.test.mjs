@@ -35,9 +35,9 @@ test("the numbers in the store texts are the catalog's and the config's", () => 
     .filter((d) => existsSync(join(catalog, d, "display.json")))
     .map((d) => JSON.parse(readFileSync(join(catalog, d, "display.json"), "utf8")).city_name.de));
   const ttl = /^SUBSCRIPTION_TTL_DAYS=(\d+)$/m.exec(readFileSync(join(root, ".env.example"), "utf8"))[1];
-  const screenshots = readFileSync(join(root, "client", "store-screenshots", "texts.json"), "utf8");
+  const screenshots = JSON.parse(readFileSync(join(root, "client", "store-screenshots", "texts.json"), "utf8"));
   for (const l of readListings()) {
-    for (const text of [l.promotionalText, l.description, screenshots]) {
+    for (const text of [l.promotionalText, l.description, JSON.stringify(screenshots[l.lang])]) {
       assert.match(text, new RegExp(`\\b${cities.size} (Städten?|(German )?cities)\\b`), `${l.lang}: ${cities.size} cities`);
     }
     assert.match(l.description, new RegExp(`\\b${ttl} (Tage|days)\\b`), `${l.lang}: ${ttl} days`);

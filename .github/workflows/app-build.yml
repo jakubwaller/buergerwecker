@@ -38,11 +38,17 @@ on:
     paths:
       - "client/**"
       - ".github/workflows/app-build.yml"
+      # the store texts name the city count and the alert term (client/ios/listings.test.mjs)
+      - "catalog/**"
+      - ".env.example"
   push:
     branches: [main]
     paths:
       - "client/**"
       - ".github/workflows/app-build.yml"
+      # the store texts name the city count and the alert term (client/ios/listings.test.mjs)
+      - "catalog/**"
+      - ".env.example"
   workflow_dispatch:
     inputs:
       task:
