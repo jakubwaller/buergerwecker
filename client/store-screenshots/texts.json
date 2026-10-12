@@ -1,0 +1,18 @@
+{
+  "de": {
+    "01": { "headline": "Freie Termine beim Amt, als *Mitteilung*", "subline": "Die App schaut auf der Terminseite deiner Stadt nach. Buchen musst du selbst, auf der Seite der Stadt." },
+    "02": { "headline": "Was gerade *frei* ist", "subline": "Der früheste Termin je Anliegen, Stand der letzten Abfrage." },
+    "03": { "headline": "Nur Termine, die *passen*", "subline": "Standorte, Wochentage, Uhrzeit und wie weit voraus." },
+    "04": { "headline": "Bürgerbüro, Kfz-Zulassung, *Ausländerbehörde*", "subline": "29 Städte, von Augsburg bis Trier." },
+    "05": { "headline": "Die Mitteilung kommt *sofort*", "subline": "Und bleibt 30 Tage nachlesbar, auch nach dem Öffnen." },
+    "06": { "headline": "Kein Konto, keine *E-Mail*", "subline": "Die App braucht nur deine Erlaubnis für Mitteilungen." }
+  },
+  "en": {
+    "01": { "headline": "Free appointments at the office, as a *notification*", "subline": "The app watches your city's booking page. You still book yourself, on the city's own page." },
+    "02": { "headline": "What is *free* right now", "subline": "The earliest slot per service, as of the last check." },
+    "03": { "headline": "Only slots that *fit*", "subline": "Locations, weekdays, time window and how far ahead." },
+    "04": { "headline": "Citizens' office, vehicle registration, *immigration office*", "subline": "29 German cities, from Augsburg to Trier." },
+    "05": { "headline": "The notification comes *right away*", "subline": "And stays readable for 30 days, even after you opened it." },
+    "06": { "headline": "No account, no *email*", "subline": "All the app needs is permission to send notifications." }
+  }
+}

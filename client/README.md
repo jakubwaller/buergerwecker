@@ -116,7 +116,10 @@ client/
                         with the Xcode project; idempotent, for after `npx cap add ios`
                         regenerated it
   ios/asc.mjs           App Store Connect API for the runner: bundle id, certificate, profile,
-                        TestFlight "What to Test" text and beta group distribution
+                        TestFlight "What to Test" text and beta group distribution; `listings
+                        push` sends ios/listings/<lang>.json (the App Store texts) from a laptop
+  store-screenshots/    shoot.mjs renders the store screenshots, upload.mjs puts them on the
+                        version being prepared (README there)
   ios/distribution.csr  the request the distribution certificate is signed from (no secret in it)
   ios/testflight/       what-to-test.<locale>.txt, one per TestFlight locale
   android/              the Android project; MainActivity registers PushGatePlugin (is push
@@ -463,5 +466,5 @@ token. Every review here assumes scripted, unlimited verified Android devices.
 
 ## Not in this version
 
-No store listing texts or screenshots, no in-app booking (never), no widget configuration screen
+No in-app booking (never), no widget configuration screen
 (it follows the alerts).

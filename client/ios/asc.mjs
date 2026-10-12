@@ -10,6 +10,8 @@
 //   node ios/asc.mjs beta-text pull                                   print what's live in TestFlight
 //   node ios/asc.mjs beta-text push --build <n>                      testflight/what-to-test.*.txt → that build
 //   node ios/asc.mjs beta-text distribute --build <n> --group <name> add to a beta group, submit for review
+//   node ios/asc.mjs listings pull        print the App Store listing texts App Store Connect holds
+//   node ios/asc.mjs listings push        listings/<lang>.json → the version being prepared
 //
 // Reads ASC_ISSUER_ID, ASC_KEY_ID and ASC_API_KEY_P8 (the key's text) from the
 // environment — the repository secrets of the same names.
@@ -84,7 +86,7 @@ export function _resetBearerForTests() {
   bearer = null;
 }
 
-async function api(method, path, body) {
+export async function api(method, path, body) {
   const r = await fetch(path.startsWith("http") ? path : API + path, {
     method,
     headers: { Authorization: `Bearer ${freshToken()}`, "Content-Type": "application/json" },
@@ -401,6 +403,113 @@ export async function betaTextDistribute(build, group) {
   }
 }
 
+// --- App Store listing texts --------------------------------------------------
+//
+// One listings/<lang>.json per store language, PapaMap's schema without the
+// Play fields: name, subtitle, keywords, promotionalText, description. The
+// limits are Apple's own, checked before the first request. Pushed from a
+// laptop with the local App Manager key (no CI task): the texts change a few
+// times a year.
+export const ASC_LOCALES = { de: "de-DE", en: "en-US" };
+export const LIMITS = { name: 30, subtitle: 30, keywords: 100, promotionalText: 170, description: 4000 };
+const SUPPORT_URL = "https://buergerwecker.de/kontakt";
+const MARKETING_URL = "https://buergerwecker.de";
+const privacyUrl = (lang) => `https://buergerwecker.de/datenschutz${lang === "de" ? "" : `?lang=${lang}`}`;
+const listingsDir = join(dirname(fileURLToPath(import.meta.url)), "listings");
+
+export function readListings(dir = listingsDir) {
+  return readdirSync(dir).filter((f) => f.endsWith(".json")).sort().map((file) => {
+    const lang = file.slice(0, -5);
+    if (!ASC_LOCALES[lang]) throw new Error(`${file}: no App Store locale for "${lang}"`);
+    const listing = JSON.parse(readFileSync(join(dir, file), "utf8"));
+    for (const key of Object.keys(listing)) if (!(key in LIMITS)) throw new Error(`${file}: unknown field "${key}"`);
+    for (const [key, limit] of Object.entries(LIMITS)) {
+      const text = listing[key];
+      if (typeof text !== "string" || !text.trim() || text !== text.trim()) {
+        throw new Error(`${file}: "${key}" is missing, empty or has whitespace at an end`);
+      }
+      if (text.length > limit) throw new Error(`${file}: "${key}" is ${text.length} characters, over Apple's ${limit}`);
+    }
+    return { lang, locale: ASC_LOCALES[lang], ...listing };
+  });
+}
+
+// A live version is sealed; only one of these states takes new texts.
+const EDITABLE = new Set(["PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED", "METADATA_REJECTED", "INVALID_BINARY"]);
+const appInfos = async (app) => (await api("GET", `/apps/${app}/appInfos?limit=200`)).data;
+const appInfoLocalizations = async (info) => (await api("GET", `/appInfos/${info}/appInfoLocalizations?limit=200`)).data;
+const appStoreVersions = async (app) => (await api("GET", `/apps/${app}/appStoreVersions?filter[platform]=IOS&limit=200`)).data;
+const versionLocalizations = async (version) =>
+  (await api("GET", `/appStoreVersions/${version}/appStoreVersionLocalizations?limit=200`)).data;
+
+export async function listingsPull() {
+  const app = await appId();
+  for (const info of await appInfos(app)) {
+    console.log(`appInfo ${info.id} (${info.attributes.state}):`);
+    for (const l of await appInfoLocalizations(info.id)) {
+      const { locale, name, subtitle, privacyPolicyUrl } = l.attributes;
+      console.log(`  ${locale}: ${JSON.stringify({ name, subtitle, privacyPolicyUrl })}`);
+    }
+  }
+  for (const v of await appStoreVersions(app)) {
+    console.log(`version ${v.attributes.versionString} (${v.attributes.appVersionState}, ${v.id}):`);
+    for (const l of await versionLocalizations(v.id)) {
+      const { locale, ...rest } = l.attributes;
+      console.log(`  ${locale}: ${JSON.stringify(rest)}`);
+    }
+  }
+}
+
+// PATCH when the locale exists and differs, POST when it is missing, nothing
+// when it already reads the same, so a rerun is free and the log says what moved.
+async function upsertLocalization(type, have, locale, attributes, relationships) {
+  const existing = have.find((r) => r.attributes.locale === locale);
+  if (!existing) {
+    const made = await api("POST", `/${type}`, { data: { type, attributes: { locale, ...attributes }, relationships } });
+    console.log(`${type} ${locale}: created (${made.data.id})`);
+  } else if (Object.entries(attributes).every(([k, v]) => existing.attributes[k] === v)) {
+    console.log(`${type} ${locale}: unchanged`);
+  } else {
+    await api("PATCH", `/${type}/${existing.id}`, { data: { type, id: existing.id, attributes } });
+    console.log(`${type} ${locale}: updated`);
+  }
+}
+
+// shortcut: pushes only into a version page that already exists in App Store
+// Connect (the "+" next to iOS App there); create the next one by hand when
+// this says none is being prepared.
+export async function listingsPush(dir) {
+  const listings = readListings(dir);
+  const app = await appId();
+  const version = (await appStoreVersions(app)).find((v) => EDITABLE.has(v.attributes.appVersionState));
+  if (!version) throw new Error("no App Store version is being prepared: add the next version in App Store Connect first");
+  const info = (await appInfos(app)).find((i) => EDITABLE.has(i.attributes.state));
+  console.log(`version ${version.attributes.versionString} (${version.attributes.appVersionState}), app info ${info?.id ?? "sealed"}`);
+  // App info first: a locale added there is added to the version by App
+  // Store Connect itself, so the version's list is read only afterwards.
+  if (info) {
+    const have = await appInfoLocalizations(info.id);
+    for (const l of listings) {
+      await upsertLocalization("appInfoLocalizations", have, l.locale,
+                               { name: l.name, subtitle: l.subtitle, privacyPolicyUrl: privacyUrl(l.lang) },
+                               { appInfo: { data: { type: "appInfos", id: info.id } } });
+    }
+  }
+  const have = await versionLocalizations(version.id);
+  for (const l of listings) {
+    await upsertLocalization("appStoreVersionLocalizations", have, l.locale,
+                             { description: l.description, keywords: l.keywords, promotionalText: l.promotionalText,
+                               supportUrl: SUPPORT_URL, marketingUrl: MARKETING_URL },
+                             { appStoreVersion: { data: { type: "appStoreVersions", id: version.id } } });
+  }
+}
+
+async function listings(sub) {
+  if (sub === "pull") return listingsPull();
+  if (sub === "push") return listingsPush();
+  throw new Error(`listings: unknown subcommand "${sub}" (pull | push)`);
+}
+
 // "--build 125 --group Friends" → { build: "125", group: "Friends" }
 function flags(args) {
   const out = {};
@@ -418,11 +527,12 @@ async function betaText(sub, ...args) {
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split("/").pop())) {
   const [cmd, ...args] = process.argv.slice(2);
-  const run = { ids, cert, profiles, "beta-text": betaText }[cmd];
+  const run = { ids, cert, profiles, "beta-text": betaText, listings }[cmd];
   if (!run || (cmd === "cert" && args.length !== 2) || (cmd === "profiles" && args.length !== 1) ||
-      (cmd === "beta-text" && args.length < 1)) {
+      (cmd === "beta-text" && args.length < 1) || (cmd === "listings" && args.length !== 1)) {
     console.error("usage: asc.mjs ids | cert <csr> <out.cer> | profiles <dir> | beta-text pull | " +
-                  "beta-text push --build <n> | beta-text distribute --build <n> --group <name>");
+                  "beta-text push --build <n> | beta-text distribute --build <n> --group <name> | " +
+                  "listings pull | listings push");
     process.exit(2);
   }
   run(...args).catch((e) => { console.error(String(e.message ?? e)); process.exit(1); });
