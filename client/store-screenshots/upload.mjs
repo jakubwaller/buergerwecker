@@ -6,7 +6,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { api, appId } from "../ios/asc.mjs";
+import { api, appId, EDITABLE } from "../ios/asc.mjs";
 
 const DIR = process.argv[2];
 if (!DIR) { console.error("usage: node upload.mjs <dir with the final PNGs>"); process.exit(1); }
@@ -17,8 +17,8 @@ const LOCALES = { de: "de-DE", en: "en-US" };
 
 const app = await appId();
 const version = (await api("GET", `/apps/${app}/appStoreVersions?filter[platform]=IOS&limit=200`)).data
-  .find((v) => v.attributes.appVersionState === "PREPARE_FOR_SUBMISSION");
-if (!version) throw new Error("no App Store version is being prepared");
+  .find((v) => EDITABLE.has(v.attributes.appVersionState));
+if (!version) throw new Error("no App Store version is being prepared or was rejected");
 const locs = (await api("GET", `/appStoreVersions/${version.id}/appStoreVersionLocalizations?limit=200`)).data;
 const sets = [];
 for (const [lang, locale] of Object.entries(LOCALES)) {

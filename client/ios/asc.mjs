@@ -1,7 +1,8 @@
-// The App Store Connect API, as far as signing on a runner needs it. No Xcode
-// account, no fastlane, no dependency: Node's own crypto signs the token and
-// fetch does the rest. Called by .github/workflows/app-build.yml. Adapted
-// from PapaMap's app/ios/asc.mjs, without its store-listing commands.
+// The App Store Connect API: signing and TestFlight for the runner, the App
+// Store listing texts from a laptop. No Xcode account, no fastlane, no
+// dependency: Node's own crypto signs the token and fetch does the rest.
+// Called by .github/workflows/app-build.yml. Adapted from PapaMap's
+// app/ios/asc.mjs.
 //
 //   node ios/asc.mjs ids                  register the two bundle ids (the app: Push Notifications and
 //                                         App Groups; the widget: App Groups)
@@ -412,9 +413,7 @@ export async function betaTextDistribute(build, group) {
 // times a year.
 export const ASC_LOCALES = { de: "de-DE", en: "en-US" };
 export const LIMITS = { name: 30, subtitle: 30, keywords: 100, promotionalText: 170, description: 4000 };
-const SUPPORT_URL = "https://buergerwecker.de/kontakt";
-const MARKETING_URL = "https://buergerwecker.de";
-const privacyUrl = (lang) => `https://buergerwecker.de/datenschutz${lang === "de" ? "" : `?lang=${lang}`}`;
+const siteUrl = (path, lang) => `https://buergerwecker.de${path}${lang === "de" ? "" : `?lang=${lang}`}`;
 const listingsDir = join(dirname(fileURLToPath(import.meta.url)), "listings");
 
 export function readListings(dir = listingsDir) {
@@ -434,8 +433,8 @@ export function readListings(dir = listingsDir) {
   });
 }
 
-// A live version is sealed; only one of these states takes new texts.
-const EDITABLE = new Set(["PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED", "METADATA_REJECTED", "INVALID_BINARY"]);
+// A live version is sealed; only one of these states takes new texts or screenshots.
+export const EDITABLE = new Set(["PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED", "METADATA_REJECTED", "INVALID_BINARY"]);
 const appInfos = async (app) => (await api("GET", `/apps/${app}/appInfos?limit=200`)).data;
 const appInfoLocalizations = async (info) => (await api("GET", `/appInfos/${info}/appInfoLocalizations?limit=200`)).data;
 const appStoreVersions = async (app) => (await api("GET", `/apps/${app}/appStoreVersions?filter[platform]=IOS&limit=200`)).data;
@@ -491,7 +490,7 @@ export async function listingsPush(dir) {
     const have = await appInfoLocalizations(info.id);
     for (const l of listings) {
       await upsertLocalization("appInfoLocalizations", have, l.locale,
-                               { name: l.name, subtitle: l.subtitle, privacyPolicyUrl: privacyUrl(l.lang) },
+                               { name: l.name, subtitle: l.subtitle, privacyPolicyUrl: siteUrl("/datenschutz", l.lang) },
                                { appInfo: { data: { type: "appInfos", id: info.id } } });
     }
   }
@@ -499,7 +498,7 @@ export async function listingsPush(dir) {
   for (const l of listings) {
     await upsertLocalization("appStoreVersionLocalizations", have, l.locale,
                              { description: l.description, keywords: l.keywords, promotionalText: l.promotionalText,
-                               supportUrl: SUPPORT_URL, marketingUrl: MARKETING_URL },
+                               supportUrl: siteUrl("/kontakt", l.lang), marketingUrl: siteUrl("/", l.lang) },
                              { appStoreVersion: { data: { type: "appStoreVersions", id: version.id } } });
   }
 }

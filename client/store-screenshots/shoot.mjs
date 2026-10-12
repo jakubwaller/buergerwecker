@@ -393,11 +393,13 @@ function pixelSize(path) {
 
 async function main() {
   const browser = await chromium.launch({ channel: "chrome", args: ["--no-sandbox"] });
+  const skipped = [];
   try {
     if (!COMPOSE_ONLY) {
       for (const [deviceName, device] of Object.entries(DEVICES)) {
         for (const lang of LANGS) {
           for (const r of await shootDevice(browser, deviceName, device, lang)) {
+            if (!r.ok) skipped.push(`${deviceName}-${lang}-${r.shot}: ${r.reason}`);
             console.log(r.ok ? `raw  ${deviceName}-${lang}-${r.shot}: ${pixelSize(r.path)}` : `SKIP ${deviceName}-${lang}-${r.shot}: ${r.reason}`);
           }
         }
@@ -406,14 +408,17 @@ async function main() {
     const bad = [];
     for (const r of await composeAll(browser)) {
       if (!r.ok) {
-        console.log(`SKIP ${r.path}: ${r.reason}`);
+        bad.push(`${r.path}: ${r.reason}`);
         continue;
       }
       const size = pixelSize(r.path);
       if (size !== r.expected) bad.push(`${r.path}: ${size}, wanted ${r.expected}`);
       console.log(`final ${r.path}: ${size}`);
     }
-    if (bad.length) throw new Error(`off-spec sizes, the store refuses these:\n  ${bad.join("\n  ")}`);
+    // A shot that failed must not leave a stale raw/ PNG or a five-shot set behind.
+    if (skipped.length || bad.length) {
+      throw new Error(`not a complete set:\n  ${[...skipped, ...bad].join("\n  ")}`);
+    }
   } finally {
     await browser.close();
   }
