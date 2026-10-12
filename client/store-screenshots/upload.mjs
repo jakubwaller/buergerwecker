@@ -1,6 +1,6 @@
 // Puts shoot.mjs's final/ shots on the App Store version being prepared, one
-// set per locale and device, replacing whatever the set held. Run with the
-// local App Manager key (asc-env.sh); not a CI task.
+// set per locale and device, replacing whatever the set held. Needs the
+// ASC_* variables ../ios/asc.mjs reads; not a CI task.
 //
 //   node upload.mjs <out-dir>/final
 import { readFileSync, readdirSync } from "node:fs";
@@ -50,11 +50,21 @@ for (const [lang, locale] of Object.entries(LOCALES)) {
     sets.push({ locale, screenshotDisplayType, id: set.id, n: files.length });
   }
 }
-// Apple processes the uploads for a moment; FAILED here means a size or format it refuses.
-await new Promise((r) => setTimeout(r, 20_000));
-for (const s of sets) {
-  const states = (await api("GET", `/appScreenshotSets/${s.id}/appScreenshots?limit=200`)).data
-    .map((x) => `${x.attributes.fileName}: ${x.attributes.assetDeliveryState?.state}` +
-                (x.attributes.assetDeliveryState?.errors?.length ? ` ${JSON.stringify(x.attributes.assetDeliveryState.errors)}` : ""));
-  console.log(`${s.locale} ${s.screenshotDisplayType}:\n  ${states.join("\n  ")}`);
+// Apple processes the uploads for a minute or two; FAILED means a size or
+// format it refuses, and the run fails with it.
+for (let tries = 0; ; tries++) {
+  await new Promise((r) => setTimeout(r, 15_000));
+  const shots = [];
+  for (const s of sets) {
+    for (const x of (await api("GET", `/appScreenshotSets/${s.id}/appScreenshots?limit=200`)).data) {
+      const d = x.attributes.assetDeliveryState ?? {};
+      shots.push({ label: `${s.locale} ${s.screenshotDisplayType} ${x.attributes.fileName}`, state: d.state, errors: d.errors ?? [] });
+    }
+  }
+  const failed = shots.filter((x) => x.state === "FAILED");
+  const pending = shots.filter((x) => x.state !== "COMPLETE" && x.state !== "FAILED");
+  if (failed.length) throw new Error(`refused by App Store Connect:\n  ${failed.map((x) => `${x.label}: ${JSON.stringify(x.errors)}`).join("\n  ")}`);
+  if (!pending.length) { console.log(`all ${shots.length} screenshots COMPLETE`); break; }
+  if (tries >= 12) throw new Error(`still processing after 3 minutes: ${pending.map((x) => x.label).join(", ")}`);
+  console.log(`${pending.length} still processing…`);
 }

@@ -12,7 +12,7 @@
 // slots and notifications are staged below, dated from today, and nothing
 // here registers a device or touches the real API's authenticated routes.
 import { chromium } from "playwright";
-import { readFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, mkdirSync, existsSync, rmSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -58,7 +58,7 @@ const DRESDEN_PASSPORT = "488";
 const MUENSTER_KFZ = "2407";
 
 const now = new Date();
-const isoDay = (d) => d.toISOString().slice(0, 10);
+const isoDay = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const inDays = (n) => new Date(now.getTime() + n * 86400000);
 // The next few working days, so the staged slots never fall on a weekend.
 const workdays = [];
@@ -152,8 +152,8 @@ function inboxFor(lang) {
 }
 
 const BANNER = {
-  de: { title: "Neue Termine in Leipzig", body: (d) => `Bürgerbüro Otto-Schill-Straße (Zentrum): ${d} 09:30, 10:15` },
-  en: { title: "New appointments in Leipzig", body: (d) => `Bürgerbüro Otto-Schill-Straße (Zentrum): ${d} 09:30, 10:15` },
+  de: { title: "Neue Termine in Leipzig", body: (d) => `Bürgerbüro Otto-Schill-Straße (Zentrum): ${d} 09:30` },
+  en: { title: "New appointments in Leipzig", body: (d) => `Bürgerbüro Otto-Schill-Straße (Zentrum): ${d} 09:30` },
 };
 
 // --- The Capacitor stub (runs in the page before app.js) --------------------
@@ -299,6 +299,7 @@ async function shootDevice(browser, deviceName, device, lang) {
       app = await openApp(browser, device, lang, { onboarded: false });
     }
     const path = `${OUT}/raw/${deviceName}-${lang}-${shot.nn}-${shot.name}.png`;
+    rmSync(path, { force: true });
     try {
       // The banner stays up 8 s on its own; no shot inherits the last one's.
       await app.page.evaluate(() => (document.getElementById("banner").hidden = true));
@@ -415,7 +416,7 @@ async function main() {
       if (size !== r.expected) bad.push(`${r.path}: ${size}, wanted ${r.expected}`);
       console.log(`final ${r.path}: ${size}`);
     }
-    // A shot that failed must not leave a stale raw/ PNG or a five-shot set behind.
+    // A five-shot set must not go up unnoticed.
     if (skipped.length || bad.length) {
       throw new Error(`not a complete set:\n  ${[...skipped, ...bad].join("\n  ")}`);
     }

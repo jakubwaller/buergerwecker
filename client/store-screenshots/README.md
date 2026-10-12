@@ -18,5 +18,5 @@ refuses an off-spec size rather than let the store do it.
 Cities and services come from the live public catalog; the alerts, slots and notifications are
 staged in the script and dated from today, so the shots never show a real person's alert. The PNGs
 are not committed: regenerate them, then `upload.mjs` puts `final/` on the version being prepared
-in App Store Connect, one set per locale and device (run it through `asc-env.sh`, like
-`ios/asc.mjs listings push`).
+in App Store Connect, one set per locale and device. It needs the same `ASC_*` variables as
+`ios/asc.mjs` (the App Store Connect key).
