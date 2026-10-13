@@ -93,15 +93,15 @@ def _maybe_alert(conn, cfg, last_error: str) -> None:
         print(f"failed to send alert email: {inner}", flush=True)
 
 def _maybe_housekeeping(conn) -> None:
-    row = conn.execute(
-        "SELECT value FROM meta WHERE key='last_housekeeping_at'"
-    ).fetchone()
-    if not row:
-        housekeeping_run(conn)
-        return
-    last = datetime.fromisoformat(row["value"])
-    if datetime.utcnow() - last > timedelta(hours=24):
-        housekeeping_run(conn)
+    """Run the daily housekeeping when 24h have passed. Never breaks the cycle."""
+    try:
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key='last_housekeeping_at'"
+        ).fetchone()
+        if not row or datetime.utcnow() - datetime.fromisoformat(row["value"]) > timedelta(hours=24):
+            housekeeping_run(conn)
+    except Exception as exc:
+        print(f"housekeeping failed: {exc!r}", flush=True)
 
 if __name__ == "__main__":
     main()

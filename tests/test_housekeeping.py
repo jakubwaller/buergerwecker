@@ -355,3 +355,27 @@ def test_the_poller_prunes_rate_events_every_cycle_and_never_breaks_it(capsys):
     from app.poller import _prune_rate_events
     _prune_rate_events(None)                     # a broken connection: logged, not raised
     assert "rate event prune failed" in capsys.readouterr().out
+
+
+def test_failing_step_does_not_stop_the_rest_and_is_named_in_the_mail(db):
+    import sqlite3
+
+    def _prune_seen_slots(conn):
+        raise sqlite3.OperationalError("database is locked")
+
+    with patch("app.housekeeping._prune_seen_slots", _prune_seen_slots), \
+         patch("app.housekeeping._prune_deferrals") as later, \
+         patch("app.mail.send") as send:
+        run_once(db)
+    later.assert_called_once()
+    assert db.execute(
+        "SELECT value FROM meta WHERE key='last_housekeeping_at'").fetchone()
+    subject, body = send.call_args.args[2], send.call_args.args[3]
+    assert "need a look" in subject
+    assert "_prune_seen_slots" in body
+
+
+def test_maybe_housekeeping_swallows_a_failing_run(db):
+    from app import poller
+    with patch("app.poller.housekeeping_run", side_effect=RuntimeError("boom")):
+        poller._maybe_housekeeping(db)

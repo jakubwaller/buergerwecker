@@ -15,30 +15,41 @@ def mail_send(*args, **kwargs):
 
 def run_once(conn: sqlite3.Connection) -> None:
     cfg = load_config()
-    _purge_hard(conn)
-    _clamp_expiry(conn, cfg)
-    _soft_delete_expired(conn, cfg)
-    _send_renewal_reminders(conn, cfg)
-    _send_push_checkins(conn, cfg)
-    _send_heartbeats(conn, cfg, milestone_days=30, milestone_col="heartbeat_30d_at")
-    _send_heartbeats(conn, cfg, milestone_days=60, milestone_col="heartbeat_60d_at",
-                     not_right_after="heartbeat_30d_at")
-    _prune_seen_slots(conn)
-    _prune_idempotency(conn)
-    _prune_deferrals(conn)
-    _prune_digest_deliveries(conn)
-    _prune_cap_holds(conn)
-    _prune_email_failures(conn)
-    _prune_suppressions(conn, cfg)
-    _prune_push_devices(conn)
-    _prune_rate_records(conn)
-    _prune_slots_cache(conn)
-    _prune_availability(conn)
-    _prune_slot_snapshots(conn)
-    _check_parser_canary(conn, cfg)
-    _check_backup_health(conn, cfg)
-    _start_catalog_sync(cfg)
-    _send_summary_email(conn, cfg)
+    failed: list[str] = []
+
+    def step(fn, *args, **kwargs):
+        # One broken step must not starve the rest, nor stop the stamp below.
+        try:
+            fn(*args, **kwargs)
+        except Exception as exc:
+            msg = f"housekeeping step {fn.__name__} failed: {exc!r}"
+            print(msg, flush=True)
+            failed.append(msg)
+
+    step(_purge_hard, conn)
+    step(_clamp_expiry, conn, cfg)
+    step(_soft_delete_expired, conn, cfg)
+    step(_send_renewal_reminders, conn, cfg)
+    step(_send_push_checkins, conn, cfg)
+    step(_send_heartbeats, conn, cfg, milestone_days=30, milestone_col="heartbeat_30d_at")
+    step(_send_heartbeats, conn, cfg, milestone_days=60, milestone_col="heartbeat_60d_at",
+         not_right_after="heartbeat_30d_at")
+    step(_prune_seen_slots, conn)
+    step(_prune_idempotency, conn)
+    step(_prune_deferrals, conn)
+    step(_prune_digest_deliveries, conn)
+    step(_prune_cap_holds, conn)
+    step(_prune_email_failures, conn)
+    step(_prune_suppressions, conn, cfg)
+    step(_prune_push_devices, conn)
+    step(_prune_rate_records, conn)
+    step(_prune_slots_cache, conn)
+    step(_prune_availability, conn)
+    step(_prune_slot_snapshots, conn)
+    step(_check_parser_canary, conn, cfg)
+    step(_check_backup_health, conn, cfg)
+    step(_start_catalog_sync, cfg)
+    step(_send_summary_email, conn, cfg, failed=tuple(failed))
     conn.execute(
         "INSERT INTO meta (key,value) VALUES ('last_housekeeping_at', ?) "
         "ON CONFLICT (key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP",
@@ -561,14 +572,14 @@ def _sync_catalogs(cfg):
             pass
 
 
-def _send_summary_email(conn, cfg):
+def _send_summary_email(conn, cfg, failed=()):
     """Exception-based ops mail: send only when something is unusual, plus a
     weekly all-clear so silence stays trustworthy. On a quiet, non-heartbeat
     day this sends nothing. Full detail always lives on /admin."""
     from app.admin import stats, summary_anomalies, render_summary_email
     now = datetime.utcnow()
     s = stats(conn, cfg)
-    anomalies = summary_anomalies(s, now=now)
+    anomalies = summary_anomalies(s, now=now) + list(failed)
 
     # Weekly heartbeat gate. Any summary mail (anomaly OR heartbeat) resets the
     # clock, so a busy week never also gets a redundant all-clear.
