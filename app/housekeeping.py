@@ -21,10 +21,12 @@ def run_once(conn: sqlite3.Connection) -> None:
         # One broken step must not starve the rest, nor stop the stamp below.
         try:
             fn(*args, **kwargs)
+            return True
         except Exception as exc:
             msg = f"housekeeping step {fn.__name__} failed: {exc!r}"
             print(msg, flush=True)
             failed.append(msg)
+            return False
 
     step(_purge_hard, conn)
     step(_clamp_expiry, conn, cfg)
@@ -49,7 +51,11 @@ def run_once(conn: sqlite3.Connection) -> None:
     step(_check_parser_canary, conn, cfg)
     step(_check_backup_health, conn, cfg)
     step(_start_catalog_sync, cfg)
-    step(_send_summary_email, conn, cfg, failed=tuple(failed))
+    if not step(_send_summary_email, conn, cfg, failed=tuple(failed)):
+        # The summary is the only report of the failures above, so send them bare.
+        step(mail_send, conn, cfg.developer_email, "[buergerwecker] housekeeping failed",
+             "\n".join(failed),
+             idem_key=_idem_key(0, [], f"housekeeping-failed-{datetime.utcnow().date()}"))
     conn.execute(
         "INSERT INTO meta (key,value) VALUES ('last_housekeeping_at', ?) "
         "ON CONFLICT (key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP",

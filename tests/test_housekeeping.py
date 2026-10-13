@@ -379,3 +379,12 @@ def test_maybe_housekeeping_swallows_a_failing_run(db):
     from app import poller
     with patch("app.poller.housekeeping_run", side_effect=RuntimeError("boom")):
         poller._maybe_housekeeping(db)
+
+
+def test_a_failing_summary_still_reports_the_failures(db):
+    with patch("app.admin.stats", side_effect=RuntimeError("stats broke")), \
+         patch("app.mail.send") as send:
+        run_once(db)
+    subject, body = send.call_args.args[2], send.call_args.args[3]
+    assert subject == "[buergerwecker] housekeeping failed"
+    assert "_send_summary_email" in body and "stats broke" in body
