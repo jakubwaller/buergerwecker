@@ -1027,6 +1027,28 @@ been the check/record mismatch CLAUDE.md warns about (a digest per interval
 about the same inventory). Deploying it re-notifies nobody: the rows the old
 code wrote cover everything inside the new horizon.
 
+## A TEVIS tenant renumbered its ids
+
+A TEVIS tenant can renumber every service and office id at once (five did around 2026-10-10). A
+poll for a dead id returns no slots and no error, so every subscription on the old ids goes
+silent. The daily catalog sync notices, but it rewrites the files only inside the poller
+container; the fix is a catalog commit with the new ids, then `scripts/remap_catalog_ids.py` to
+move existing subscriptions over. The map (`scripts/catalog_remap_<date>.json`, old id to new id
+per city) is built by matching names and committed with the catalog change.
+
+Run it **after** the catalog deploy, so the sign-up form already offers the new ids. Dry run
+first and check `unknown` is 0; anything else is an id that was dead already or one the map
+missed:
+
+```bash
+ssh vps 'cd ~/buergerwecker && docker compose run --rm poller \
+    python scripts/remap_catalog_ids.py scripts/catalog_remap_2026-10-10.json --db /data/app.db'
+ssh vps 'cd ~/buergerwecker && docker compose run --rm poller \
+    python scripts/remap_catalog_ids.py scripts/catalog_remap_2026-10-10.json --db /data/app.db --apply'
+```
+
+One transaction, waits out the poller's write lock, idempotent: a rerun reports `changed 0`.
+
 ## Load testing
 
 `scripts/loadtest.py` measures sign-up write contention and `run_cycle` time at

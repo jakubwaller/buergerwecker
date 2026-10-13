@@ -108,9 +108,14 @@ def test_catalog_sync_probes_tevis_tenant_with_gets_only():
 
 def test_catalog_locations_match_fixture():
     """The hand-maintained locations.json must agree with the captured page —
-    every loc id the parser finds is labeled, and vice versa."""
+    every loc id the parser finds is labeled, and vice versa. The fixture
+    predates Dresden's 2026-10-10 renumbering, so its ids go through the
+    committed remap first."""
+    import json
+    remap = json.loads((Path(__file__).parents[1] / "scripts"
+                        / "catalog_remap_2026-10-10.json").read_text())
     catalog = load_catalog("dresden")
-    parsed = {s.location_uuid
+    parsed = {remap["dresden"]["locations"][s.location_uuid]
               for s in tevis.parse_slots(FIXTURE, service_id="487",
                                          locations="all")}
     assert parsed == set(catalog.locations.values())
