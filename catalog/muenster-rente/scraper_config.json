@@ -3,5 +3,8 @@
   "base_url": "https://termine.stadt-muenster.de",
   "md": 17,
   "mdt": 213,
-  "poll_interval_seconds": 300
+  "poll_interval_seconds": 300,
+  "exclude_services": [
+    "2406"
+  ]
 }

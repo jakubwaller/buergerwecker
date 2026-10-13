@@ -4,7 +4,7 @@ Kurzbeschreibung der Verarbeitung für Anliegen, deren bloße Auswahl eine
 besondere Kategorie personenbezogener Daten offenbart. Gedacht als Grundlage
 für die Abstimmung mit den Datenschutzbeauftragten der beteiligten Städte.
 
-Stand: 2026-08-13. Verantwortlicher: siehe Impressum auf
+Stand: 2026-10-13. Verantwortlicher: siehe Impressum auf
 <https://buergerwecker.de/impressum>.
 
 ## Worum es geht
@@ -88,6 +88,17 @@ allen oben beschriebenen Maßnahmen. Die „Abgabe der Erklärung nach dem
 Selbstbestimmungsgesetz (SBGG)" bleibt auf Wunsch des Standesamts dauerhaft
 ausgenommen, da sie mit besonderen Fristen verbunden ist. Die STI-Beratung des
 Gesundheitsamts ist weiterhin nicht angebunden.
+
+Seit 2026-10-13 sind außerdem diese Anliegen ausgenommen. Bei ihnen verrät
+schon die Auswahl Gesundheitsdaten, die Religion oder die sexuelle
+Orientierung, und keine Stadt hat bisher zugestimmt:
+
+- Schwerbehindertenausweis und Parkausweise für Menschen mit Behinderung
+  (Bottrop, Darmstadt, Düsseldorf, Hagen, Moers, Münster, Oberhausen)
+- Antrag auf medizinische Rehabilitation (Münster, Infobüro Rente)
+- Kirchenein- und -austritt (Darmstadt, Moers, Nürnberg)
+- Urkunden zur eingetragenen Lebenspartnerschaft (Münster, Standesamt)
+- Beglaubigung zur Mitnahme von Betäubungsmitteln (Mainz)
 
 Der Quellcode ist offen: <https://github.com/jakubwaller/buergerwecker>
 (AGPLv3).

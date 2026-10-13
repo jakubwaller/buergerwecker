@@ -146,10 +146,11 @@ def test_shipped_muenster_standesamt_offers_only_the_approved_sbgg_anliegen():
     """Stadt Münster's ruling of 2026-08-13: the Anmeldung (2471) may be
     listed, the Abgabe (2472) must not — it carries special statutory
     deadlines, per the Standesamt. 2472's exclusion is a decision by the
-    city, not a pending approval."""
+    city, not a pending approval. 2438 and 2459 (Lebenspartnerschaft, which
+    reveals sexual orientation) were never put to the city and stay out."""
     from app.catalog import load_catalog
     cat = load_catalog("muenster-standesamt")
-    assert set(cat.scraper_config["exclude_services"]) == {"2472"}
+    assert set(cat.scraper_config["exclude_services"]) == {"2438", "2459", "2472"}
     assert "2471" in cat.appointment_types.values()
     assert "2472" not in cat.appointment_types.values()
 

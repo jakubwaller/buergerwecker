@@ -3,5 +3,9 @@
   "base_url": "https://tevis.krzn.de/tevisweb090",
   "md": 1,
   "mdt": 96,
-  "poll_interval_seconds": 120
+  "poll_interval_seconds": 120,
+  "exclude_services": [
+    "1560",
+    "1563"
+  ]
 }

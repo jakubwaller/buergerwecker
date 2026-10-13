@@ -3,5 +3,10 @@
   "base_url": "https://tevis.ekom21.de/stdar",
   "md": 4,
   "mdt": 106,
-  "poll_interval_seconds": 120
+  "poll_interval_seconds": 120,
+  "exclude_services": [
+    "2212",
+    "2215",
+    "2219"
+  ]
 }

@@ -3,5 +3,10 @@
   "base_url": "https://terminvergabe.hagen.de",
   "md": 1,
   "mdt": 406,
-  "poll_interval_seconds": 120
+  "poll_interval_seconds": 120,
+  "exclude_services": [
+    "5849",
+    "5850",
+    "5851"
+  ]
 }

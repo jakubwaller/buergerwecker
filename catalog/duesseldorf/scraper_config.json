@@ -3,5 +3,9 @@
   "base_url": "https://termine.duesseldorf.de",
   "md": 4,
   "mdt": 352,
-  "poll_interval_seconds": 120
+  "poll_interval_seconds": 120,
+  "exclude_services": [
+    "5823",
+    "5831"
+  ]
 }
