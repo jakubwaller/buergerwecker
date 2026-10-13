@@ -528,3 +528,84 @@ def test_manage_post_for_a_deleted_subscription_is_not_found(client):
     r = c.post(f"/manage/{_sign(sid, 'manage')}",
                data={"appointment_type": LEIPZIG_SERVICE, "all_locations": "1"})
     assert r.status_code == 404
+
+
+# --- plan cap on confirm and renew -------------------------------------------
+# Pending rows are not counted at sign-up, so any number of them get in; the
+# cap has to hold when they turn live.
+
+@pytest.fixture
+def capped(client, monkeypatch):
+    """The client's app, rebuilt with a plan cap of 1, and a way to add rows."""
+    _, first = client
+    monkeypatch.setenv("MAX_PLANS_PER_CITY", "1")
+    app = create_app(); app.config["TESTING"] = True
+    conn = connect(os.environ["DB_PATH"])
+
+    def add(service, email):
+        f = Filter(appointment_types=[service], locations="all", weekdays=[1, 2, 3, 4, 5, 6, 7],
+                   time_window_start=time(0, 0), time_window_end=time(23, 59))
+        return insert_pending(conn, email=email, city="leipzig", language="de",
+                              filter_=f, ttl_days=90)
+    return app.test_client(), first, add, conn
+
+
+def _confirm(c, sid):
+    from unittest.mock import patch
+    with patch("app.web._send_manage_link_email") as m:
+        r = c.get(f"/confirm/{_sign(sid, 'confirm')}")
+    return r, m
+
+
+def test_confirm_stops_at_the_plan_cap_and_works_once_there_is_room(capped):
+    c, a, add, conn = capped
+    b = add("B", "b@example.com")
+    r, _ = _confirm(c, a)
+    assert r.status_code == 200
+    r, mail = _confirm(c, b)
+    assert r.status_code == 503
+    mail.assert_not_called()
+    assert _confirmed_at(b) is None
+    conn.execute("UPDATE subscriptions SET deleted_at=CURRENT_TIMESTAMP WHERE id=?", (a,))
+    assert _confirm(c, b)[0].status_code == 200
+    assert _confirmed_at(b) is not None
+
+
+def test_confirm_of_a_service_already_watched_is_not_refused_at_a_full_city(capped):
+    c, a, add, _ = capped
+    twin = add("A", "twin@example.com")
+    assert _confirm(c, a)[0].status_code == 200
+    assert _confirm(c, twin)[0].status_code == 200
+
+
+def test_reclicking_a_confirm_link_is_not_refused_over_the_cap(capped):
+    c, a, add, _ = capped
+    b = add("B", "b@example.com")
+    assert _confirm(c, a)[0].status_code == 200
+    assert _confirm(c, b)[0].status_code == 503
+    # B gets in some other way (cap lowered since); its link still answers 200.
+    connect(os.environ["DB_PATH"]).execute(
+        "UPDATE subscriptions SET confirmed_at=CURRENT_TIMESTAMP WHERE id=?", (b,))
+    assert _confirm(c, b)[0].status_code == 200
+
+
+def _expires_at(conn, sid):
+    return conn.execute("SELECT expires_at FROM subscriptions WHERE id=?", (sid,)).fetchone()[0]
+
+
+def test_renew_of_an_expired_subscription_whose_place_was_taken_is_refused(capped):
+    c, a, add, conn = capped
+    assert _confirm(c, a)[0].status_code == 200
+    conn.execute("UPDATE subscriptions SET expires_at=datetime('now','-1 day') WHERE id=?", (a,))
+    b = add("B", "b@example.com")
+    assert _confirm(c, b)[0].status_code == 200       # took the freed place
+    before = _expires_at(conn, a)
+    r = c.get(f"/renew/{_sign(a, 'renew')}")
+    assert r.status_code == 503
+    assert _expires_at(conn, a) == before
+
+
+def test_renew_of_a_live_subscription_at_a_full_city_works(capped):
+    c, a, _, conn = capped
+    assert _confirm(c, a)[0].status_code == 200
+    assert c.get(f"/renew/{_sign(a, 'renew')}").status_code == 200

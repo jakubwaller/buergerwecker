@@ -998,8 +998,8 @@ def create_app() -> Flask:
                                 request.args.get("lang", "de"), status=400)
         conn = connect(cfg.db_path)
         row = conn.execute(
-            "SELECT language, city, expires_at, deleted_at, confirmed_at, "
-            "expires_at < CURRENT_TIMESTAMP AS expired "
+            "SELECT language, city, filters_json, expires_at, deleted_at, "
+            "confirmed_at, expires_at < CURRENT_TIMESTAMP AS expired "
             "FROM subscriptions WHERE id=?", (sub_id,)).fetchone()
         lang = request.args.get("lang") or (row["language"] if row else "de")
         # Confirm tokens never expire, so this is where a stale link is
@@ -1026,7 +1026,16 @@ def create_app() -> Flask:
                 "subscription_expired", lang, status=410,
                 action_url=f"/renew/{renew}",
                 action_label="Keep looking" if lang == "en" else "Weiter suchen")
-        confirm(conn, sub_id)
+        if row["confirmed_at"] is None:
+            # Pending rows were not counted at sign-up, so judge it now like
+            # one. A refused link stays valid for when there is room.
+            with transaction(conn, immediate=True):
+                if refused_by_plan_cap(conn, row["city"],
+                                       Filter.from_json(row["filters_json"]),
+                                       push=False, exclude_id=sub_id,
+                                       max_plans_per_city=cfg.max_plans_per_city):
+                    return _result_page("waitlist_full", lang, status=503)
+                confirm(conn, sub_id)
         # The management-link email is a convenience, NOT part of confirmation.
         # The subscription is already confirmed above (autocommit), so a
         # mail-provider failure must never turn this into a 500 — log it and
@@ -1157,8 +1166,8 @@ def create_app() -> Flask:
                                 request.args.get("lang", "de"), status=400)
         conn = connect(cfg.db_path)
         row = conn.execute(
-            "SELECT language, consent_special_at, deleted_at "
-            "FROM subscriptions WHERE id=?",
+            "SELECT language, city, filters_json, consent_special_at, "
+            "deleted_at FROM subscriptions WHERE id=?",
             (sid,)).fetchone()
         lang = request.args.get("lang") or (row["language"] if row else "de")
         # An expired subscription is only paused: it stays renewable for
@@ -1171,8 +1180,17 @@ def create_app() -> Flask:
         # otherwise the renewal link would quietly promote it to the
         # ordinary one. The app's API renews through the same helper.
         from app.repo import renew_subscription
-        renew_subscription(conn, sid,
-                           ttl_days_for(cfg, row["consent_special_at"] is not None))
+        # An expired subscription's place may have been taken since: judge the
+        # new term like a sign-up (a live one never counts as new).
+        with transaction(conn, immediate=True):
+            if refused_by_plan_cap(conn, row["city"],
+                                   Filter.from_json(row["filters_json"]),
+                                   push=False, exclude_id=sid,
+                                   max_plans_per_city=cfg.max_plans_per_city):
+                return _result_page("waitlist_full", lang, status=503)
+            renew_subscription(
+                conn, sid,
+                ttl_days_for(cfg, row["consent_special_at"] is not None))
         return _result_page("renewed", lang)
 
     @app.route("/go/sub/<token>")
