@@ -3,5 +3,8 @@
   "base_url": "https://termine-reservieren.de/termine/buergeramt.mainz",
   "md": 2,
   "mdt": 8,
-  "poll_interval_seconds": 120
+  "poll_interval_seconds": 120,
+  "exclude_services": [
+    "1031"
+  ]
 }
