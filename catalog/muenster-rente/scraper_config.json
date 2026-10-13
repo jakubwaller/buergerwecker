@@ -5,6 +5,8 @@
   "mdt": 213,
   "poll_interval_seconds": 300,
   "exclude_services": [
+    "2399",
+    "2400",
     "2406"
   ]
 }

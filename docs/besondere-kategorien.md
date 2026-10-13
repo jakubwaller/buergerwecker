@@ -95,7 +95,8 @@ Orientierung, und keine Stadt hat bisher zugestimmt:
 
 - Schwerbehindertenausweis und Parkausweise für Menschen mit Behinderung
   (Bottrop, Darmstadt, Düsseldorf, Hagen, Moers, Münster, Oberhausen)
-- Antrag auf medizinische Rehabilitation (Münster, Infobüro Rente)
+- Antrag auf medizinische Rehabilitation und auf Rente wegen verminderter
+  Erwerbsfähigkeit (Münster, Infobüro Rente)
 - Kirchenein- und -austritt (Darmstadt, Moers, Nürnberg)
 - Urkunden zur eingetragenen Lebenspartnerschaft (Münster, Standesamt)
 - Beglaubigung zur Mitnahme von Betäubungsmitteln (Mainz)
