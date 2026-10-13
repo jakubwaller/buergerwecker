@@ -105,8 +105,10 @@ def main(argv=None) -> int:
 
     mapping = json.loads(pathlib.Path(args.map).read_text())
     # isolation_level=None so the explicit BEGIN IMMEDIATE above is the only
-    # transaction; timeout waits out the live poller's write lock.
-    conn = sqlite3.connect(args.db, timeout=30.0, isolation_level=None)
+    # transaction; timeout waits out the live poller's write lock; mode=rw so a
+    # mistyped path fails instead of creating an empty database.
+    conn = sqlite3.connect(f"file:{args.db}?mode=rw", uri=True, timeout=30.0,
+                           isolation_level=None)
     stats = remap(conn, mapping, apply=args.apply)
 
     print(f"{'city':<20}{'scanned':>9}{'changed':>9}{'unknown':>9}")
