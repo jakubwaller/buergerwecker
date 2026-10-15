@@ -10,7 +10,7 @@
 		0834DC86F690097936817A74 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 34DC556A8E21A7DA9EADC456 /* Foundation.framework */; };
 		0D9E38309F7FEC19DA6EF3AE /* WidgetBridgePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AA7719A838125726430E6C0 /* WidgetBridgePlugin.swift */; };
 		181E0F320DECB991CF5E0190 /* MainViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DF82FFB5D207CA3D253597D /* MainViewController.swift */; };
-		7E3C5B1B2F10000100BEEF01 /* SecureStorePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E3C5B1A2F10000100BEEF01 /* SecureStorePlugin.swift */; };
+		2A19DAB14DABFCA5ADFD4797 /* StoreReviewPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9607DA03F2DD2867002B4EA /* StoreReviewPlugin.swift */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
 		48F5C3E383C556B45EE98BA3 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 22F5FD8C45D46D60FC6BEBF2 /* PrivacyInfo.xcprivacy */; };
 		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
@@ -21,6 +21,7 @@
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
 		5DCA71A199B41A6CAAF83ACA /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 311496AD4E12339E7A3E351F /* Localizable.strings */; };
+		7E3C5B1B2F10000100BEEF01 /* SecureStorePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E3C5B1A2F10000100BEEF01 /* SecureStorePlugin.swift */; };
 		8F722F4F577E1A51B4372D13 /* BuergerweckerWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 556970A75EAFAE8D15E84C29 /* BuergerweckerWidget.swift */; };
 		9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9582B6822FE993A50072D4E8 /* SceneDelegate.swift */; };
 		A0A63534C1EFF8E97EF3E4B9 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4470BC2716D062FF388C7F0E /* SwiftUI.framework */; };
@@ -72,14 +73,15 @@
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
 		556970A75EAFAE8D15E84C29 /* BuergerweckerWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BuergerweckerWidget.swift; sourceTree = "<group>"; };
 		60DD25599925B6A759E64537 /* BuergerweckerWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BuergerweckerWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		7E3C5B1A2F10000100BEEF01 /* SecureStorePlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SecureStorePlugin.swift; sourceTree = "<group>"; };
 		9582B6822FE993A50072D4E8 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
 		9DF82FFB5D207CA3D253597D /* MainViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MainViewController.swift; sourceTree = "<group>"; };
-		7E3C5B1A2F10000100BEEF01 /* SecureStorePlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SecureStorePlugin.swift; sourceTree = "<group>"; };
 		B0E1A0012F00000100C0FFEE /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		B0E1A0032F00000100C0FFEE /* App.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 		B53288DCF3FD6A05E449BA67 /* de */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.strings; name = de; path = de.lproj/Localizable.strings; sourceTree = "<group>"; };
 		C13F50A208B2D5C4B7EE9258 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F9607DA03F2DD2867002B4EA /* StoreReviewPlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StoreReviewPlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -151,6 +153,7 @@
 				3AA7719A838125726430E6C0 /* WidgetBridgePlugin.swift */,
 				9DF82FFB5D207CA3D253597D /* MainViewController.swift */,
 				7E3C5B1A2F10000100BEEF01 /* SecureStorePlugin.swift */,
+				F9607DA03F2DD2867002B4EA /* StoreReviewPlugin.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -293,6 +296,7 @@
 				0D9E38309F7FEC19DA6EF3AE /* WidgetBridgePlugin.swift in Sources */,
 				181E0F320DECB991CF5E0190 /* MainViewController.swift in Sources */,
 				7E3C5B1B2F10000100BEEF01 /* SecureStorePlugin.swift in Sources */,
+				2A19DAB14DABFCA5ADFD4797 /* StoreReviewPlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

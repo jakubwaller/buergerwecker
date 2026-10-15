@@ -50,6 +50,10 @@ gets an id and a secret, kept in the Keychain (iOS) or encrypted under an Androi
    about right now (the server's `app/filters.py` rules over the city's snapshot, `filters.js`)
    as a row into the city overview, "Book on the city's site" when there is one, "Keep looking"
    on expired ones, edit and stop. Loaded on launch and on resume, never on a timer.
+   Answering the check-in with "No, I've got one" ends the alert and then asks the store for
+   its rating sheet (`requestReview` in `native.js`, the StoreReview plugin on both platforms);
+   whether it shows is Apple's or Google's call (never in TestFlight, on Android only in a copy
+   installed from Google Play), and nothing comes back or is stored.
 7. **Notifications**: the slots and check-in notifications of the last 30 days (at most 50),
    newest first, an unread count on the tab, "Clear list". Kept on the phone only, in
    Preferences (`inbox.js`); "Delete my data" clears it. In: a push received in the foreground,
@@ -106,7 +110,8 @@ client/
                         tests/test_no_real_pii.py reads the name as an email address
   ios/App/              the Xcode project (SPM, no CocoaPods), iOS 18
     App/                AppDelegate (hands the APNs token to the push plugin), SceneDelegate,
-                        MainViewController (registers WidgetBridgePlugin and SecureStorePlugin),
+                        MainViewController (registers WidgetBridgePlugin, SecureStorePlugin and
+                        StoreReviewPlugin, the App Store's rating sheet),
                         Info.plist, App.entitlements (aps-environment, App Group, keychain
                         group), PrivacyInfo.xcprivacy
     BuergerweckerWidget/ the WidgetKit extension (SwiftUI): the widget, its Info.plist,
@@ -124,8 +129,9 @@ client/
   ios/testflight/       what-to-test.<locale>.txt, one per TestFlight locale
   android/              the Android project; MainActivity registers PushGatePlugin (is push
                         available in this build, and the notification settings button),
-                        WidgetBridgePlugin and SecureStorePlugin (SecureStore.java: the
-                        credential under an AndroidKeyStore key); EarliestSlotWidget is the
+                        WidgetBridgePlugin, SecureStorePlugin (SecureStore.java: the
+                        credential under an AndroidKeyStore key) and StoreReviewPlugin (Play's
+                        rating sheet); EarliestSlotWidget is the
                         home-screen widget; res/xml/data_extraction_rules.xml and
                         backup_rules.xml keep the credential out of backup and transfer
   android/play.mjs      Google Play Developer API: upload a signed bundle to a track

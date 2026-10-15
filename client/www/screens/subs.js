@@ -6,7 +6,7 @@
 import { t, getLang } from "../i18n.js";
 import { h, loading, errorBox, errorMessage, toast } from "../ui.js";
 import { api } from "../api.js";
-import { openExternal } from "../native.js";
+import { openExternal, requestReview } from "../native.js";
 import { filterSummary, formatInstant, formatInstantDay, formatSlot } from "../format.js";
 import { matchingSlots } from "../filters.js";
 import * as push from "../push.js";
@@ -115,7 +115,12 @@ function card(sub, detail, snapshot) {
     const yes = h("button", { class: "btn btn-primary" }, t("subs.checkinYes"));
     yes.onclick = () => act(yes, renew(sub));
     const no = h("button", { class: "btn btn-secondary" }, t("subs.checkinNo"));
-    no.onclick = () => act(no, stop(sub, false));
+    // "I've got one" is the moment the app did its job: ask for a rating once
+    // the alert is gone, a second later so the sheet does not cover the toast.
+    no.onclick = () => act(no, async () => {
+      await stop(sub, false)();
+      setTimeout(requestReview, 1000);
+    });
     buttons.push(h("p", { class: "checkin-q" }, t("subs.checkinQ")), yes, no);
   } else {
     if (expired) {
