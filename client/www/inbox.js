@@ -142,6 +142,9 @@ export function sanitize(v, now) {
 export const items = () => box.items;
 export const seenAt = () => box.seenAt;
 export const unread = () => box.items.filter((e) => e.at > box.seenAt).length;
+// Whether this phone's list holds a slots notification of the alert: the app
+// found it something (within the list's 30 days, unless the list was cleared).
+export const notifiedSlots = (subId, list = box.items) => list.some((e) => e.type === "slots" && e.sub === String(subId));
 
 // Called after every change, for the tab's unread count.
 let changedHook = () => {};

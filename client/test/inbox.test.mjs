@@ -271,3 +271,10 @@ test("Android: a shade copy after a tap or foreground copy that reads the same i
   assert.equal(inbox.items().length, 2);
   assert.equal(inbox.unread(), 1);
 });
+
+test("notifiedSlots: a slots notification of that alert, not a check-in or another alert's", () => {
+  const list = [{ type: "checkin", sub: "7" }, { type: "slots", sub: "8" }];
+  assert.equal(inbox.notifiedSlots(7, list), false);
+  assert.equal(inbox.notifiedSlots(8, list), true);
+  assert.equal(inbox.notifiedSlots(9, []), false);
+});

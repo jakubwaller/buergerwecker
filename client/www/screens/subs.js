@@ -7,6 +7,7 @@ import { t, getLang } from "../i18n.js";
 import { h, loading, errorBox, errorMessage, toast } from "../ui.js";
 import { api } from "../api.js";
 import { openExternal, requestReview } from "../native.js";
+import { notifiedSlots } from "../inbox.js";
 import { filterSummary, formatInstant, formatInstantDay, formatSlot } from "../format.js";
 import { matchingSlots } from "../filters.js";
 import * as push from "../push.js";
@@ -37,7 +38,12 @@ const renew = (sub) => async () => {
   render();
 };
 
-const stop = (sub, ask = true) => async () => {
+// Ending an alert after the app found it slots is the moment it did its job:
+// "I've got one" (`gotOne`), or Stop on an alert this phone was notified about.
+// Then the store is asked for its rating sheet once the alert is gone, a second
+// later so the sheet does not cover the toast. An alert that never found
+// anything asks nothing: its reader is more likely giving up.
+const stop = (sub, ask = true, gotOne = false) => async () => {
   if (ask && !globalThis.confirm(t("subs.confirmStop"))) return;
   try {
     await push.authed(() => api.deleteSubscription(sub.id));
@@ -48,6 +54,7 @@ const stop = (sub, ask = true) => async () => {
   if (state.checkin === sub.id) state.checkin = null;
   toast(t("subs.stopped"));
   render();
+  if (gotOne || notifiedSlots(sub.id)) setTimeout(requestReview, 1000);
 };
 
 function slotLine(slot, lang, cls = null) {
@@ -115,12 +122,7 @@ function card(sub, detail, snapshot) {
     const yes = h("button", { class: "btn btn-primary" }, t("subs.checkinYes"));
     yes.onclick = () => act(yes, renew(sub));
     const no = h("button", { class: "btn btn-secondary" }, t("subs.checkinNo"));
-    // "I've got one" is the moment the app did its job: ask for a rating once
-    // the alert is gone, a second later so the sheet does not cover the toast.
-    no.onclick = () => act(no, async () => {
-      await stop(sub, false)();
-      setTimeout(requestReview, 1000);
-    });
+    no.onclick = () => act(no, stop(sub, false, true));
     buttons.push(h("p", { class: "checkin-q" }, t("subs.checkinQ")), yes, no);
   } else {
     if (expired) {

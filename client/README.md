@@ -50,7 +50,8 @@ gets an id and a secret, kept in the Keychain (iOS) or encrypted under an Androi
    about right now (the server's `app/filters.py` rules over the city's snapshot, `filters.js`)
    as a row into the city overview, "Book on the city's site" when there is one, "Keep looking"
    on expired ones, edit and stop. Loaded on launch and on resume, never on a timer.
-   Answering the check-in with "No, I've got one" ends the alert and then asks the store for
+   Answering the check-in with "No, I've got one", or stopping an alert that the Notifications
+   list shows slots for (`notifiedSlots` in `inbox.js`), ends the alert and then asks the store for
    its rating sheet (`requestReview` in `native.js`, the StoreReview plugin on both platforms);
    whether it shows is Apple's or Google's call (never in TestFlight, on Android only in a copy
    installed from Google Play), and nothing comes back or is stored.

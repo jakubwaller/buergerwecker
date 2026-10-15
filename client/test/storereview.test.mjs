@@ -42,10 +42,11 @@ test("requestReview swallows a rejection", async () => {
 
 const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
 
-test("only the check-in's \"I've got one\" asks", () => {
+test("only ending an alert asks: \"I've got one\", or Stop after a slots notification", () => {
   const subs = read("../www/screens/subs.js");
   assert.equal(subs.match(/requestReview\b/g).length, 2, "the import and one call");
-  assert.match(subs, /await stop\(sub, false\)\(\);\s*setTimeout\(requestReview, 1000\);/);
+  assert.match(subs, /if \(gotOne \|\| notifiedSlots\(sub\.id\)\) setTimeout\(requestReview, 1000\);/);
+  assert.match(subs, /stop\(sub, false, true\)/);
 });
 
 test("Android: StoreReviewPlugin is named StoreReview, registered, and Play Review is a dependency", () => {
