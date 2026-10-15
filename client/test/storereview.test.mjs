@@ -1,4 +1,5 @@
-// The rating ask after "I've got one" (native.js requestReview) and the two
+// The rating ask when an alert ends after doing its job ("I've got one", or
+// Stop after a slots notification; native.js requestReview) and the two
 // StoreReview plugins it talks to. A plugin that is missing or unregistered
 // fails silently on the phone, so the wiring is held here.
 import { test } from "node:test";
