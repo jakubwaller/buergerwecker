@@ -24,15 +24,15 @@ export async function openExternal(url) {
 // The OS settings page for this app, where notifications are switched on.
 // iOS: the app-settings: URL, which Capacitor hands to the system because it
 // is not the app's own origin. Android: the app's own PushGate plugin.
+export async function openAppSettings() {
+  const gate = plugin("PushGate");
+  if (gate?.openSettings) return gate.openSettings();
+  if (platform() === "ios") globalThis.location.href = "app-settings:";
+}
+
 // Asks the App Store or Google Play for its rating sheet. Whether it shows is
 // the store's call and nothing comes back; an older build without the plugin,
 // or a failing one, is no reason to bother the reader.
 export function requestReview() {
   plugin("StoreReview")?.requestReview().catch(() => {});
-}
-
-export async function openAppSettings() {
-  const gate = plugin("PushGate");
-  if (gate?.openSettings) return gate.openSettings();
-  if (platform() === "ios") globalThis.location.href = "app-settings:";
 }
