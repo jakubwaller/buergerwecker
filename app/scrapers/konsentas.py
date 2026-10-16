@@ -107,8 +107,15 @@ def _headers(s: dict) -> dict:
 def _step(http: requests.Session, base: str, s: dict, endpoint: str,
           fields: dict) -> None:
     # Multipart, as the browser sends it (otaquery requServerWithFiles).
-    r = http.post(f"{base}/api/{endpoint}/", headers=_headers(s),
-                  files={k: (None, v) for k, v in fields.items()}, timeout=30)
+    try:
+        r = http.post(f"{base}/api/{endpoint}/", headers=_headers(s),
+                      files={k: (None, v) for k, v in fields.items()},
+                      timeout=30)
+    except requests.RequestException:
+        # The city may have taken the step anyway; we no longer know where
+        # the signup stands, so the next poll abandons it.
+        s["op_type"] = None
+        raise
     data = _data(r)
     s["op_id"], s["op_type"] = data.get("op_id"), data.get("op_type")
 
@@ -128,10 +135,13 @@ def _signup_at_services(http: requests.Session, base: str,
     key = (base, form_id)
     s = _SESSIONS.get(key)
     if s is not None and _now() - s["at"] < _TOKEN_TTL_SECONDS:
-        if s["op_type"] == "ota_termin":
-            _back(http, base, s)
-        if s["op_type"] == "ota_processes":
-            return s
+        try:
+            if s["op_type"] == "ota_termin":
+                _back(http, base, s)
+            if s["op_type"] == "ota_processes":
+                return s
+        except RuntimeError:
+            pass  # the signup, not one service, is broken: replace it below
     _SESSIONS.pop(key, None)
     opened = _OPENED.get(key)
     if opened is not None and _now() - opened < _REOPEN_SECONDS:
@@ -162,7 +172,8 @@ def _fetch(http: requests.Session, base: str, form_id: int,
         # Walk back so the other services keep this signup; if that does not
         # land on the service step, the next poll abandons it.
         landed = s["op_type"]
-        _back(http, base, s)
+        if landed != "ota_processes":  # still on the service step: refused
+            _back(http, base, s)
         raise RuntimeError(f"konsentas: service {process} led to step "
                            f"{landed!r}, not the slot step")
     start = int(_time.time())

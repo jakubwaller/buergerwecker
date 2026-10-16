@@ -209,6 +209,46 @@ def test_a_refused_token_is_replaced_once(clock):
     assert _startups(http) == 2
 
 
+def test_a_signup_that_cannot_walk_back_is_replaced(clock):
+    """The walk-back failing is the signup's fault, not one service's: keeping
+    it would leave every service on the form dark until the token runs out."""
+    http = MagicMock()
+    http.get.side_effect = [_startup(), _resp(TIMESLOTS),
+                            _startup(), _resp(TIMESLOTS)]
+    http.post.side_effect = [_at("ota_termin", "id127"),
+                             _resp({}, status=422, code=233),  # PreStep
+                             _at("ota_termin", "id127")]
+    konsentas.poll(_plan(), http=http)
+    clock[0] += konsentas._REOPEN_SECONDS
+    assert len(konsentas.poll(_plan("9_362"), http=http)) == 2
+    assert _startups(http) == 2
+
+
+def test_a_lost_reply_abandons_the_signup_on_the_next_poll(clock):
+    """A timeout leaves the city's step unknown; never step on from a guess."""
+    import requests
+    http = MagicMock()
+    http.get.side_effect = [_startup(), _startup(), _resp(TIMESLOTS)]
+    http.post.side_effect = [requests.Timeout(), _at("ota_termin", "id127")]
+    with pytest.raises(requests.Timeout):
+        konsentas.poll(_plan(), http=http)
+    clock[0] += konsentas._REOPEN_SECONDS
+    assert len(konsentas.poll(_plan(), http=http)) == 2
+    assert _startups(http) == 2
+
+
+def test_a_service_refused_on_the_service_step_is_not_walked_back():
+    http = MagicMock()
+    http.get.side_effect = [_startup(), _resp(TIMESLOTS)]
+    http.post.side_effect = [_at("ota_processes", "id2"),
+                             _at("ota_termin", "id127")]
+    with pytest.raises(RuntimeError, match="ota_processes"):
+        konsentas.poll(_plan("9_999"), http=http)
+    assert len(konsentas.poll(_plan("9_26"), http=http)) == 2
+    assert [c.args[0].rsplit("/", 2)[1] for c in http.post.call_args_list] \
+        == ["postOtaNextStep", "postOtaNextStep"]
+
+
 def test_stuttgart_tenant_is_wired_to_konsentas():
     assert get_scraper("stuttgart-fuehrerschein") is konsentas
     scfg = load_catalog("stuttgart-fuehrerschein").scraper_config
