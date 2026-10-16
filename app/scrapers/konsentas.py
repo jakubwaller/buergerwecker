@@ -12,9 +12,10 @@ carries its `signup_id`), so ONE signup per form is kept for most of the
 token's 8-hour life and walked back (`postOtaPreStep`) and forward to each
 service in turn, rather than a fresh one per poll. A service that fails is
 that service's problem: the signup is walked back and kept for the others.
-Only a token the city no longer accepts is replaced, and never more than once
-per `_REOPEN_SECONDS`, whatever goes wrong, so a fault can cost the city a
-couple of records an hour but never one per poll. The poller polls plans one
+It is replaced only when the city refuses its token or we lose track of its
+step (a failed walk-back, a lost reply), and never more than once per
+`_REOPEN_SECONDS` whatever goes wrong, so a fault can cost the city a couple
+of records an hour but never one per poll. The poller polls plans one
 after another in one process, so this module-level state is never raced.
 """
 from __future__ import annotations
