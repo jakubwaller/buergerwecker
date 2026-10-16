@@ -30,8 +30,17 @@ TIMESLOTS = {"termins": [
 @pytest.fixture(autouse=True)
 def _no_cached_signup():
     konsentas._SESSIONS.clear()
+    konsentas._OPENED.clear()
     yield
     konsentas._SESSIONS.clear()
+    konsentas._OPENED.clear()
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(konsentas, "_now", lambda: now[0])
+    return now
 
 
 def _resp(data, status=200, code=3):
@@ -105,9 +114,7 @@ def test_next_service_reuses_the_signup_instead_of_opening_another():
     assert forward.kwargs["files"]["formdata[processes][0]"] == (None, "9_362")
 
 
-def test_signup_is_renewed_before_the_token_runs_out(monkeypatch):
-    clock = [1000.0]
-    monkeypatch.setattr(konsentas, "_now", lambda: clock[0])
+def test_signup_is_renewed_before_the_token_runs_out(clock):
     http = MagicMock()
     http.get.side_effect = [_startup(), _resp(TIMESLOTS),
                             _startup(), _resp(TIMESLOTS)]
@@ -123,29 +130,83 @@ def test_signup_is_renewed_before_the_token_runs_out(monkeypatch):
                for c in http.post.call_args_list)
 
 
-def test_a_service_that_skips_the_slot_step_is_never_pushed_further():
-    """A service leading to a review step must not be stepped on: the step
-    after review submits. The signup is dropped and nothing is retried."""
+def _startups(http):
+    return [c.args[0] for c in http.get.call_args_list].count(
+        f"{BASE}/api/getOtaStartUp/")
+
+
+def test_a_service_that_skips_the_slot_step_is_walked_back_not_on():
+    """A service leading to a review step must never be stepped on (past
+    review comes a submission): the signup goes back to the service step and
+    the next service polls on it, no new signup, nothing retried."""
     http = MagicMock()
-    http.get.side_effect = [_startup()]
-    http.post.side_effect = [_at("ota_review", "id119")]
+    http.get.side_effect = [_startup(), _resp(TIMESLOTS)]
+    http.post.side_effect = [_at("ota_review", "id119"),
+                             _at("ota_processes", "id2"),
+                             _at("ota_termin", "id127")]
     with pytest.raises(RuntimeError, match="ota_review"):
+        konsentas.poll(_plan("9_999"), http=http)
+    assert len(konsentas.poll(_plan("9_26"), http=http)) == 2
+    review, back, forward = http.post.call_args_list
+    assert back.args[0] == f"{BASE}/api/postOtaPreStep/"
+    assert back.kwargs["files"]["op_id"] == (None, "id119")
+    assert forward.kwargs["files"]["op_id"] == (None, "id2")
+    assert _startups(http) == 1
+
+
+def test_a_failing_service_keeps_the_signup_for_the_others():
+    http = MagicMock()
+    http.get.side_effect = [_startup(), _resp(TIMESLOTS)]
+    http.post.side_effect = [_resp({}, status=422, code=233),  # refused
+                             _at("ota_termin", "id127")]
+    with pytest.raises(RuntimeError, match="233"):
+        konsentas.poll(_plan("9_999"), http=http)
+    assert len(konsentas.poll(_plan("9_26"), http=http)) == 2
+    assert _startups(http) == 1
+
+
+def test_a_fault_never_opens_more_than_one_signup_per_half_hour(clock):
+    """Whatever keeps failing, the city gets at most one new signup per
+    _REOPEN_SECONDS, not one per plan per poll."""
+    http = MagicMock()
+    http.get.return_value = _resp({}, status=403, code=345)
+    for _ in range(14 * 3):  # three polls of every service
+        with pytest.raises(RuntimeError):
+            konsentas.poll(_plan(), http=http)
+    assert _startups(http) == 1
+    clock[0] += konsentas._REOPEN_SECONDS
+    with pytest.raises(RuntimeError):
         konsentas.poll(_plan(), http=http)
-    assert http.post.call_count == 1
+    assert _startups(http) == 2
+
+
+def test_a_new_signup_off_the_service_step_is_not_stepped_on():
+    http = MagicMock()
+    http.get.side_effect = [_resp({"ota_jwt": "jwt-1", "op_id": "id5",
+                                   "op_type": "ota_consent"})]
+    with pytest.raises(RuntimeError, match="ota_consent"):
+        konsentas.poll(_plan(), http=http)
+    assert http.post.call_count == 0
     assert konsentas._SESSIONS == {}
 
 
-def test_a_stale_signup_is_replaced_once():
+def test_an_html_error_page_is_an_error_not_a_crash():
+    page = MagicMock(status_code=502, json=MagicMock(side_effect=ValueError))
+    with pytest.raises(RuntimeError, match="502"):
+        konsentas._data(page)
+
+
+def test_a_refused_token_is_replaced_once(clock):
     http = MagicMock()
     http.get.side_effect = [_startup(), _resp(TIMESLOTS),
                             _startup(), _resp(TIMESLOTS)]
     http.post.side_effect = [_at("ota_termin", "id127"),
-                             _resp({}, status=401, code=0),  # PreStep refused
+                             _resp({}, status=500, code=731),  # PreStep
                              _at("ota_termin", "id127")]
     konsentas.poll(_plan(), http=http)
+    clock[0] += konsentas._REOPEN_SECONDS
     assert len(konsentas.poll(_plan("9_362"), http=http)) == 2
-    gets = [c.args[0] for c in http.get.call_args_list]
-    assert gets.count(f"{BASE}/api/getOtaStartUp/") == 2
+    assert _startups(http) == 2
 
 
 def test_stuttgart_tenant_is_wired_to_konsentas():

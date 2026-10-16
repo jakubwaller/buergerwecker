@@ -10,7 +10,11 @@ page, with the person booking.
 Every getOtaStartUp opens a signup record on the city's side (the token
 carries its `signup_id`), so ONE signup per form is kept for most of the
 token's 8-hour life and walked back (`postOtaPreStep`) and forward to each
-service in turn, rather than a fresh one per poll. The poller polls plans one
+service in turn, rather than a fresh one per poll. A service that fails is
+that service's problem: the signup is walked back and kept for the others.
+Only a token the city no longer accepts is replaced, and never more than once
+per `_REOPEN_SECONDS`, whatever goes wrong, so a fault can cost the city a
+couple of records an hour but never one per poll. The poller polls plans one
 after another in one process, so this module-level state is never raced.
 """
 from __future__ import annotations
@@ -21,10 +25,21 @@ from app.catalog import load_catalog
 
 # The token lives 8 h (exp - iat); renew an hour early rather than meet a 401.
 _TOKEN_TTL_SECONDS = 7 * 3600
+# Floor between two getOtaStartUp calls per form, failed attempts included.
+_REOPEN_SECONDS = 30 * 60
 # The city shows three weeks ahead; a wider window costs nothing.
 _HORIZON_SECONDS = 42 * 86400
+# Codes for a token the city does not accept, probed 2026-10-16: 345 for none
+# or an unknown one (HTTP 403), 731 for a failed signature check (HTTP 500).
+_STALE_CODES = {345, 731}
 # (base_url, form_id) -> {"token", "op_id", "op_type", "at"}
 _SESSIONS: dict[tuple[str, int], dict] = {}
+# (base_url, form_id) -> when getOtaStartUp was last called
+_OPENED: dict[tuple[str, int], float] = {}
+
+
+class _StaleSignup(RuntimeError):
+    """The city no longer accepts our token."""
 
 
 def _now() -> float:
@@ -46,7 +61,7 @@ def parse_slots(data: dict, *, service_id: str, location_id: str) -> list[Slot]:
         minutes = str(t.get("time", ""))
         if not minutes.isdigit():
             continue
-        if (t.get("places") or 0) <= (t.get("places_used") or 0):
+        if int(t.get("places") or 0) <= int(t.get("places_used") or 0):
             continue
         yd = str(t["yeardate"])
         date_iso = f"{yd[:4]}-{yd[4:6]}-{yd[6:8]}"
@@ -67,11 +82,18 @@ def parse_slots(data: dict, *, service_id: str, location_id: str) -> list[Slot]:
 
 
 def _data(r) -> dict:
-    """The `data` of a konsentas answer; anything but HTTP 200 + code 3 raises."""
-    body = r.json()
+    """The `data` of a konsentas answer; anything but HTTP 200 + code 3 raises,
+    as _StaleSignup when it is the token that was refused."""
+    try:
+        body = r.json()
+    except ValueError:  # an HTML error page from a proxy or firewall
+        body = {}
+    msg = (f"konsentas HTTP {r.status_code} code {body.get('code')}: "
+           f"{body.get('msg')}")
+    if r.status_code in (401, 403) or body.get("code") in _STALE_CODES:
+        raise _StaleSignup(msg)
     if r.status_code != 200 or body.get("code") != 3:
-        raise RuntimeError(f"konsentas HTTP {r.status_code} code "
-                           f"{body.get('code')}: {body.get('msg')}")
+        raise RuntimeError(msg)
     return body.get("data") or {}
 
 
@@ -91,29 +113,41 @@ def _step(http: requests.Session, base: str, s: dict, endpoint: str,
     s["op_id"], s["op_type"] = data.get("op_id"), data.get("op_type")
 
 
+def _back(http: requests.Session, base: str, s: dict) -> None:
+    _step(http, base, s, "postOtaPreStep",
+          {"op_id": s["op_id"], "navigation": "-1"})
+
+
 def _signup_at_services(http: requests.Session, base: str,
                         form_id: int) -> dict:
     """The cached signup walked back to the service step, or a fresh one.
 
-    Only ever step forward from the service step: a signup left anywhere else
-    (a form whose service leads to a review step, say) is abandoned, never
-    pushed on, because the step after review is a submission.
+    Only ever step forward from the service step: a signup anywhere else is
+    abandoned, never pushed on, because past a review step comes a submission.
     """
     key = (base, form_id)
     s = _SESSIONS.get(key)
     if s is not None and _now() - s["at"] < _TOKEN_TTL_SECONDS:
         if s["op_type"] == "ota_termin":
-            _step(http, base, s, "postOtaPreStep",
-                  {"op_id": s["op_id"], "navigation": "-1"})
+            _back(http, base, s)
         if s["op_type"] == "ota_processes":
             return s
+    _SESSIONS.pop(key, None)
+    opened = _OPENED.get(key)
+    if opened is not None and _now() - opened < _REOPEN_SECONDS:
+        raise RuntimeError(f"konsentas: a signup was opened "
+                           f"{int(_now() - opened)} s ago, not opening another")
+    _OPENED[key] = _now()
     r = http.get(f"{base}/api/getOtaStartUp/",
                  params={"signupform_id": form_id, "userauth": "",
                          "queryParameter[signup_new]": "1"},
                  headers={"X-Requested-With": "XMLHttpRequest"}, timeout=30)
     data = _data(r)
+    if data.get("op_type") != "ota_processes":
+        raise RuntimeError(f"konsentas: a new signup starts at step "
+                           f"{data.get('op_type')!r}, not the service step")
     s = {"token": data["ota_jwt"], "op_id": data.get("op_id"),
-         "op_type": data.get("op_type"), "at": _now()}
+         "op_type": "ota_processes", "at": _now()}
     _SESSIONS[key] = s
     return s
 
@@ -125,9 +159,12 @@ def _fetch(http: requests.Session, base: str, form_id: int,
           {"formdata[processes][0]": process, "op_id": s["op_id"],
            "navigation": "1"})
     if s["op_type"] != "ota_termin":
-        _SESSIONS.pop((base, form_id), None)
+        # Walk back so the other services keep this signup; if that does not
+        # land on the service step, the next poll abandons it.
+        landed = s["op_type"]
+        _back(http, base, s)
         raise RuntimeError(f"konsentas: service {process} led to step "
-                           f"{s['op_type']!r}, not the slot step")
+                           f"{landed!r}, not the slot step")
     start = int(_time.time())
     r = http.get(f"{base}/api/brick_ota_termin_getTimeslot/",
                  params={"start": start, "end": start + _HORIZON_SECONDS},
@@ -146,16 +183,12 @@ def poll(plan: PollPlan, http: requests.Session) -> list[Slot]:
         )
     base = scfg["base_url"].rstrip("/")
     form_id = int(scfg["form_id"])
-    reused = (base, form_id) in _SESSIONS
     try:
         data = _fetch(http, base, form_id, plan.appointment_type)
-    except RuntimeError:
-        # A token the city expired early, or a signup it cleaned up: start
-        # over once with a fresh one. A fresh signup that fails would fail
-        # again, and each retry is one more record on the city's side.
+    except _StaleSignup:
+        # The city dropped our token early: once more with a fresh signup,
+        # which _REOPEN_SECONDS refuses if this one was itself just opened.
         _SESSIONS.pop((base, form_id), None)
-        if not reused:
-            raise
         data = _fetch(http, base, form_id, plan.appointment_type)
     # One office per form; the subscriber's location filter applies downstream.
     location_id = next(iter(catalog.locations.values()))
