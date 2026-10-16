@@ -4,11 +4,11 @@ Free email notifications for free Amt appointments in German cities.
 
 **Live: [buergerwecker.de](https://buergerwecker.de)**
 
-**Covered cities (29):** Augsburg, Bochum, Bonn, Bottrop, Braunschweig,
+**Covered cities (30):** Augsburg, Bochum, Bonn, Bottrop, Braunschweig,
 Darmstadt, Dresden, Düsseldorf, Hagen, Ingolstadt, Kaiserslautern, Kassel,
 Kiel, Leipzig, Ludwigshafen, Lübeck, Mainz, Moers, Mönchengladbach,
 Münster, Neuss, Nürnberg, Oberhausen, Oldenburg, Paderborn, Remscheid,
-Saarbrücken, Salzgitter, Trier.
+Saarbrücken, Salzgitter, Stuttgart, Trier.
 
 Mostly Bürgerbüro services (Wohnsitzanmeldung, Ausweise etc.). Leipzig also
 has the Ausländerbehörde (residence-document pickup). The live list is on

@@ -309,6 +309,8 @@ def booking_start_url(scfg: dict, lang: str = "de") -> str:
         return f"{scfg['base_url']}/?uid={scfg['uid']}&lang={lang}"
     if vendor == "tevis":
         return f"{scfg['base_url']}/select2?md={scfg['md']}"
+    if vendor == "konsentas":
+        return f"{scfg['base_url']}/form/{scfg['form_id']}/?signup_new=1"
     raise CatalogError(f"no booking-start URL for vendor: {vendor}")
 
 

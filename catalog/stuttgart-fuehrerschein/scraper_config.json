@@ -1,0 +1,6 @@
+{
+  "vendor": "konsentas",
+  "base_url": "https://stuttgart.konsentas.de",
+  "form_id": 3,
+  "poll_interval_seconds": 300
+}

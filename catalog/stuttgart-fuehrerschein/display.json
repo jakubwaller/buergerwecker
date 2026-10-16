@@ -1,0 +1,22 @@
+{
+  "city_name": {
+    "de": "Stuttgart",
+    "en": "Stuttgart"
+  },
+  "office": {
+    "de": "Führerscheinstelle",
+    "en": "Driving licence office"
+  },
+  "label": {
+    "de": "Stuttgart: Führerscheinstelle (Umtausch, Erweiterung u. a.)",
+    "en": "Stuttgart: driving licence office (exchange, extension, …)"
+  },
+  "heading": {
+    "de": "Nie wieder freie Termine bei der Führerscheinstelle Stuttgart verpassen",
+    "en": "Never miss a free slot at Stuttgart's driving licence office"
+  },
+  "note": {
+    "de": "Hinweis: Die Stadt gibt Termine für die nächsten drei Wochen frei, und laut Stadt werden auch tagsüber wieder Termine frei. Gebucht wird weiterhin selbst und kostenlos auf der offiziellen Terminseite der Landeshauptstadt Stuttgart.",
+    "en": "Note: the city releases slots up to three weeks ahead, and says slots also free up again during the day. You still book yourself, free of charge, on the City of Stuttgart's official appointment page."
+  }
+}
