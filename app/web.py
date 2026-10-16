@@ -306,6 +306,7 @@ _CONTACT_PROJECTS: dict[str, str] = {
     "papamap": "PapaMap",
     "zapfkompass": "Zapfkompass",
     "crashgap": "CrashGap",
+    "bundesschnitt": "Bundesschnitt",
 }
 
 _CONTACT_NAME_MAX = 200

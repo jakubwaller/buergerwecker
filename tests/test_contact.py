@@ -62,6 +62,17 @@ def test_crashgap_is_a_selectable_project(client):
     assert "Projekt: CrashGap" in body
 
 
+def test_bundesschnitt_is_a_selectable_project(client):
+    body = client.get("/kontakt?projekt=bundesschnitt").get_data(as_text=True)
+    assert '<option value="bundesschnitt" selected' in body
+    with patch("app.web.mail_send") as send:
+        r = _post(client, "10.1.0.10", projekt="bundesschnitt")
+    assert r.status_code == 200
+    _conn, _to, subject, body = send.call_args.args
+    assert "Bundesschnitt" in subject
+    assert "Projekt: Bundesschnitt" in body
+
+
 def test_valid_submission_sends_to_developer(client):
     with patch("app.web.mail_send") as send:
         r = _post(client, "10.1.0.1", message="Ist das Fass leer?")
