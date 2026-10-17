@@ -1071,8 +1071,8 @@ def create_app() -> Flask:
         if request.method == "GET":
             return _result_page(
                 "confirm_unsubscribe", lang,
-                post_url=f"/unsubscribe/{token}?lang={lang}",
-                action_label="Abmelden" if lang == "de" else "Unsubscribe")
+                post_url=f"/unsubscribe/{token}?lang={'en' if lang == 'en' else 'de'}",
+                action_label="Unsubscribe" if lang == "en" else "Abmelden")
         soft_delete(conn, sub_id)
         return _result_page("unsubscribed", lang)
 
