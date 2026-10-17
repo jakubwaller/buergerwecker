@@ -28,7 +28,6 @@ class Config:
     token_secret_previous: str
     admin_token: str
     public_base_url: str
-    dedup_window_hours: int
     rate_limit_minutes: int
     adaptive_rate_limit_max_multiplier: int
     max_digests_per_subscriber_per_day: int
@@ -210,7 +209,6 @@ def load_config() -> Config:
         token_secret_previous=os.environ.get("TOKEN_SECRET_PREVIOUS", ""),
         admin_token=_req("ADMIN_TOKEN"),
         public_base_url=_req("PUBLIC_BASE_URL"),
-        dedup_window_hours=_req_int("DEDUP_WINDOW_HOURS"),
         rate_limit_minutes=_req_int("RATE_LIMIT_MINUTES"),
         # Ceiling on how far the adaptive cadence may stretch RATE_LIMIT_MINUTES
         # for subscribers whose filter is matching a lot of slots (see

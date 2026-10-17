@@ -313,6 +313,7 @@ CREATE TABLE IF NOT EXISTS city_state (
   counts_date           TEXT
 );
 
+-- Unused since 2026-07 (per-slot links are gone); kept so existing databases keep their shape.
 CREATE TABLE IF NOT EXISTS slots_cache (
   slot_token   TEXT PRIMARY KEY,
   city         TEXT NOT NULL,

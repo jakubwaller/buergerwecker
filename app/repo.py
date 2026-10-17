@@ -672,6 +672,26 @@ def set_special_consent(conn: sqlite3.Connection, sub_id: int,
         (sql_ts(datetime.utcnow()) if given else None, sub_id),
     )
 
+def update_filter(conn: sqlite3.Connection, sub_id: int, filter_: Filter,
+                  sensitive: bool, sensitive_ttl_days: int) -> None:
+    """Replace a subscription's filter; the caller owns the transaction.
+
+    The cadence state goes with it: both signals were measured against the OLD
+    filter, and keeping them would leave someone who just narrowed a firehose
+    down to one scarce office stuck on the slow cadence their previous filter
+    earned. A sensitive service also pulls the expiry in to the shorter
+    retention, never pushes it out, so an edit can't extend an ordinary
+    subscription."""
+    conn.execute("UPDATE subscriptions SET filters_json=?, "
+                 "last_match_count=NULL, consecutive_digests=0 WHERE id=?",
+                 (filter_.to_json(), sub_id))
+    set_special_consent(conn, sub_id, sensitive)
+    if sensitive:
+        conn.execute(
+            "UPDATE subscriptions SET expires_at=datetime('now', ?) "
+            "WHERE id=? AND expires_at > datetime('now', ?)",
+            (f"+{sensitive_ttl_days} days", sub_id, f"+{sensitive_ttl_days} days"))
+
 def confirm(conn: sqlite3.Connection, sub_id: int) -> None:
     conn.execute(
         "UPDATE subscriptions SET confirmed_at=CURRENT_TIMESTAMP "

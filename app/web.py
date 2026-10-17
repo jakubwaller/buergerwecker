@@ -19,7 +19,7 @@ from app.catalog import (load_catalog, available_cities, booking_start_url,
 from app.models import Filter
 from app.signup import FormError as _FormError, build_filter
 from app.repo import (insert_pending, confirm,
-                      soft_delete, suppression_reason, clear_delivery_block)
+                      soft_delete, suppression_reason, clear_delivery_block, update_filter)
 from app.ratelimit import GLOBAL_IP_LIMITER, email_rate_limit_ok
 from app.tokens import sign, verify, InvalidToken
 from app.i18n import format_date
@@ -1097,26 +1097,7 @@ def create_app() -> Flask:
                                        max_plans_per_city=cfg.max_plans_per_city,
                                        exclude_id=sub_id):
                     return _result_page("waitlist_full", lang, status=503)
-                # Clear the cadence state along with the filter: both signals
-                # were measured against the OLD filter, and keeping them would
-                # leave someone who just narrowed a firehose down to one scarce
-                # office stuck on the slow cadence their previous filter earned.
-                conn.execute("UPDATE subscriptions SET filters_json=?, "
-                             "last_match_count=NULL, consecutive_digests=0 "
-                             "WHERE id=?",
-                             (f.to_json(), sub_id))
-                from app.repo import set_special_consent
-                set_special_consent(conn, sub_id, sensitive)
-                if sensitive:
-                    # Switching into a special-category service also pulls the
-                    # expiry in to the shorter retention — never pushes it out,
-                    # so this can't be used to extend an ordinary subscription.
-                    short = ttl_days_for(cfg, True)
-                    conn.execute(
-                        "UPDATE subscriptions SET expires_at=datetime('now', ?) "
-                        "WHERE id=? AND expires_at > datetime('now', ?)",
-                        (f"+{short} days", sub_id, f"+{short} days"),
-                    )
+                update_filter(conn, sub_id, f, sensitive, ttl_days_for(cfg, True))
             back_label = ("Zurück zu den Einstellungen" if lang == "de"
                           else "Back to your settings")
             return _result_page("updated", lang,
@@ -1211,31 +1192,17 @@ def create_app() -> Flask:
 
     @app.route("/go/<slot_token>")
     def go_route(slot_token):
-        cfg = app.config["TERMINE_CONFIG"]
-        # City-level link (current emails): /go/<city> — no colon. Resolved
-        # from the catalog at click time so it never expires and survives an
-        # upstream base-URL change. Tokens with a colon are per-slot links
-        # from old emails, served from slots_cache until housekeeping prunes
-        # them (per-slot deep links turned out not to work upstream — the
-        # booking flow is session-bound; see catalog.booking_start_url).
-        if ":" not in slot_token:
-            lang = "en" if request.args.get("lang") == "en" else "de"
-            if not re.fullmatch(r"[a-z0-9-]+", slot_token):
-                return _result_page("link_expired", lang, status=410)
-            try:
-                scfg = load_catalog(slot_token).scraper_config
-                return redirect(booking_start_url(scfg, lang), code=302)
-            except CatalogError:
-                return _result_page("link_expired", lang, status=410)
-        conn = connect(cfg.db_path)
-        row = conn.execute(
-            "SELECT upstream_url FROM slots_cache WHERE slot_token=?",
-            (slot_token,),
-        ).fetchone()
-        if not row:
-            return _result_page("link_expired",
-                                request.args.get("lang", "de"), status=410)
-        return redirect(row["upstream_url"], code=302)
+        # City-level link: /go/<city>, resolved from the catalog at click time
+        # so it never expires and survives an upstream base-URL change. Old
+        # per-slot tokens (with a colon) fail the slug check and read as expired.
+        lang = "en" if request.args.get("lang") == "en" else "de"
+        if not re.fullmatch(r"[a-z0-9-]+", slot_token):
+            return _result_page("link_expired", lang, status=410)
+        try:
+            scfg = load_catalog(slot_token).scraper_config
+            return redirect(booking_start_url(scfg, lang), code=302)
+        except CatalogError:
+            return _result_page("link_expired", lang, status=410)
 
     @app.route("/admin")
     def admin_route():

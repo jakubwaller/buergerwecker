@@ -45,7 +45,6 @@ def run_once(conn: sqlite3.Connection) -> None:
     step(_prune_suppressions, conn, cfg)
     step(_prune_push_devices, conn)
     step(_prune_rate_records, conn)
-    step(_prune_slots_cache, conn)
     step(_prune_availability, conn)
     step(_prune_slot_snapshots, conn)
     # The parser canary is not here: the poller runs it every cycle.
@@ -430,10 +429,6 @@ def _prune_rate_records(conn):
     they are useless."""
     conn.execute("DELETE FROM verify_attempts WHERE at < datetime('now','-1 day')")
     conn.execute("DELETE FROM rate_events WHERE at < datetime('now','-1 day')")
-
-def _prune_slots_cache(conn):
-    # Slots are short-lived in the upstream system; 14 days is generous.
-    conn.execute("DELETE FROM slots_cache WHERE cached_at < datetime('now','-14 days')")
 
 def _prune_slot_snapshots(conn):
     # A plan nobody subscribes to any more is no longer polled; its snapshot

@@ -41,10 +41,6 @@ class Event:
     detail: str | None = None
 
 
-def _clean(value) -> str:
-    return value.strip().lower() if isinstance(value, str) else ""
-
-
 def _email(value) -> str:
     """Normalise a provider-reported address to the form we store it in.
 
@@ -94,8 +90,8 @@ def parse_mailjet(payload) -> list[Event]:
         email = _email(raw.get("email"))
         if not email:
             continue
-        name = _clean(raw.get("event"))
-        related = _clean(raw.get("error_related_to"))
+        name = _email(raw.get("event"))
+        related = _email(raw.get("error_related_to"))
         detail = _detail(raw.get("error"), raw.get("comment"),
                          raw.get("source"))
         if name == "bounce":
@@ -154,7 +150,7 @@ def parse_brevo(payload) -> list[Event]:
         email = _email(raw.get("email"))
         if not email:
             continue
-        kind = _BREVO_KINDS.get(_clean(raw.get("event")), IGNORE)
+        kind = _BREVO_KINDS.get(_email(raw.get("event")), IGNORE)
         out.append(Event(email=email, kind=kind, provider="brevo",
                          detail=_detail(raw.get("reason"))))
     return out
@@ -185,7 +181,7 @@ def parse_sweego(payload) -> list[Event]:
         email = _email(raw.get("recipient"))
         if not email:
             continue
-        name = _clean(raw.get("event_type")).replace("-", "_")
+        name = _email(raw.get("event_type")).replace("-", "_")
         out.append(Event(email=email, kind=_SWEEGO_KINDS.get(name, IGNORE),
                          provider="sweego", detail=_detail(raw.get("details"))))
     return out

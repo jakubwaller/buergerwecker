@@ -19,7 +19,7 @@ def db(tmp_path, monkeypatch):
     monkeypatch.setenv("MAILJET_FROM_EMAIL","x@x"); monkeypatch.setenv("MAILJET_FROM_NAME","x")
     monkeypatch.setenv("MAILJET_DAILY_QUOTA","6000")
     monkeypatch.setenv("ADMIN_TOKEN","a"*32)
-    monkeypatch.setenv("DEDUP_WINDOW_HOURS","24"); monkeypatch.setenv("RATE_LIMIT_MINUTES","15")
+    monkeypatch.setenv("RATE_LIMIT_MINUTES","15")
     monkeypatch.setenv("MAX_PLANS_PER_CITY","10"); monkeypatch.setenv("PARSER_CANARY_THRESHOLD_HOURS","2")
     monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR","99")
     monkeypatch.setenv("SUBSCRIBE_RATELIMIT_PER_EMAIL_PER_DAY","99")

@@ -729,7 +729,6 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         "city_names": city_names,
         "catalog_dead_ids": _json_meta(meta_val("catalog_dead_ids")),
         "last_polled_at_by_city": last_polled_at_by_city,
-        "slots_cached": scalar("SELECT COUNT(*) FROM slots_cache"),
         "deliverability": _deliverability(conn, cfg),
         "emails_sent_recorded": emails_recorded,
         "emails_sent_since": emails_since,

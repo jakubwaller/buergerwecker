@@ -425,13 +425,11 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
         if cap and digests_in_window(conn, sub.id) >= cap:
             record_cap_hold(conn, sub.id)
             continue
-        # No per-slot slots_cache writes anymore: Smart-CJM bookings are
-        # session-bound (the step machine rejects /booking without walking
-        # services→locations→search_results in the same cookie session), so a
-        # per-slot deep link cannot work. Digests link to /go/<city>, resolved
-        # from the catalog at click time (see web.go_route). The slots_cache
-        # table stays: /go/<city>:<token> keeps serving links from old emails
-        # until housekeeping prunes the rows.
+        # No per-slot deep links: Smart-CJM bookings are session-bound (the
+        # step machine rejects /booking without walking
+        # services→locations→search_results in the same cookie session).
+        # Digests link to /go/<city>, resolved from the catalog at click time
+        # (see web.go_route).
         #
         # Stage for batched delivery. seen_slots + last_notified are recorded
         # inside flush_digests, but only for digests that were actually sent —

@@ -111,7 +111,7 @@ from app.repo import (delete_device, device_by_id,
                       register_device, renew_subscription,
                       pending_secret_fresh, request_verification,
                       verify_push_wait,
-                      set_special_consent, soft_delete,
+                      soft_delete, update_filter,
                       subscriptions_for_device, touch_device, update_device,
                       verify_device)
 from app.signup import FormError, build_filter
@@ -1064,18 +1064,7 @@ def update_subscription(sub_id):
                                  adds_one=False)
         if refused is not None:
             return refused
-        g.conn.execute("UPDATE subscriptions SET filters_json=?, "
-                       "last_match_count=NULL, consecutive_digests=0 "
-                       "WHERE id=?", (f.to_json(), sub_id))
-        set_special_consent(g.conn, sub_id, sensitive)
-        if sensitive:
-            # Switching into a special-category service pulls the expiry in
-            # to the shorter retention; never pushes it out.
-            short = ttl_days_for(cfg, True)
-            g.conn.execute(
-                "UPDATE subscriptions SET expires_at=datetime('now', ?) "
-                "WHERE id=? AND expires_at > datetime('now', ?)",
-                (f"+{short} days", sub_id, f"+{short} days"))
+        update_filter(g.conn, sub_id, f, sensitive, ttl_days_for(cfg, True))
         if body.get("language") in _LANGS:
             g.conn.execute("UPDATE subscriptions SET language=? WHERE id=?",
                            (body["language"], sub_id))

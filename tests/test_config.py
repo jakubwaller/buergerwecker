@@ -12,7 +12,6 @@ def test_load_config_from_env(monkeypatch):
     monkeypatch.setenv("TOKEN_SECRET_PREVIOUS", "")
     monkeypatch.setenv("ADMIN_TOKEN", "b" * 32)
     monkeypatch.setenv("PUBLIC_BASE_URL", "https://termine.example.eu")
-    monkeypatch.setenv("DEDUP_WINDOW_HOURS", "24")
     monkeypatch.setenv("RATE_LIMIT_MINUTES", "15")
     monkeypatch.setenv("SUBSCRIPTION_TTL_DAYS", "90")
     monkeypatch.setenv("RENEWAL_REMINDER_DAYS_BEFORE", "10")
@@ -40,7 +39,7 @@ def test_brevo_and_sweego_api_keys_are_optional(monkeypatch):
         "MAILJET_FROM_NAME":"x","MAILJET_DAILY_QUOTA":"6000",
         "TOKEN_SECRET_PRIMARY":"a"*32,"TOKEN_SECRET_PREVIOUS":"",
         "ADMIN_TOKEN":"b"*32,"PUBLIC_BASE_URL":"https://x",
-        "DEDUP_WINDOW_HOURS":"24","RATE_LIMIT_MINUTES":"15",
+        "RATE_LIMIT_MINUTES":"15",
         "SUBSCRIPTION_TTL_DAYS":"90","RENEWAL_REMINDER_DAYS_BEFORE":"10",
         "MAX_PLANS_PER_CITY":"10","PARSER_CANARY_THRESHOLD_HOURS":"2",
         "SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR":"5",
@@ -63,7 +62,7 @@ def test_load_config_missing_required(monkeypatch):
         "MAILJET_FROM_NAME":"x","MAILJET_DAILY_QUOTA":"6000",
         "TOKEN_SECRET_PRIMARY":"a"*32,"TOKEN_SECRET_PREVIOUS":"",
         "ADMIN_TOKEN":"b"*32,"PUBLIC_BASE_URL":"https://x",
-        "DEDUP_WINDOW_HOURS":"24","RATE_LIMIT_MINUTES":"15",
+        "RATE_LIMIT_MINUTES":"15",
         "SUBSCRIPTION_TTL_DAYS":"90","RENEWAL_REMINDER_DAYS_BEFORE":"10",
         "MAX_PLANS_PER_CITY":"10","PARSER_CANARY_THRESHOLD_HOURS":"2",
         "SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR":"5",
@@ -81,7 +80,7 @@ def test_load_config_rejects_empty_required(monkeypatch):
         "MAILJET_FROM_NAME":"x","MAILJET_DAILY_QUOTA":"6000",
         "TOKEN_SECRET_PRIMARY":"a"*32,"TOKEN_SECRET_PREVIOUS":"",
         "ADMIN_TOKEN":"b"*32,"PUBLIC_BASE_URL":"https://x",
-        "DEDUP_WINDOW_HOURS":"24","RATE_LIMIT_MINUTES":"15",
+        "RATE_LIMIT_MINUTES":"15",
         "SUBSCRIPTION_TTL_DAYS":"90","RENEWAL_REMINDER_DAYS_BEFORE":"10",
         "MAX_PLANS_PER_CITY":"10","PARSER_CANARY_THRESHOLD_HOURS":"2",
         "SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR":"5",
@@ -99,7 +98,7 @@ def test_load_config_int_error_names_the_var(monkeypatch):
         "MAILJET_FROM_NAME":"x","MAILJET_DAILY_QUOTA":"6000",
         "TOKEN_SECRET_PRIMARY":"a"*32,"TOKEN_SECRET_PREVIOUS":"",
         "ADMIN_TOKEN":"b"*32,"PUBLIC_BASE_URL":"https://x",
-        "DEDUP_WINDOW_HOURS":"24","RATE_LIMIT_MINUTES":"15",
+        "RATE_LIMIT_MINUTES":"15",
         "SUBSCRIPTION_TTL_DAYS":"90","RENEWAL_REMINDER_DAYS_BEFORE":"10",
         "MAX_PLANS_PER_CITY":"10","PARSER_CANARY_THRESHOLD_HOURS":"2",
         "SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR":"5",
@@ -107,8 +106,8 @@ def test_load_config_int_error_names_the_var(monkeypatch):
         "DEVELOPER_EMAIL":"d@x","KOFI_URL":"https://k",
     }.items():
         monkeypatch.setenv(k, v)
-    monkeypatch.setenv("DEDUP_WINDOW_HOURS", "not-a-number")
-    with pytest.raises(ValueError, match="DEDUP_WINDOW_HOURS"):
+    monkeypatch.setenv("RATE_LIMIT_MINUTES", "not-a-number")
+    with pytest.raises(ValueError, match="RATE_LIMIT_MINUTES"):
         load_config()
 
 
@@ -118,7 +117,7 @@ def _minimal_env(monkeypatch, **overrides):
         "MAILJET_FROM_EMAIL": "termine@example.eu", "MAILJET_FROM_NAME": "Termine",
         "MAILJET_DAILY_QUOTA": "6000", "TOKEN_SECRET_PRIMARY": "a" * 32,
         "TOKEN_SECRET_PREVIOUS": "", "ADMIN_TOKEN": "b" * 32,
-        "PUBLIC_BASE_URL": "https://termine.example.eu", "DEDUP_WINDOW_HOURS": "24",
+        "PUBLIC_BASE_URL": "https://termine.example.eu",
         "RATE_LIMIT_MINUTES": "15", "SUBSCRIPTION_TTL_DAYS": "90",
         "RENEWAL_REMINDER_DAYS_BEFORE": "10", "MAX_PLANS_PER_CITY": "10",
         "PARSER_CANARY_THRESHOLD_HOURS": "2", "SUBSCRIBE_RATELIMIT_PER_IP_PER_HOUR": "5",

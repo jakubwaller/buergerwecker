@@ -21,7 +21,7 @@ def client(tmp_path, monkeypatch):
         "MAILJET_FROM_EMAIL": "x@x", "MAILJET_FROM_NAME": "x",
         "MAILJET_DAILY_QUOTA": "6000",
         "ADMIN_TOKEN": "a" * 32, "PUBLIC_BASE_URL": "https://x",
-        "DEDUP_WINDOW_HOURS": "24", "RATE_LIMIT_MINUTES": "15",
+        "RATE_LIMIT_MINUTES": "15",
         "RENEWAL_REMINDER_DAYS_BEFORE": "10", "MAX_PLANS_PER_CITY": "10",
         "PARSER_CANARY_THRESHOLD_HOURS": "2", "DEVELOPER_EMAIL": "d@x",
         "KOFI_URL": "https://k",

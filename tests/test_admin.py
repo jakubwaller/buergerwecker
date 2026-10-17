@@ -15,7 +15,7 @@ def client(tmp_path, monkeypatch):
         "MAILJET_API_KEY":"m","MAILJET_API_SECRET":"m","MAILJET_FROM_EMAIL":"x@x",
         "MAILJET_FROM_NAME":"x","MAILJET_DAILY_QUOTA":"6000",
         "ADMIN_TOKEN":"admin-tok","PUBLIC_BASE_URL":"https://x",
-        "DEDUP_WINDOW_HOURS":"24","RATE_LIMIT_MINUTES":"15",
+        "RATE_LIMIT_MINUTES":"15",
         "RENEWAL_REMINDER_DAYS_BEFORE":"10","MAX_PLANS_PER_CITY":"10",
         "PARSER_CANARY_THRESHOLD_HOURS":"2","DEVELOPER_EMAIL":"d@x","KOFI_URL":"https://k",
     }.items():
@@ -37,20 +37,7 @@ def test_admin_wrong_token(client):
     r = client.get("/admin?token=nope")
     assert r.status_code == 401
 
-def test_go_route_redirects_on_cache_hit(client):
-    """Per-slot tokens from OLD emails (colon-prefixed) keep resolving from
-    slots_cache until housekeeping prunes the rows."""
-    from app.db import connect
-    conn = connect(os.environ["DB_PATH"])
-    conn.execute(
-        "INSERT INTO slots_cache (slot_token, city, upstream_url) "
-        "VALUES ('leipzig:tok1', 'leipzig', 'https://example.eu/book/123')"
-    )
-    r = client.get("/go/leipzig:tok1", follow_redirects=False)
-    assert r.status_code == 302
-    assert r.headers["Location"] == "https://example.eu/book/123"
-
-def test_go_route_returns_410_on_miss(client):
+def test_go_route_colon_link_from_old_email_is_expired(client):
     r = client.get("/go/leipzig:nonexistent-token", follow_redirects=False)
     assert r.status_code == 410
 
@@ -70,9 +57,9 @@ def test_go_city_link_unknown_city_410(client):
     r = client.get("/go/atlantis", follow_redirects=False)
     assert r.status_code == 410
 
-def test_run_cycle_writes_no_slot_cache_and_digest_links_city_page(client):
-    """Since per-slot deep links can't work upstream (session-bound booking),
-    run_cycle stages digests that link /go/<city> and leaves slots_cache empty."""
+def test_run_cycle_digest_links_city_page(client):
+    """Per-slot deep links can't work upstream (session-bound booking), so
+    run_cycle stages digests that link /go/<city>."""
     from unittest.mock import patch, MagicMock
     from datetime import time
     from app.db import connect
@@ -94,8 +81,6 @@ def test_run_cycle_writes_no_slot_cache_and_digest_links_city_page(client):
          patch("app.mail._call_brevo_batch", return_value=201):
         sc = MagicMock(); sc.poll.return_value = [slot]; gs.return_value = sc
         run_cycle(conn, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
-    cached = conn.execute("SELECT COUNT(*) AS n FROM slots_cache").fetchone()["n"]
-    assert cached == 0
     body = mb.call_args_list[0].args[0][0].body
     assert "https://x/go/leipzig" in body
     assert booking_token not in body
@@ -146,8 +131,6 @@ def test_stats_includes_upstream_and_extra_metrics(tmp_path):
         "requests_total, counts_date, last_polled_at) "
         "VALUES ('leipzig', 5, 50, 12, 120, ?, ?)",
         (today, "2026-06-03T10:00:00"))
-    conn.execute("INSERT INTO slots_cache (slot_token, city, upstream_url) "
-                 "VALUES ('t', 'leipzig', 'u')")
     conn.execute("INSERT INTO sent_idempotency (idem_key, provider) VALUES ('k', 'mailjet')")
     conn.execute("INSERT INTO sent_idempotency (idem_key, provider) VALUES ('p', 'pending')")
     # Durable counters carry history that sent_idempotency has already pruned, so
@@ -162,7 +145,6 @@ def test_stats_includes_upstream_and_extra_metrics(tmp_path):
     assert up == {"polls_today": 5, "polls_total": 50,
                   "requests_today": 12, "requests_total": 120}
     assert s["last_polled_at_by_city"]["leipzig"] == "2026-06-03T10:00:00"
-    assert s["slots_cached"] == 1
     assert s["emails_sent_last_7d"] == 1   # 'pending' excluded
     # All-time comes from email_send_counts, NOT from the 14-day-pruned table.
     assert s["emails_sent_recorded"] == 485
@@ -256,7 +238,6 @@ def _summary_stats(**over):
                                          "requests_today": 240, "requests_total": 20140}},
         "last_polled_at_by_city": {"leipzig": "2026-06-09T14:32:00"},
         "city_labels": {"leipzig": "Leipzig"},
-        "slots_cached": 17,
         "emails_sent_recorded": 1203,
         "emails_sent_since": "Jul 2026",
         "notifications_24h": 2,
@@ -456,23 +437,6 @@ def test_stats_today_counts_gated_by_stale_date(tmp_path):
     up = stats(conn)["upstream_by_city"]["leipzig"]
     assert up["polls_today"] == 0 and up["requests_today"] == 0   # stale day -> 0
     assert up["polls_total"] == 50 and up["requests_total"] == 120  # totals intact
-
-def test_go_tokens_do_not_collide_across_tenants(client):
-    """Two tenants can expose a slot at the SAME wall-clock datetime. The cache
-    key is tenant-prefixed, so both rows exist and each /go link redirects to
-    its own tenant's upstream URL — never the other's."""
-    from app.db import connect
-    conn = connect(os.environ["DB_PATH"])
-    dt = "2026-07-02T11:50:00+02:00"
-    conn.execute("INSERT INTO slots_cache (slot_token, city, upstream_url) "
-                 "VALUES (?, 'leipzig', 'https://up/ba')", (f"leipzig:{dt}",))
-    conn.execute("INSERT INTO slots_cache (slot_token, city, upstream_url) "
-                 "VALUES (?, 'leipzig-abh', 'https://up/abh')", (f"leipzig-abh:{dt}",))
-    enc = dt.replace(":", "%3a").replace("+", "%2b")
-    r_ba = client.get(f"/go/leipzig:{enc}", follow_redirects=False)
-    r_abh = client.get(f"/go/leipzig-abh:{enc}", follow_redirects=False)
-    assert r_ba.headers["Location"] == "https://up/ba"
-    assert r_abh.headers["Location"] == "https://up/abh"
 
 def test_admin_aggregates_upstream_load_per_host_and_labels_tenants(client):
     """Both Leipzig tenants poll the same physical host: the dashboard must
