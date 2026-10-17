@@ -388,3 +388,25 @@ def test_a_failing_summary_still_reports_the_failures(db):
     subject, body = send.call_args.args[2], send.call_args.args[3]
     assert subject == "[buergerwecker] housekeeping failed"
     assert "_send_summary_email" in body and "stats broke" in body
+
+
+def test_parser_canary_mails_once_a_day_past_the_threshold(db):
+    """The canary is the only alarm for a scraper that broke: a city at zero
+    past PARSER_CANARY_THRESHOLD_HOURS (2 here) gets one mail, and the next
+    cycles the same day stay quiet. The poller calls this every cycle."""
+    from freezegun import freeze_time
+    from app.config import load_config
+    from app.housekeeping import _check_parser_canary
+    db.execute("INSERT INTO city_state (city, zero_match_since) "
+               "VALUES ('leipzig', '2026-10-17 07:00:00')")
+    cfg = load_config()
+    with patch("app.mail.send") as send:
+        with freeze_time("2026-10-17 08:30:00"):
+            _check_parser_canary(db, cfg)     # 1.5 h: not yet
+        assert send.call_count == 0
+        with freeze_time("2026-10-17 09:01:00"):
+            _check_parser_canary(db, cfg)
+        with freeze_time("2026-10-17 09:02:00"):
+            _check_parser_canary(db, cfg)     # next cycle: already told
+    assert send.call_count == 1
+    assert send.call_args.args[2] == "[buergerwecker] parser canary: leipzig"

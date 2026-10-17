@@ -23,6 +23,7 @@ def main() -> None:
         try:
             _maybe_housekeeping(conn)
             _prune_rate_events(conn)
+            _check_canary(conn, cfg)
             _sweep_verifications(conn, cfg)
             run_cycle(conn,
                       max_plans_per_city=cfg.max_plans_per_city,
@@ -51,6 +52,18 @@ def _prune_rate_events(conn) -> None:
         prune_rate_events(conn)
     except Exception as exc:
         print(f"rate event prune failed: {exc!r}", flush=True)
+
+def _check_canary(conn, cfg) -> None:
+    """The parser canary, every cycle, so it fires within a cycle of a city
+    crossing PARSER_CANARY_THRESHOLD_HOURS (at most one mail per city a day).
+    It used to ride the daily housekeeping run, whose start moves a minute
+    later every day: about half the time that run fell outside the canary's
+    06-18 UTC window and the canary never checked. Never breaks the cycle."""
+    try:
+        from app.housekeeping import _check_parser_canary
+        _check_parser_canary(conn, cfg)
+    except Exception as exc:
+        print(f"parser canary failed: {exc!r}", flush=True)
 
 def _sweep_verifications(conn, cfg) -> None:
     """Send the verification pushes the web process could not (no credentials

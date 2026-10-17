@@ -48,7 +48,7 @@ def run_once(conn: sqlite3.Connection) -> None:
     step(_prune_slots_cache, conn)
     step(_prune_availability, conn)
     step(_prune_slot_snapshots, conn)
-    step(_check_parser_canary, conn, cfg)
+    # The parser canary is not here: the poller runs it every cycle.
     step(_check_backup_health, conn, cfg)
     step(_start_catalog_sync, cfg)
     if not step(_send_summary_email, conn, cfg, failed=tuple(failed)):
@@ -447,7 +447,9 @@ def _prune_availability(conn):
     prune_availability(conn)
 
 def _check_parser_canary(conn, cfg):
-    """Email developer if any city has been all-zero for > threshold during business hours."""
+    """Email developer if any city has been all-zero for > threshold during
+    business hours. Called by the poller every cycle (poller._check_canary);
+    last_canary_alert_at keeps it to one mail per city a day."""
     from datetime import datetime, timedelta
     from app.db import sql_ts
     now = datetime.utcnow()
