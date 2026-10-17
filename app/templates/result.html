@@ -9,7 +9,8 @@
 
   {% if message %}<p>{{ message }}</p>{% endif %}
 
-  <p class="result-actions">
+  {# A div: a <form> inside a <p> closes the <p> early. #}
+  <div class="result-actions">
     {% if post_url %}
       <form method="post" action="{{ post_url }}" style="display:inline">
         <button type="submit" class="btn-link">{{ action_label }}</button>
@@ -21,5 +22,5 @@
     <a href="/{% if lang == 'en' %}?lang=en{% endif %}">
       {% if lang == 'en' %}Back to the start page{% else %}Zur Startseite{% endif %}
     </a>
-  </p>
+  </div>
 {% endblock %}

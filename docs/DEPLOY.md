@@ -887,8 +887,9 @@ that draws spam complaints. So instead of waiting for an unsubscribe, the servic
 
 - `SUBSCRIPTION_TTL_DAYS` (14) — the term from sign-up or renewal.
 - `RENEWAL_REMINDER_DAYS_BEFORE` (3) — this many days before the term ends, housekeeping sends one
-  *Suchst du noch einen Termin?* mail with two one-click answers: *weiter* (`/renew`, starts a new
-  term) and *hab einen* (`/unsubscribe`), plus a *Filter anpassen* link for people holding out for
+  *Suchst du noch einen Termin?* mail with two answers: *weiter* (`/renew`, starts a new
+  term) and *hab einen* (`/unsubscribe`, which asks for a click on its button first, since mail
+  scanners open every link), plus a *Filter anpassen* link for people holding out for
   particular days or times. Once per term; `/renew` re-arms it.
 - No answer → the subscription expires: digests stop, nothing is deleted yet.
 - `EXPIRED_GRACE_DAYS` (optional, 14) — how long an expired subscription stays paused with its
