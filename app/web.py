@@ -1350,7 +1350,7 @@ def create_app() -> Flask:
             mail_send(conn, cfg.developer_email, subject, body, idem_key=idem,
                       reply_to=email)
         except Exception:
-            log.exception("contact form delivery failed for %s", email)
+            log.exception("contact mail delivery failed (project: %s)", label)
             return _result_page("contact_failed", lang, status=502)
         return _result_page("contact_sent", lang)
 
