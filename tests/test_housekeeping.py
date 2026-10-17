@@ -397,8 +397,11 @@ def test_parser_canary_mails_once_a_day_past_the_threshold(db):
     from freezegun import freeze_time
     from app.config import load_config
     from app.housekeeping import _check_parser_canary
+    confirm(db, insert_pending(db, email="a@example.com", city="leipzig",
+                               language="de", filter_=_f(), ttl_days=90))
     db.execute("INSERT INTO city_state (city, zero_match_since) "
-               "VALUES ('leipzig', '2026-10-17 07:00:00')")
+               "VALUES ('leipzig', '2026-10-17 07:00:00'), "
+               "('dresden', '2026-10-17 07:00:00')")   # nobody polls dresden
     cfg = load_config()
     with patch("app.mail.send") as send:
         with freeze_time("2026-10-17 08:30:00"):
@@ -410,3 +413,22 @@ def test_parser_canary_mails_once_a_day_past_the_threshold(db):
             _check_parser_canary(db, cfg)     # next cycle: already told
     assert send.call_count == 1
     assert send.call_args.args[2] == "[buergerwecker] parser canary: leipzig"
+
+
+def test_a_failed_canary_mail_retries_in_an_hour_not_every_cycle(db):
+    from freezegun import freeze_time
+    from app.config import load_config
+    from app.housekeeping import _check_parser_canary
+    confirm(db, insert_pending(db, email="a@example.com", city="leipzig",
+                               language="de", filter_=_f(), ttl_days=90))
+    db.execute("INSERT INTO city_state (city, zero_match_since) "
+               "VALUES ('leipzig', '2026-10-17 07:00:00')")
+    cfg = load_config()
+    with patch("app.mail.send", side_effect=RuntimeError("down")) as send:
+        for t in ("09:01", "09:02", "09:59"):
+            with freeze_time(f"2026-10-17 {t}:00"):
+                _check_parser_canary(db, cfg)
+        assert send.call_count == 1
+        with freeze_time("2026-10-17 10:02:00"):
+            _check_parser_canary(db, cfg)
+    assert send.call_count == 2

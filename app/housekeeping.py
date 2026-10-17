@@ -457,6 +457,10 @@ def _check_parser_canary(conn, cfg):
     if not (6 <= now.hour <= 18):
         return
     threshold = timedelta(hours=cfg.parser_canary_threshold_hours)
+    # Only a poll clears zero_match_since, so a city nobody polls any more
+    # would keep its last value, and the canary, forever.
+    from app.repo import active_subscriptions
+    polled = {s.city for s in active_subscriptions(conn)}
     rows = conn.execute(
         "SELECT city, zero_match_since, last_canary_alert_at "
         "FROM city_state WHERE zero_match_since IS NOT NULL"
@@ -469,6 +473,8 @@ def _check_parser_canary(conn, cfg):
         if now - since < threshold:
             continue
         city = row["city"]
+        if city not in polled:
+            continue
         if row["last_canary_alert_at"]:
             try:
                 last = datetime.fromisoformat(row["last_canary_alert_at"])
@@ -488,8 +494,14 @@ def _check_parser_canary(conn, cfg):
                 "UPDATE city_state SET last_canary_alert_at=? WHERE city=?",
                 (sql_ts(now), city),
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"parser canary mail for {city} failed: {exc!r}", flush=True)
+            # Retry in an hour, not every cycle: a mail outage would otherwise
+            # walk the whole provider chain each minute.
+            conn.execute(
+                "UPDATE city_state SET last_canary_alert_at=? WHERE city=?",
+                (sql_ts(now - timedelta(hours=23)), city),
+            )
 
 def _check_backup_health(conn, cfg):
     """Alert if backup hasn't written meta.last_backup_at in > 48h, OR if

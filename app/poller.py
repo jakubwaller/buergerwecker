@@ -23,7 +23,6 @@ def main() -> None:
         try:
             _maybe_housekeeping(conn)
             _prune_rate_events(conn)
-            _check_canary(conn, cfg)
             _sweep_verifications(conn, cfg)
             run_cycle(conn,
                       max_plans_per_city=cfg.max_plans_per_city,
@@ -42,6 +41,8 @@ def main() -> None:
                   flush=True)
             if consecutive_failures >= 3:
                 _maybe_alert(conn, cfg, str(exc))
+        # After the cycle, so a slow mail provider never delays slot polling.
+        _check_canary(conn, cfg)
 
 def _prune_rate_events(conn) -> None:
     """Drop the API's rate events past their window, every cycle: the ones
