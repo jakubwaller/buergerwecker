@@ -206,7 +206,8 @@ def test_a_wrong_missing_or_expired_code_is_invalid(relay):
     client, r = relay
     dev, secret = _register(client, verified=False)
     auth = _auth(dev, secret)
-    for body in ({"code": "wrong"}, {}, {"code": 5}, {"code": ""}):
+    for body in ({"code": "wrong"}, {}, {"code": 5}, {"code": ""},
+                 {"code": "\ud800"}, {"code": "12３456"}):
         resp = client.post("/api/v1/device/verify", json=body, headers=auth)
         assert resp.status_code == 400 and resp.get_json()["error"] == "invalid_code"
     assert resp.get_json()["message"] == "Der Code ist ungültig oder abgelaufen."

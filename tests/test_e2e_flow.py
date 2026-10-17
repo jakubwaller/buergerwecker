@@ -111,7 +111,7 @@ def test_full_flow(env):
 
     # 5. unsubscribe
     unsub_tok = sign(sid, "unsubscribe", primary="x"*32, previous="")
-    r = c.get(f"/unsubscribe/{unsub_tok}")
+    r = c.post(f"/unsubscribe/{unsub_tok}")
     assert r.status_code in (200, 302)
     row = conn.execute("SELECT deleted_at FROM subscriptions WHERE id=?", (sid,)).fetchone()
     assert row["deleted_at"] is not None

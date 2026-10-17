@@ -86,6 +86,16 @@ _RESULT_MESSAGES: dict[str, dict] = {
                "appointment notifications. If you change your mind, you can "
                "sign up again any time."),
     },
+    # GET of the unsubscribe link: mail scanners open every link, so only the
+    # button's POST deletes.
+    "confirm_unsubscribe": {
+        "kind": "success",
+        "de": ("Abmelden", "Möchtest du dich abmelden?",
+               "Mit einem Klick auf den Button beendest du deine "
+               "Termin-Benachrichtigungen."),
+        "en": ("Unsubscribe", "Do you want to unsubscribe?",
+               "Click the button to stop your appointment notifications."),
+    },
     "updated": {
         "kind": "success",
         "de": ("Gespeichert", "Einstellungen aktualisiert",
@@ -666,7 +676,8 @@ def create_app() -> Flask:
 
     def _result_page(key: str, lang: str, *, status: int = 200,
                      action_url: str | None = None,
-                     action_label: str | None = None):
+                     action_label: str | None = None,
+                     post_url: str | None = None):
         """Render a styled standalone result page (templates/result.html)."""
         if lang not in ("de", "en"):
             lang = "de"
@@ -681,6 +692,7 @@ def create_app() -> Flask:
             message=message,
             action_url=action_url,
             action_label=action_label,
+            post_url=post_url,
             kofi_url=app.config["TERMINE_CONFIG"].kofi_url,
         ), status
 
@@ -1040,7 +1052,8 @@ def create_app() -> Flask:
                                kofi_url=cfg.kofi_url), 200
 
     # POST is the RFC 8058 one-click unsubscribe mail clients send to the
-    # List-Unsubscribe URL; GET is the human clicking the link in the body.
+    # List-Unsubscribe URL; GET (the link in the body) only asks for
+    # confirmation, since mail scanners open links.
     @app.route("/unsubscribe/<token>", methods=["GET", "POST"])
     def unsubscribe_route(token):
         cfg = app.config["TERMINE_CONFIG"]
@@ -1055,6 +1068,11 @@ def create_app() -> Flask:
         row = conn.execute("SELECT language FROM subscriptions WHERE id=?",
                            (sub_id,)).fetchone()
         lang = request.args.get("lang") or (row["language"] if row else "de")
+        if request.method == "GET":
+            return _result_page(
+                "confirm_unsubscribe", lang,
+                post_url=f"/unsubscribe/{token}?lang={lang}",
+                action_label="Abmelden" if lang == "de" else "Unsubscribe")
         soft_delete(conn, sub_id)
         return _result_page("unsubscribed", lang)
 
@@ -1126,8 +1144,11 @@ def create_app() -> Flask:
         if not row or row["deleted_at"] is not None:
             return _result_page("not_found", request.args.get("lang", "de"),
                                 status=404)
-        catalog = load_catalog(row["city"])
         lang = row["language"]
+        try:
+            catalog = load_catalog(row["city"])
+        except CatalogError:           # city since decommissioned
+            return _result_page("unknown_city", lang, status=400)
         expired = (datetime.fromisoformat(row["expires_at"][:19])
                    < datetime.utcnow())
         return render_template("manage.html",

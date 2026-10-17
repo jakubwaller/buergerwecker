@@ -10,6 +10,11 @@
   {% if message %}<p>{{ message }}</p>{% endif %}
 
   <p class="result-actions">
+    {% if post_url %}
+      <form method="post" action="{{ post_url }}" style="display:inline">
+        <button type="submit" class="btn-link">{{ action_label }}</button>
+      </form>
+    {% endif %}
     {% if action_url %}
       <a href="{{ action_url }}" class="btn-link">{{ action_label }}</a>
     {% endif %}

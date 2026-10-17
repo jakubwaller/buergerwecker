@@ -225,10 +225,15 @@ def test_unsubscribe_soft_deletes(client):
     with patch("app.web._send_manage_link_email"):
         c.get(f"/confirm/{_confirm_tok}")
     unsub = _sign(sid, "unsubscribe")
-    r = c.get(f"/unsubscribe/{unsub}")
-    assert r.status_code in (200, 302)
     from app.db import connect
     conn = connect(os.environ["DB_PATH"])
+    # A mail scanner's GET only shows the button.
+    r = c.get(f"/unsubscribe/{unsub}?lang=en")
+    assert r.status_code == 200 and f'action="/unsubscribe/{unsub}?lang=en"' in r.get_data(as_text=True)
+    row = conn.execute("SELECT deleted_at FROM subscriptions WHERE id=?", (sid,)).fetchone()
+    assert row["deleted_at"] is None
+    r = c.post(f"/unsubscribe/{unsub}")
+    assert r.status_code == 200
     row = conn.execute("SELECT deleted_at FROM subscriptions WHERE id=?", (sid,)).fetchone()
     assert row["deleted_at"] is not None
 
@@ -609,3 +614,10 @@ def test_renew_of_a_live_subscription_at_a_full_city_works(capped):
     c, a, _, conn = capped
     assert _confirm(c, a)[0].status_code == 200
     assert c.get(f"/renew/{_sign(a, 'renew')}").status_code == 200
+
+def test_manage_page_for_a_decommissioned_city_is_400_not_500(client):
+    c, sid = client
+    conn = connect(os.environ["DB_PATH"])
+    conn.execute("UPDATE subscriptions SET city='gone' WHERE id=?", (sid,))
+    conn.commit()
+    assert c.get(f"/manage/{_sign(sid, 'manage')}").status_code == 400

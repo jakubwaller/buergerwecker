@@ -790,7 +790,8 @@ def device_verify():
     lang = g.device["language"]
     if g.credential_verified:
         code = _json().get("code")
-        if g.device["pending_secret_hash"] and isinstance(code, str):
+        if (g.device["pending_secret_hash"] and isinstance(code, str)
+                and code.isascii()):
             with transaction(g.conn):
                 verify_device(g.conn, g.device["id"], code.strip())
         return jsonify({"verified": True})
@@ -798,7 +799,8 @@ def device_verify():
         return _error("rate_limited", 429, lang)
     code = _json().get("code")
     with transaction(g.conn):
-        ok = isinstance(code, str) and verify_device(
+        # A non-ASCII code (a lone surrogate won't even encode) is a wrong one.
+        ok = isinstance(code, str) and code.isascii() and verify_device(
             g.conn, g.device["id"], code.strip(), pending_hash=g.pending_hash)
     if not ok:
         return _error("invalid_code", 400, lang)
