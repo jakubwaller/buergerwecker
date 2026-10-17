@@ -292,6 +292,7 @@ export async function updateLanguage(language) {
 // as it gets.
 export async function deleteEverything() {
   // Without the credential the server's row cannot be deleted; saying "deleted" would be a lie.
+  if (unreadable) await loadDevice(); // only onToken asks again, and it needs push permission
   if (unreadable) throw new Error("The stored login cannot be read right now. Try again in a moment.");
   if (device) {
     try {

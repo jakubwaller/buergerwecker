@@ -120,6 +120,10 @@ test("iOS: a setup push left in the notification centre hands its code over, and
   await inbox.harvest(T0 + 1, (d) => codes.push(d.code));
   assert.deepEqual(codes, ["new"]);
   assert.deepEqual(delivered.removed.map((n) => n.id).sort(), ["v1", "v2"]);
+  // A post that failed (offline) leaves the push for the next resume.
+  delivered.removed = [];
+  await inbox.harvest(T0 + 2, () => false);
+  assert.deepEqual(delivered.removed, []);
 });
 
 test("iOS: a notification-centre copy is dated by the server's send time, not the app's launch", async () => {

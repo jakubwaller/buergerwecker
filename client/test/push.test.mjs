@@ -104,6 +104,19 @@ test("while the credential is unreadable, 'Delete my data' fails instead of clai
   assert.deepEqual(seen, [5]);
 });
 
+test("'Delete my data' asks the secure store again: a passing hiccup does not block it", async () => {
+  routes = [{ method: "POST", path: "/devices", reply: [201, { device_id: 5, secret: "sec-good", verified: true }] }];
+  await push.onToken("tok-1");
+  secure.failGet = true;
+  await push.loadDevice();
+  secure.failGet = false;
+  calls = [];
+  routes = [{ method: "DELETE", path: "/device", reply: [204] }];
+  await push.deleteEverything();
+  assert.equal(calls.length, 1, "the server row is deleted");
+  assert.equal(prefs.get("device"), undefined);
+});
+
 test("an older build's record moves its id and secret into the secure store on launch", async () => {
   prefs.set("device", JSON.stringify({ id: 5, secret: "sec-legacy", token: "tok-1", platform: "apns", verified: true }));
   prefs.set("lang", JSON.stringify("en"));
