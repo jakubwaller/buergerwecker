@@ -20,6 +20,7 @@ class IPRateLimiter:
         self._events: dict[str, deque] = {}
         self._hits = 0
         self._max_window = 0
+        self._last_sweep = time.time()
 
     def hit(self, key: str, limit: int, window_seconds: int) -> bool:
         return self.hit_all([(key, limit)], window_seconds) is None
@@ -32,7 +33,8 @@ class IPRateLimiter:
         now = time.time()
         self._max_window = max(self._max_window, window_seconds)
         self._hits += 1
-        if self._hits % self.sweep_every == 0:
+        # Also sweep by time, so an idle worker still drops stale IPs (the privacy notice promises about an hour).
+        if self._hits % self.sweep_every == 0 or now - self._last_sweep >= 60:
             self._sweep(now)
         queues = []
         for key, limit in hits:
@@ -49,6 +51,7 @@ class IPRateLimiter:
         return None
 
     def _sweep(self, now: float) -> None:
+        self._last_sweep = now
         stale = [k for k, dq in self._events.items()
                  if not dq or now - dq[-1] > self._max_window]
         for k in stale:

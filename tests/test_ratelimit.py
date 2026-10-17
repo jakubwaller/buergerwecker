@@ -28,3 +28,13 @@ def test_sweep_keeps_keys_that_still_count(monkeypatch):
         lim.hit("ip:b", 100, 3600)
     # "a" is inside its window and still over its limit: not swept, still blocked.
     assert not lim.hit("ip:a", 1, 3600)
+
+
+def test_sweep_runs_by_time_not_only_by_hit_count(monkeypatch):
+    clock = [1_000_000.0]
+    monkeypatch.setattr(rl.time, "time", lambda: clock[0])
+    lim = rl.IPRateLimiter()
+    lim.hit("ip:a", 5, 3600)
+    clock[0] += 3600 + 61
+    lim.hit("ip:b", 5, 3600)
+    assert "ip:a" not in lim._events
