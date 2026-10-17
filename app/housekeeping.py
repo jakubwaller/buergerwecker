@@ -461,63 +461,97 @@ def _prune_availability(conn):
     prune_availability(conn)
 
 def _check_parser_canary(conn, cfg):
-    """Email developer if any city has been all-zero for > threshold during
-    business hours. Called by the poller every cycle (poller._check_canary);
-    last_canary_alert_at keeps it to one mail per city a day."""
-    from datetime import datetime, timedelta
+    """Email developer when a scraper looks broken, during business hours.
+    Called by the poller every cycle (poller._check_canary). Two alerts, each
+    at most once a day: a city whose every poll has raised for > threshold
+    (a city-specific break), and a vendor whose polled, non-failing cities
+    have all been at zero for > threshold (a break in the shared markup).
+    One city at zero alone is just a booked-out service and stays quiet."""
+    from app.catalog import CatalogError, load_catalog
     from app.db import sql_ts
     now = datetime.utcnow()
-    # Only a poll clears zero_match_since, so a city nobody polls any more
-    # would keep its last value: the canary forever, and a false alarm on the
-    # first empty poll once someone subscribes there again.
+    # Only a poll clears these, so a city nobody polls any more would keep its
+    # last values: the canary forever, and a false alarm on the first empty
+    # poll once someone subscribes there again.
     from app.repo import active_subscriptions
     polled = sorted({s.city for s in active_subscriptions(conn)})
     conn.execute(
-        "UPDATE city_state SET zero_match_since=NULL WHERE zero_match_since "
-        f"IS NOT NULL AND city NOT IN ({','.join('?' * len(polled))})", polled)
+        "UPDATE city_state SET zero_match_since=NULL, failing_since=NULL "
+        "WHERE (zero_match_since IS NOT NULL OR failing_since IS NOT NULL) "
+        f"AND city NOT IN ({','.join('?' * len(polled))})", polled)
     # Skip outside typical-load hours (08:00–20:00 Europe/Berlin ≈ 06:00–18:00 UTC)
     if not (6 <= now.hour <= 18):
         return
-    threshold = timedelta(hours=cfg.parser_canary_threshold_hours)
-    rows = conn.execute(
-        "SELECT city, zero_match_since, last_canary_alert_at "
-        "FROM city_state WHERE zero_match_since IS NOT NULL"
-    ).fetchall()
-    for row in rows:
+    hours = cfg.parser_canary_threshold_hours
+    threshold = timedelta(hours=hours)
+
+    def old_enough(ts):
         try:
-            since = datetime.fromisoformat(row["zero_match_since"])
+            return now - datetime.fromisoformat(ts) >= threshold
         except (TypeError, ValueError):
-            continue
-        if now - since < threshold:
-            continue
-        city = row["city"]
-        if row["last_canary_alert_at"]:
+            return False
+
+    def alert(name, body, last_at, stamp):
+        """Mail once a day per `name`; `stamp(ts)` records the attempt."""
+        if last_at:
             try:
-                last = datetime.fromisoformat(row["last_canary_alert_at"])
-                if now - last < timedelta(hours=24):
-                    continue
+                if now - datetime.fromisoformat(last_at) < timedelta(hours=24):
+                    return
             except ValueError:
                 pass
-        body = (f"Parser canary: city '{city}' has produced zero matches "
-                f"since {row['zero_match_since']} "
-                f"(> {cfg.parser_canary_threshold_hours}h).")
         try:
             mail_send(conn, cfg.developer_email,
-                      f"[buergerwecker] parser canary: {city}",
-                      body,
-                      idem_key=_idem_key(0, [], f"canary-{city}-{now.date()}"))
-            conn.execute(
-                "UPDATE city_state SET last_canary_alert_at=? WHERE city=?",
-                (sql_ts(now), city),
-            )
+                      f"[buergerwecker] parser canary: {name}", body,
+                      idem_key=_idem_key(0, [], f"canary-{name}-{now.date()}"))
+            stamp(sql_ts(now))
         except Exception as exc:
-            print(f"parser canary mail for {city} failed: {exc!r}", flush=True)
+            print(f"parser canary mail for {name} failed: {exc!r}", flush=True)
             # Retry in an hour, not every cycle: a mail outage would otherwise
             # walk the whole provider chain each minute.
-            conn.execute(
-                "UPDATE city_state SET last_canary_alert_at=? WHERE city=?",
-                (sql_ts(now - timedelta(hours=23)), city),
-            )
+            stamp(sql_ts(now - timedelta(hours=23)))
+
+    rows = conn.execute(
+        "SELECT city, zero_match_since, failing_since, last_canary_alert_at "
+        "FROM city_state WHERE city IN "
+        f"({','.join('?' * len(polled))})", polled).fetchall()
+    by_vendor: dict[str, list] = {}
+    for row in rows:
+        city = row["city"]
+        if row["failing_since"]:
+            if old_enough(row["failing_since"]):
+                alert(city,
+                      f"Parser canary: every poll of '{city}' has failed since "
+                      f"{row['failing_since']} (> {hours}h). The poller log has "
+                      f"the errors (lines starting \"cycle <id>: poll failed "
+                      f"{city}/\").",
+                      row["last_canary_alert_at"],
+                      lambda ts, city=city: conn.execute(
+                          "UPDATE city_state SET last_canary_alert_at=? "
+                          "WHERE city=?", (ts, city)))
+            continue
+        try:
+            vendor = load_catalog(city).scraper_config["vendor"]
+        except CatalogError:
+            continue  # a removed city
+        by_vendor.setdefault(vendor, []).append(row)
+    # One city at zero is usually a booked-out service, while a parser break
+    # empties every city on that system at once.
+    # shortcut: a vendor with one polled city only gets the failed-poll alert, upgrade when a vendor with a single polled city breaks silently
+    for vendor, cities in sorted(by_vendor.items()):
+        if len(cities) < 2 or not all(old_enough(r["zero_match_since"]) for r in cities):
+            continue
+        key = f"canary_vendor_{vendor}"
+        last = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        alert(vendor,
+              f"Parser canary: vendor '{vendor}' has found no slot in "
+              f"{', '.join(r['city'] for r in cities)} since "
+              f"{max(r['zero_match_since'] for r in cities)} (> {hours}h). "
+              "Their pages still load, so the slot markup may have changed.",
+              last and last["value"],
+              lambda ts, key=key: conn.execute(
+                  "INSERT INTO meta (key, value) VALUES (?, ?) "
+                  "ON CONFLICT (key) DO UPDATE SET value=excluded.value, "
+                  "updated_at=CURRENT_TIMESTAMP", (key, ts)))
 
 def _check_backup_health(conn, cfg):
     """Alert if backup hasn't written meta.last_backup_at in > 48h, OR if

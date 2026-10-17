@@ -452,32 +452,64 @@ def test_a_failing_summary_still_reports_the_failures(db):
     assert "_send_summary_email" in body and "stats broke" in body
 
 
-def test_parser_canary_mails_once_a_day_past_the_threshold(db):
-    """The canary is the only alarm for a scraper that broke: a city at zero
-    past PARSER_CANARY_THRESHOLD_HOURS (2 here) gets one mail, and the next
-    cycles the same day stay quiet. The poller calls this every cycle."""
+def _canary(db, state, cities, times):
+    """Subscribe to `cities`, seed city_state from `state` ({city: (zero_since,
+    failing_since)}), run the canary at each of `times` on 2026-10-17 and
+    return the subjects mailed."""
     from freezegun import freeze_time
     from app.config import load_config
     from app.housekeeping import _check_parser_canary
-    confirm(db, insert_pending(db, email="a@example.com", city="leipzig",
-                               language="de", filter_=_f(), ttl_days=90))
-    db.execute("INSERT INTO city_state (city, zero_match_since) "
-               "VALUES ('leipzig', '2026-10-17 07:00:00'), "
-               "('dresden', '2026-10-17 07:00:00')")   # nobody polls dresden
+    for i, c in enumerate(cities):
+        confirm(db, insert_pending(db, email=f"a{i}@example.com", city=c,
+                                   language="de", filter_=_f(), ttl_days=90))
+    for c, (zero, failing) in state.items():
+        db.execute("INSERT INTO city_state (city, zero_match_since, failing_since) "
+                   "VALUES (?, ?, ?)", (c, zero, failing))
     cfg = load_config()
     with patch("app.mail.send") as send:
-        with freeze_time("2026-10-17 08:30:00"):
-            _check_parser_canary(db, cfg)     # 1.5 h: not yet
-        assert send.call_count == 0
-        with freeze_time("2026-10-17 09:01:00"):
-            _check_parser_canary(db, cfg)
-        with freeze_time("2026-10-17 09:02:00"):
-            _check_parser_canary(db, cfg)     # next cycle: already told
-    assert send.call_count == 1
-    assert send.call_args.args[2] == "[buergerwecker] parser canary: leipzig"
-    # Unpolled dresden starts from scratch once someone subscribes again.
-    assert db.execute("SELECT zero_match_since FROM city_state "
-                      "WHERE city='dresden'").fetchone()[0] is None
+        for t in times:
+            with freeze_time(f"2026-10-17 {t}:00"):
+                _check_parser_canary(db, cfg)
+    return [c.args[2] for c in send.call_args_list]
+
+
+def test_a_city_failing_past_the_threshold_gets_one_mail_a_day(db):
+    """A scraper that raises on every poll is the city-specific break: past
+    PARSER_CANARY_THRESHOLD_HOURS (2 here) one mail, then quiet. An unpolled
+    city starts from scratch once someone subscribes again."""
+    state = {"leipzig": (None, "2026-10-17 07:00:00"),
+             "dresden": ("2026-10-17 07:00:00", "2026-10-17 07:00:00")}  # unpolled
+    assert _canary(db, state, ["leipzig"], ["08:30"]) == []   # 1.5 h: not yet
+    sent = _canary(db, {}, [], ["09:01", "09:02"])             # next cycle: told
+    assert sent == ["[buergerwecker] parser canary: leipzig"]
+    row = db.execute("SELECT zero_match_since, failing_since FROM city_state "
+                     "WHERE city='dresden'").fetchone()
+    assert tuple(row) == (None, None)
+
+
+def test_a_booked_out_city_alone_on_its_vendor_stays_quiet(db):
+    # stuttgart-fuehrerschein is the only konsentas city
+    state = {"stuttgart-fuehrerschein": ("2026-10-17 07:00:00", None)}
+    assert _canary(db, state, ["stuttgart-fuehrerschein"], ["09:01"]) == []
+
+
+def test_a_booked_out_city_with_a_sibling_that_has_slots_stays_quiet(db):
+    state = {"augsburg": ("2026-10-17 07:00:00", None), "kiel": (None, None)}
+    assert _canary(db, state, ["augsburg", "kiel"], ["09:01"]) == []
+
+
+def test_every_city_of_a_vendor_at_zero_mails_the_vendor_once(db):
+    state = {"augsburg": ("2026-10-17 07:00:00", None),
+             "kiel": ("2026-10-17 06:30:00", None)}
+    sent = _canary(db, state, ["augsburg", "kiel"], ["09:01", "09:02"])
+    assert sent == ["[buergerwecker] parser canary: tevis"]
+
+
+def test_a_failing_city_is_left_out_of_the_vendor_alert(db):
+    state = {"augsburg": ("2026-10-17 07:00:00", None),
+             "kiel": ("2026-10-17 07:00:00", "2026-10-17 07:00:00")}
+    sent = _canary(db, state, ["augsburg", "kiel"], ["09:01"])
+    assert sent == ["[buergerwecker] parser canary: kiel"]
 
 
 def test_a_failed_canary_mail_retries_in_an_hour_not_every_cycle(db):
@@ -486,7 +518,7 @@ def test_a_failed_canary_mail_retries_in_an_hour_not_every_cycle(db):
     from app.housekeeping import _check_parser_canary
     confirm(db, insert_pending(db, email="a@example.com", city="leipzig",
                                language="de", filter_=_f(), ttl_days=90))
-    db.execute("INSERT INTO city_state (city, zero_match_since) "
+    db.execute("INSERT INTO city_state (city, failing_since) "
                "VALUES ('leipzig', '2026-10-17 07:00:00')")
     cfg = load_config()
     with patch("app.mail.send", side_effect=RuntimeError("down")) as send:
@@ -497,3 +529,24 @@ def test_a_failed_canary_mail_retries_in_an_hour_not_every_cycle(db):
         with freeze_time("2026-10-17 10:02:00"):
             _check_parser_canary(db, cfg)
     assert send.call_count == 2
+
+
+def test_cycle_tracks_failing_since_apart_from_zero_match_since(db):
+    """Every poll raising sets failing_since; a later poll that returns []
+    without raising clears it, while the city stays at zero."""
+    from app.cycle import run_cycle
+    confirm(db, insert_pending(db, email="a@example.com", city="leipzig",
+                               language="de", filter_=_f(), ttl_days=90))
+
+    def cycle(**scraper_attrs):
+        scraper = MagicMock(**scraper_attrs)
+        with patch("app.cycle.get_scraper", return_value=scraper):
+            run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15,
+                      cycle_id="c")
+        return db.execute("SELECT zero_match_since, failing_since FROM city_state "
+                          "WHERE city='leipzig'").fetchone()
+
+    zero, failing = cycle(**{"poll.side_effect": RuntimeError("503")})
+    assert failing is not None
+    zero, failing = cycle(**{"poll.return_value": []})
+    assert failing is None and zero is not None

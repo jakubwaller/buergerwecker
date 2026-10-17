@@ -272,7 +272,9 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
                                       + (http.request_count - before))
     # Update per-city canary state + upstream counters in the typed city_state
     # table. Clear `zero_match_since` when at least one plan returned slots;
-    # set it on the first all-zero cycle. The canary write and the counter
+    # set it on the first all-zero cycle. `failing_since` follows the same
+    # shape for polls: cleared by any poll that did not raise, set on the first
+    # cycle where every poll did. The canary write and the counter
     # write touch the same row, so wrap them in one transaction — otherwise a
     # concurrent admin reader could observe a half-updated row (fresh
     # last_polled_at with stale counters, or vice versa).
@@ -286,6 +288,11 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
                 "INSERT INTO city_state (city) VALUES (?) "
                 "ON CONFLICT (city) DO NOTHING",
                 (city,),
+            )
+            conn.execute(
+                "UPDATE city_state SET failing_since = CASE WHEN ? THEN NULL "
+                "ELSE COALESCE(failing_since, ?) END WHERE city=?",
+                (city in polled_ok, now_ts, city),
             )
             if city in cities_with_any_slot:
                 conn.execute(

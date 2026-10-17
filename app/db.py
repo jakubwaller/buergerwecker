@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 # SQLite's own timestamp shape, the one CURRENT_TIMESTAMP and datetime('now')
 # produce. Queries compare stored timestamps against those as plain text, so a
@@ -304,6 +304,7 @@ CREATE TABLE IF NOT EXISTS meta (
 CREATE TABLE IF NOT EXISTS city_state (
   city                  TEXT PRIMARY KEY,
   zero_match_since      TIMESTAMP,
+  failing_since         TIMESTAMP,
   last_canary_alert_at  TIMESTAMP,
   requests_today        INTEGER NOT NULL DEFAULT 0,
   last_polled_at        TIMESTAMP,
@@ -402,6 +403,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
         "polls_total":    "INTEGER NOT NULL DEFAULT 0",
         "requests_total": "INTEGER NOT NULL DEFAULT 0",
         "counts_date":    "TEXT",
+        "failing_since":  "TIMESTAMP",
     })
     # confirmation_sent_at: when a pending sign-up's confirmation email was
     # successfully sent, so the retry pass can re-send quota-deferred ones.

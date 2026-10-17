@@ -158,4 +158,4 @@ def test_schema_16_migrates_a_device_table_and_indexes_subscriptions(tmp_path):
     tables = {r["name"] for r in conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"verify_attempts", "rate_events"} <= tables
-    assert SCHEMA_VERSION == 16
+    assert SCHEMA_VERSION == 17

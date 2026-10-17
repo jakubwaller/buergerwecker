@@ -63,8 +63,9 @@ def _prune_rate_events(conn) -> None:
         print(f"rate event prune failed: {exc!r}", flush=True)
 
 def _check_canary(conn, cfg) -> None:
-    """The parser canary, every cycle, so it fires within a cycle of a city
-    crossing PARSER_CANARY_THRESHOLD_HOURS (at most one mail per city a day).
+    """The parser canary, every cycle, so it fires within a cycle of a city's
+    failed polls, or a vendor's zero matches, crossing
+    PARSER_CANARY_THRESHOLD_HOURS (at most one mail per city or vendor a day).
     It used to ride the daily housekeeping run, whose start moves a minute
     later every day: about half the time that run fell outside the canary's
     06-18 UTC window and the canary never checked. Never breaks the cycle."""
