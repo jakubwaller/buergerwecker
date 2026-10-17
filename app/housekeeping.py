@@ -463,7 +463,7 @@ def _prune_availability(conn):
 def _check_parser_canary(conn, cfg):
     """Email developer when a scraper looks broken, during business hours.
     Called by the poller every cycle (poller._check_canary). Two alerts, each
-    at most once a day: a city whose every poll has raised for > threshold
+    at most once a day: a city with a poll raising in every cycle for > threshold
     (a city-specific break), and a vendor whose polled, non-failing cities
     have all been at zero for > threshold (a break in the shared markup).
     One city at zero alone is just a booked-out service and stays quiet."""
@@ -520,7 +520,7 @@ def _check_parser_canary(conn, cfg):
         if row["failing_since"]:
             if old_enough(row["failing_since"]):
                 alert(city,
-                      f"Parser canary: every poll of '{city}' has failed since "
+                      f"Parser canary: a poll of '{city}' has failed in every cycle since "
                       f"{row['failing_since']} (> {hours}h). The poller log has "
                       f"the errors (lines starting \"cycle <id>: poll failed "
                       f"{city}/\").",
@@ -536,7 +536,10 @@ def _check_parser_canary(conn, cfg):
         by_vendor.setdefault(vendor, []).append(row)
     # One city at zero is usually a booked-out service, while a parser break
     # empties every city on that system at once.
-    # shortcut: a vendor with one polled city only gets the failed-poll alert, upgrade when a vendor with a single polled city breaks silently
+    # shortcut: a break that empties one city or host without raising (and
+    # any break on a vendor with one polled city) only shows as zero, so it
+    # does not alert; group by host or add a days-long zero backstop if one
+    # goes unnoticed.
     for vendor, cities in sorted(by_vendor.items()):
         if len(cities) < 2 or not all(old_enough(r["zero_match_since"]) for r in cities):
             continue

@@ -239,6 +239,7 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
     # candidates this cycle.
     due = _due_cities(conn, {p.city for p in plans})
     polled_ok: dict[str, set[str]] = {}
+    failed: set[str] = set()
     plans_ok: list = []
     for p in plans:
         if p.city not in due:
@@ -262,10 +263,12 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
             # canary fires hours later.
             print(f"cycle {cycle_id}: no scraper for {exc}", flush=True)
             slots_by_plan[p.key()] = []
+            failed.add(p.city)
         except Exception as exc:
             print(f"cycle {cycle_id}: poll failed {p.city}/{p.appointment_type}: "
                   f"{exc!r}", flush=True)
             slots_by_plan[p.key()] = []
+            failed.add(p.city)
         polls_delta[p.city] = polls_delta.get(p.city, 0) + 1
         if before is not None:
             requests_delta[p.city] = (requests_delta.get(p.city, 0)
@@ -273,8 +276,9 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
     # Update per-city canary state + upstream counters in the typed city_state
     # table. Clear `zero_match_since` when at least one plan returned slots;
     # set it on the first all-zero cycle. `failing_since` follows the same
-    # shape for polls: cleared by any poll that did not raise, set on the first
-    # cycle where every poll did. The canary write and the counter
+    # shape for polls: cleared by a cycle where no poll raised, set on the first
+    # one where any did, so one broken service next to a working one still
+    # counts. The canary write and the counter
     # write touch the same row, so wrap them in one transaction — otherwise a
     # concurrent admin reader could observe a half-updated row (fresh
     # last_polled_at with stale counters, or vice versa).
@@ -292,7 +296,7 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
             conn.execute(
                 "UPDATE city_state SET failing_since = CASE WHEN ? THEN NULL "
                 "ELSE COALESCE(failing_since, ?) END WHERE city=?",
-                (city in polled_ok, now_ts, city),
+                (city not in failed, now_ts, city),
             )
             if city in cities_with_any_slot:
                 conn.execute(

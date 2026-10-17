@@ -550,3 +550,34 @@ def test_cycle_tracks_failing_since_apart_from_zero_match_since(db):
     assert failing is not None
     zero, failing = cycle(**{"poll.return_value": []})
     assert failing is None and zero is not None
+
+
+def test_one_failing_service_next_to_a_working_one_counts_as_failing(db):
+    """A renumbered service raises every cycle while its sibling polls fine:
+    its subscribers get nothing, so the city must still count as failing."""
+    from app.cycle import run_cycle
+    for t in ("A", "B"):
+        confirm(db, insert_pending(
+            db, email=f"{t.lower()}@example.com", city="leipzig", language="de",
+            filter_=Filter(appointment_types=[t], locations="all",
+                           weekdays=[1, 2, 3, 4, 5, 6, 7],
+                           time_window_start=time(0, 0),
+                           time_window_end=time(23, 59)),
+            ttl_days=90))
+
+    def poll(plan, http):
+        if plan.appointment_type == "B" and broken:
+            raise RuntimeError("no office list after re-login")
+        return []
+
+    def failing_since():
+        with patch("app.cycle.get_scraper", return_value=MagicMock(poll=poll)):
+            run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15,
+                      cycle_id="c")
+        return db.execute("SELECT failing_since FROM city_state "
+                          "WHERE city='leipzig'").fetchone()[0]
+
+    broken = True
+    assert failing_since() is not None
+    broken = False
+    assert failing_since() is None
