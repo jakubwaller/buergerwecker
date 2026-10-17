@@ -138,6 +138,8 @@ def sync_city(city: str,
             live_locations, service_map = fetch_locations_with_map(
                 http, scfg["base_url"], scfg["uid"],
                 list(live_services.values()), scfg["steps"])
+            if not live_locations:
+                raise RuntimeError("no offices parsed from the locations step")
         else:
             # Single-location tenants have no locations step: nothing to
             # probe, and a coverage map would be meaningless.
@@ -317,9 +319,9 @@ def _sync_tevis(city: str, city_dir: Path, scfg: dict,
     # Probe locations for every live service so a brand-new service's offices
     # are seen too. Union across catalog + live ids is unnecessary: an id
     # gone from the page can't be probed anyway.
+    probed = set(live_services.values())
     union_by_id, service_map = fetch_tevis_locations(
-        http, scfg["base_url"], str(scfg["mdt"]),
-        sorted(set(live_services.values())))
+        http, scfg["base_url"], str(scfg["mdt"]), sorted(probed))
     if not union_by_id:
         return {"error": "no offices parsed from location pages",
                 "service_drift": {}, "location_drift": {}}
@@ -347,9 +349,9 @@ def _sync_tevis(city: str, city_dir: Path, scfg: dict,
                  location_drift=location_drift)
     result = {"service_drift": service_drift, "location_drift": location_drift}
     # A failed probe hides its offices; no live ids beats false dead ones.
-    if set(service_map) == set(live_services.values()):
-        # Ids, not names: two offices with one display name share a dict key.
-        result["live_ids"] = set(live_services.values()) | set(union_by_id)
+    if set(service_map) == probed:
+        # Ids, not names: two services or offices with one name share a key.
+        result["live_ids"] = probed | set(union_by_id)
     return result
 
 

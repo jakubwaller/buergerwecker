@@ -145,25 +145,28 @@ def test_sync_records_subscribed_ids_the_site_no_longer_has(db, monkeypatch):
 
 def test_sync_checks_the_catalog_offices_for_an_all_offices_subscription(db, monkeypatch):
     """A subscription to every office polls the catalog's offices, so a
-    renumbered office is dead for it too."""
+    renumbered office is dead for it too. Nürnberg's 522 serves only an
+    excluded service, which the sync never probes: it is not reported."""
     import json
     from app.catalog import load_catalog
     from app.models import Filter
     from app.repo import insert_pending, confirm
     _env(monkeypatch, CATALOG_SYNC_ENABLED="1")
-    confirm(db, insert_pending(db, email="a@example.com", city="leipzig",
+    confirm(db, insert_pending(db, email="a@example.com", city="nuernberg",
                                language="de",
                                filter_=Filter(["svc"], "all", [1],
                                               time(0, 0), time(23, 59)),
                                ttl_days=30))
-    offices = sorted(load_catalog("leipzig").locations.values())
+    cat = load_catalog("nuernberg")
+    assert "522" in cat.locations.values()
+    offices = sorted({u for ls in cat.service_locations.values() for u in ls})
 
     def fake(city, http, alert_fn, catalog_root=None, write=True):
         return {"service_drift": {}, "location_drift": {},
-                "live_ids": {"svc", *offices[1:]} if city == "leipzig" else set()}
+                "live_ids": {"svc", *offices[1:]} if city == "nuernberg" else set()}
 
     with patch("app.mail.send"), patch("app.catalog_sync.sync_city", side_effect=fake):
         run_once(db)
         wait_for_catalog_sync()
     row = db.execute("SELECT value FROM meta WHERE key='catalog_dead_ids'").fetchone()
-    assert json.loads(row["value"]) == {"leipzig": offices[:1]}
+    assert json.loads(row["value"]) == {"nuernberg": offices[:1]}

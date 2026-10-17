@@ -617,8 +617,11 @@ def _sync_catalogs(cfg):
             cat = load_catalog(city)
             excluded = {str(s) for s in cat.scraper_config
                         .get("exclude_services") or ()}
-            wanted = subscribed_ids(conn, city,
-                                    all_offices=cat.locations.values())
+            # The coverage map, not locations.json: it drops offices only an
+            # excluded service uses, which the sync never probes.
+            offices = ({u for ls in cat.service_locations.values() for u in ls}
+                       or set(cat.locations.values()))
+            wanted = subscribed_ids(conn, city, all_offices=offices)
             gone = sorted(wanted - live - excluded)
         except Exception:
             continue

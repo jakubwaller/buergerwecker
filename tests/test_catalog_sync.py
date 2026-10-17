@@ -649,6 +649,17 @@ def test_sync_city_empty_service_list_is_error_not_dead_ids(tmp_catalog_root):
     assert result["error"] and "live_ids" not in result
 
 
+def test_sync_city_no_offices_parsed_is_error(tmp_catalog_root, monkeypatch):
+    """Every probe landing on a session or error page parses to no offices:
+    an error, not a city whose every office died."""
+    monkeypatch.setattr(catalog_sync, "fetch_services", lambda *a, **k: (
+        {"Personalausweis beantragen": "u1"}, {}))
+    monkeypatch.setattr(catalog_sync, "_probe_one_service", lambda *a, **k: {})
+    result = catalog_sync.sync_city("leipzig", MagicMock(), alert_fn=lambda **kw: None,
+                                    catalog_root=tmp_catalog_root, write=False)
+    assert result["error"] and "live_ids" not in result
+
+
 def test_sync_city_failed_probe_gives_no_live_ids(tmp_catalog_root, monkeypatch):
     """A service whose probe failed hides the offices only it offers, so the
     run must not report them as gone."""
