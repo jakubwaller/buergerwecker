@@ -142,12 +142,24 @@ def _send_renewal_reminders(conn, cfg):
     # write lock must not be held for it. Only delivered mails stamp the latch;
     # what the quota defers is asked again tomorrow, inside the same window.
     result = _mail.send_batch(conn, items, cfg)
-    delivered = [by_key[k] for k in result.delivered]
+    delivered = [by_key[k] for k in _went_out(conn, result, by_key)]
     if delivered:
         with transaction(conn):
             conn.executemany(
                 "UPDATE subscriptions SET reminder_sent_at=CURRENT_TIMESTAMP "
                 "WHERE id=?", [(sid,) for sid in delivered])
+
+def _went_out(conn, result, by_key) -> set[str]:
+    """The keys delivered now, plus those an earlier run sent but never
+    latched (a restart between the send and the UPDATE): send_batch skips
+    those, and without the latch they would go out again once
+    _prune_idempotency forgets the key."""
+    if not by_key:
+        return set()
+    marks = ",".join("?" * len(by_key))
+    return set(result.delivered) | {r[0] for r in conn.execute(
+        f"SELECT idem_key FROM sent_idempotency WHERE provider != 'pending' "
+        f"AND idem_key IN ({marks})", list(by_key))}
 
 def _send_push_checkins(conn, cfg):
     """The still-looking check-in for app subscriptions: the same question
@@ -318,7 +330,7 @@ def _send_heartbeats(conn, cfg, *, milestone_days: int, milestone_col: str,
     # Outside any transaction, like the renewal reminders; only delivered
     # mails are marked, the rest is picked up by the next daily run.
     result = _mail.send_batch(conn, items, cfg)
-    delivered = [by_key[k] for k in result.delivered]
+    delivered = [by_key[k] for k in _went_out(conn, result, by_key)]
     if delivered:
         from app.db import transaction
         with transaction(conn):

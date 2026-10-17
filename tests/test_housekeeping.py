@@ -343,9 +343,28 @@ def test_paused_subscription_gets_no_heartbeat(db):
     confirm(db, sid)
     db.execute("UPDATE subscriptions SET confirmed_at=datetime('now','-40 days'), "
                "expires_at=datetime('now','-1 day') WHERE id=?", (sid,))
-    with patch("app.mail.send") as send:
+    send = _batch_sender()
+    with patch("app.mail.send"), patch("app.mail.send_batch", send):
         run_once(db)
     assert _mails_to(send, "a@x.com") == []
+
+
+def test_a_heartbeat_sent_but_never_latched_is_latched_not_resent(db):
+    """A restart between the send and the UPDATE: the key says sent, so
+    send_batch skips it. It must still be latched, or it goes out again once
+    the 14-day idempotency prune forgets the key."""
+    from app.mail import _idem_key
+    sid = insert_pending(db, email="a@x.com", city="leipzig", language="de",
+                         filter_=_f(), ttl_days=90)
+    confirm(db, sid)
+    db.execute("UPDATE subscriptions SET confirmed_at=datetime('now','-40 days') "
+               "WHERE id=?", (sid,))
+    db.execute("INSERT INTO sent_idempotency (idem_key, provider) VALUES (?, 'mailjet')",
+               (_idem_key(sid, [], f"heartbeat-30d-{sid}"),))
+    with patch("app.mail.send"), patch("app.mail.send_batch", _batch_sender(deliver=False)):
+        run_once(db)
+    assert db.execute("SELECT heartbeat_30d_at FROM subscriptions WHERE id=?",
+                      (sid,)).fetchone()[0] is not None
 
 
 def test_rate_records_are_pruned_once_no_verdict_can_read_them(db):
