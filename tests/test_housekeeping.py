@@ -413,6 +413,9 @@ def test_parser_canary_mails_once_a_day_past_the_threshold(db):
             _check_parser_canary(db, cfg)     # next cycle: already told
     assert send.call_count == 1
     assert send.call_args.args[2] == "[buergerwecker] parser canary: leipzig"
+    # Unpolled dresden starts from scratch once someone subscribes again.
+    assert db.execute("SELECT zero_match_since FROM city_state "
+                      "WHERE city='dresden'").fetchone()[0] is None
 
 
 def test_a_failed_canary_mail_retries_in_an_hour_not_every_cycle(db):

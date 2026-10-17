@@ -41,7 +41,7 @@ def main() -> None:
                   flush=True)
             if consecutive_failures >= 3:
                 _maybe_alert(conn, cfg, str(exc))
-        # After the cycle, so a slow mail provider never delays slot polling.
+        # After the cycle: its slots go out before a slow mail provider stalls.
         _check_canary(conn, cfg)
 
 def _prune_rate_events(conn) -> None:

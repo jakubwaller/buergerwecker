@@ -453,14 +453,18 @@ def _check_parser_canary(conn, cfg):
     from datetime import datetime, timedelta
     from app.db import sql_ts
     now = datetime.utcnow()
+    # Only a poll clears zero_match_since, so a city nobody polls any more
+    # would keep its last value: the canary forever, and a false alarm on the
+    # first empty poll once someone subscribes there again.
+    from app.repo import active_subscriptions
+    polled = sorted({s.city for s in active_subscriptions(conn)})
+    conn.execute(
+        "UPDATE city_state SET zero_match_since=NULL WHERE zero_match_since "
+        f"IS NOT NULL AND city NOT IN ({','.join('?' * len(polled))})", polled)
     # Skip outside typical-load hours (08:00–20:00 Europe/Berlin ≈ 06:00–18:00 UTC)
     if not (6 <= now.hour <= 18):
         return
     threshold = timedelta(hours=cfg.parser_canary_threshold_hours)
-    # Only a poll clears zero_match_since, so a city nobody polls any more
-    # would keep its last value, and the canary, forever.
-    from app.repo import active_subscriptions
-    polled = {s.city for s in active_subscriptions(conn)}
     rows = conn.execute(
         "SELECT city, zero_match_since, last_canary_alert_at "
         "FROM city_state WHERE zero_match_since IS NOT NULL"
@@ -473,8 +477,6 @@ def _check_parser_canary(conn, cfg):
         if now - since < threshold:
             continue
         city = row["city"]
-        if city not in polled:
-            continue
         if row["last_canary_alert_at"]:
             try:
                 last = datetime.fromisoformat(row["last_canary_alert_at"])
