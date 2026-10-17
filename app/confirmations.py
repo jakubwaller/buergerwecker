@@ -10,7 +10,7 @@ isn't re-sent.
 from __future__ import annotations
 import sqlite3
 from urllib.parse import urlsplit
-from app.mail import send_batch, pool_usage, Outgoing, _idem_key
+from app.mail import send_batch, pool_usage, Outgoing, _idem_key, _dead_addresses
 from app.repo import set_confirmation_sent, pending_confirmations
 from app.tokens import sign
 
@@ -84,11 +84,27 @@ def confirmation_room(conn: sqlite3.Connection, cfg) -> int | None:
     return max(0, pool * pct // 100 - used)
 
 
+def _queue(conn: sqlite3.Connection, cfg, max_age_days: int = 7) -> list:
+    """Pending sign-ups a send can reach, oldest first. A dead address
+    (send_batch skips it) would otherwise hold a slot at the head of the
+    queue for its whole retry window."""
+    dead = _dead_addresses(conn, cfg)
+    return [p for p in pending_confirmations(conn, max_age_days=max_age_days)
+            if p[1] not in dead]
+
+
+def confirmation_held(conn: sqlite3.Connection, cfg) -> bool:
+    """Whether the newest sign-up waits past the next cycle: the pressure
+    line leaves less room than the queue ahead of it and itself."""
+    room = confirmation_room(conn, cfg)
+    return room is not None and len(_queue(conn, cfg)) > room
+
+
 def send_pending_confirmations(conn: sqlite3.Connection, cfg, *,
                                max_age_days: int = 7) -> None:
     """Send the confirmation emails of sign-ups that have not had one, oldest
     first, no further than `confirmation_room`. Called once per poll cycle."""
-    pending = pending_confirmations(conn, max_age_days=max_age_days)
+    pending = _queue(conn, cfg, max_age_days)
     room = confirmation_room(conn, cfg)
     if room is not None:
         pending = pending[:room]

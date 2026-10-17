@@ -98,6 +98,31 @@ def test_confirmations_stop_at_the_pool_pressure_line(db):
     assert second in _pending_ids(db)
 
 
+def test_a_dead_address_does_not_hold_the_head_of_the_queue(db):
+    """send_batch never mails a suppressed address, so its row stays
+    pending: it must not take the one confirmation the line has room for."""
+    from app.repo import suppress_address
+    dead = _sub(db, "dead@x.com")
+    db.execute("UPDATE subscriptions SET created_at=datetime('now','-1 hour') "
+               "WHERE id=?", (dead,))
+    suppress_address(db, "dead@x.com", reason="hard_bounce")
+    live = _sub(db, "live@x.com")
+    _spend_pool(db, 399)
+    with patch("app.mail._call_mailjet_batch", return_value=200):
+        send_pending_confirmations(db, _cfg(mail_pool_pressure_pct=80))
+    assert _sent_at(db, live) is not None
+
+
+def test_a_signup_is_held_when_the_queue_ahead_fills_the_room(db):
+    from app.confirmations import confirmation_held
+    _sub(db, "one@x.com")
+    _spend_pool(db, 399)                       # room for one
+    assert not confirmation_held(db, _cfg(mail_pool_pressure_pct=80))
+    _sub(db, "two@x.com")                      # one ahead of it
+    assert confirmation_held(db, _cfg(mail_pool_pressure_pct=80))
+    assert not confirmation_held(db, _cfg(mail_pool_pressure_pct=0))
+
+
 def test_no_pressure_line_sends_everything_pending(db):
     _sub(db, "one@x.com"), _sub(db, "two@x.com")
     _spend_pool(db, 450)

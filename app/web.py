@@ -965,8 +965,8 @@ def create_app() -> Flask:
         # and sign-ups never spend the mail pool past its pressure line.
         # Held there, the sign-up stays pending and the banner says the mail
         # may come tomorrow. No soft-delete, no lockout.
-        from app.confirmations import confirmation_room
-        held = confirmation_room(conn, cfg) == 0
+        from app.confirmations import confirmation_held
+        held = confirmation_held(conn, cfg)
         # Carry the city and language back, or the banner would land on the
         # picker in German no matter who just signed up for what.
         args = {"confirmed": "queued" if held else "pending"}
