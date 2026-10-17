@@ -50,8 +50,9 @@ def _email(value) -> str:
     somebody typed — or, for a blocklist event, an address that never went
     through this service at all — would otherwise write a suppression row that
     blocks nothing and ends no subscription, and look identical on /admin to one
-    that works. Returns "" for anything that is not a usable address, which the
-    parsers treat as "skip this event"."""
+    that works. Returns "" for anything that is not a string, which the parsers
+    treat as "skip this event". Event names go through it too, so it must stay
+    a plain strip-and-lowercase: an address check here would blank them all."""
     return value.strip().lower() if isinstance(value, str) else ""
 
 
