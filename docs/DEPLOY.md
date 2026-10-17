@@ -1031,8 +1031,8 @@ code wrote cover everything inside the new horizon.
 
 A TEVIS tenant can renumber every service and office id at once (five did around 2026-10-10). A
 poll for a dead id returns no slots and no error, so every subscription on the old ids goes
-silent. The daily catalog sync notices, but it rewrites the files only inside the poller
-container; the fix is a catalog commit with the new ids, then `scripts/remap_catalog_ids.py` to
+silent. The daily catalog sync notices and lists the subscribed ids the site no longer has in the
+ops summary and on /admin; it writes nothing. The fix is a catalog commit with the new ids, then `scripts/remap_catalog_ids.py` to
 move existing subscriptions over. The map (`scripts/catalog_remap_<date>.json`, old id to new id
 per city) is built by matching names and committed with the catalog change.
 

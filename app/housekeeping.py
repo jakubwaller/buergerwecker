@@ -614,9 +614,12 @@ def _sync_catalogs(cfg):
                                           write=False).get("live_ids")
             if live is None:
                 continue  # skipped or failed: keep what the last run found
-            excluded = {str(s) for s in load_catalog(city).scraper_config
+            cat = load_catalog(city)
+            excluded = {str(s) for s in cat.scraper_config
                         .get("exclude_services") or ()}
-            gone = sorted(subscribed_ids(conn, city) - live - excluded)
+            wanted = subscribed_ids(conn, city,
+                                    all_offices=cat.locations.values())
+            gone = sorted(wanted - live - excluded)
         except Exception:
             continue
         if gone:

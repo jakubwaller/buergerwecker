@@ -636,3 +636,45 @@ def test_sync_tevis_never_readds_an_excluded_service(tmp_tevis_root):
     # and it is never even probed for offices
     probed = [c.kwargs.get("params", {}) for c in http.get.call_args_list]
     assert not any("cnc-999" in p for p in probed)
+
+
+def test_sync_city_empty_service_list_is_error_not_dead_ids(tmp_catalog_root):
+    """A maintenance page can answer success with no services: that is an
+    error, never a city whose every id died."""
+    http = MagicMock()
+    http.get.return_value = MagicMock(status_code=200,
+                                      json=lambda: {"success": True, "results": []})
+    result = catalog_sync.sync_city("leipzig", http, alert_fn=lambda **kw: None,
+                                    catalog_root=tmp_catalog_root, write=False)
+    assert result["error"] and "live_ids" not in result
+
+
+def test_sync_city_failed_probe_gives_no_live_ids(tmp_catalog_root, monkeypatch):
+    """A service whose probe failed hides the offices only it offers, so the
+    run must not report them as gone."""
+    monkeypatch.setattr(catalog_sync, "fetch_services", lambda *a, **k: (
+        {"Personalausweis beantragen": "u1", "Reisepass beantragen": "u2"}, {}))
+
+    def probe(http, base_url, uid, svc, *a, **k):
+        if svc == "u2":
+            raise IndexError("maintenance page")
+        return {"loc-1": "Bürgerbüro Eins"}
+    monkeypatch.setattr(catalog_sync, "_probe_one_service", probe)
+    result = catalog_sync.sync_city("leipzig", MagicMock(), alert_fn=lambda **kw: None,
+                                    catalog_root=tmp_catalog_root, write=False)
+    assert "error" not in result and "live_ids" not in result
+
+
+def test_sync_tevis_failed_probe_gives_no_live_ids(tmp_tevis_root):
+    http = _build_tevis_http({"Personalausweis": "623", "Reisepass": "624"},
+                             {"623": {"78": "Rathaus"}})
+    ok = http.get.side_effect
+
+    def get(url, params=None, **kw):
+        if params and "cnc-624" in params:
+            raise requests.ConnectionError("probe failed")
+        return ok(url, params=params, **kw)
+    http.get.side_effect = get
+    result = catalog_sync.sync_city("kiel", http, alert_fn=lambda **kw: None,
+                                    catalog_root=tmp_tevis_root, write=False)
+    assert "error" not in result and "live_ids" not in result

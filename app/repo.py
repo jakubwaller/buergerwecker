@@ -593,18 +593,19 @@ def city_services(conn: sqlite3.Connection, city: str, *,
     return _types_in(mail), _types_in(app)
 
 
-def subscribed_ids(conn: sqlite3.Connection, city: str) -> set[str]:
+def subscribed_ids(conn: sqlite3.Connection, city: str,
+                   all_offices=()) -> set[str]:
     """Every service and office id a live subscription in `city` (mail or
     app) names: ids that must still exist on the city's site, or those
-    subscribers are polled for something that answers nothing."""
+    subscribers are polled for something that answers nothing. A
+    subscription to every office names `all_offices` (the catalog's)."""
     out: set[str] = set()
     for r in conn.execute(
             f"SELECT filters_json FROM subscriptions WHERE city=? "
             f"AND (({_LIVE_MAIL}) OR ({_LIVE_APP}))", (city,)):
         f = Filter.from_json(r["filters_json"])
         out.update(f.appointment_types)
-        if f.locations != "all":
-            out.update(f.locations)
+        out.update(all_offices if f.locations == "all" else f.locations)
     return out
 
 

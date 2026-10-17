@@ -129,6 +129,9 @@ def sync_city(city: str,
 
     try:
         live_services, live_services_en = fetch_services(http, scfg["base_url"], scfg["uid"])
+        if not live_services:
+            # A broken page, not a city that dropped every service.
+            raise RuntimeError("the site listed no services")
         live_services = _drop_excluded(live_services, scfg)
         live_services_en = _drop_excluded(live_services_en, scfg)
         if has_locations_step(scfg):
@@ -170,11 +173,13 @@ def sync_city(city: str,
                  service_drift=service_drift,
                  location_drift=location_drift)
 
-    return {"service_drift": service_drift,
-            "location_drift": location_drift,
-            # The coverage map has ids even where two offices share a name.
-            "live_ids": (set(live_services.values()) | set(live_locations.values())
-                         | {u for locs in (service_map or {}).values() for u in locs})}
+    result = {"service_drift": service_drift, "location_drift": location_drift}
+    # A failed probe hides its offices; no live ids beats false dead ones.
+    if service_map is None or set(service_map) == set(live_services.values()):
+        # The coverage map has ids even where two offices share a name.
+        result["live_ids"] = (set(live_services.values()) | set(live_locations.values())
+                              | {u for locs in (service_map or {}).values() for u in locs})
+    return result
 
 
 # ---------- TEVIS ----------
@@ -340,10 +345,12 @@ def _sync_tevis(city: str, city_dir: Path, scfg: dict,
         alert_fn(city=city,
                  service_drift=service_drift,
                  location_drift=location_drift)
-    # Ids, not names: two offices with one display name share a dict key.
-    return {"service_drift": service_drift,
-            "location_drift": location_drift,
-            "live_ids": set(live_services.values()) | set(union_by_id)}
+    result = {"service_drift": service_drift, "location_drift": location_drift}
+    # A failed probe hides its offices; no live ids beats false dead ones.
+    if set(service_map) == set(live_services.values()):
+        # Ids, not names: two offices with one display name share a dict key.
+        result["live_ids"] = set(live_services.values()) | set(union_by_id)
+    return result
 
 
 def _keep_catalog_names(current: dict[str, str],
