@@ -89,7 +89,9 @@ def _follow_if_redirect(http: requests.Session, response):
     """If the response is a 302, GET the rewritten Location and return the followed response."""
     if getattr(response, "status_code", 200) == 302:
         loc = _rewrite_8443(response.headers.get("Location", ""))
-        return http.get(loc, timeout=30, allow_redirects=False)
+        response = http.get(loc, timeout=30, allow_redirects=False)
+    # An error page must fail the poll, not read as "no free slots".
+    response.raise_for_status()
     return response
 
 
@@ -98,6 +100,7 @@ def _acquire_wsid(http: requests.Session, base_url: str, uid: str) -> str:
         f"{base_url}/search_result?search_mode=earliest&uid={uid}",
         timeout=30, allow_redirects=True,
     )
+    r.raise_for_status()
     if "wsid=" not in r.url:
         raise RuntimeError("wsid not found in redirect URL")
     return r.url.split("wsid=", 1)[1].split("&", 1)[0]

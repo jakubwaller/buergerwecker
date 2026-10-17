@@ -262,7 +262,9 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
             # canary fires hours later.
             print(f"cycle {cycle_id}: no scraper for {exc}", flush=True)
             slots_by_plan[p.key()] = []
-        except Exception:
+        except Exception as exc:
+            print(f"cycle {cycle_id}: poll failed {p.city}/{p.appointment_type}: "
+                  f"{exc!r}", flush=True)
             slots_by_plan[p.key()] = []
         polls_delta[p.city] = polls_delta.get(p.city, 0) + 1
         if before is not None:

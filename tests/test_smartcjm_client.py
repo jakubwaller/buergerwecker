@@ -267,3 +267,11 @@ def test_poll_abh_session_expired_retries_single_step_flow():
     ]
     assert poll(plan, http=sess) == []
     assert sess.post.call_count == 2  # one failed attempt + one retry, no locations POSTs
+
+
+def test_error_page_raises_instead_of_reading_as_no_slots():
+    import requests
+    r = requests.Response()
+    r.status_code = 429
+    with pytest.raises(requests.HTTPError):
+        smartcjm._follow_if_redirect(MagicMock(), r)

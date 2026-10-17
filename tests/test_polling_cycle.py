@@ -365,3 +365,14 @@ def test_the_horizon_lies_past_the_abundance_ladder():
     assert MAX_SLOTS_PER_CYCLE > _ABUNDANCE_LADDER[-1][0]
     assert (adaptive_rate_limit_minutes(15, MAX_SLOTS_PER_CYCLE)
             == adaptive_rate_limit_minutes(15, 2792))
+
+
+def test_cycle_logs_why_a_poll_failed(db, capsys):
+    sid = insert_pending(db, email="a@x.com", city="leipzig",
+                        language="de", filter_=_f(["svc-A"]), ttl_days=90)
+    confirm(db, sid)
+    with patch("app.cycle.get_scraper") as gs, patch("app.cycle.send_digest"):
+        gs.return_value.poll.side_effect = RuntimeError("boom")
+        run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15,
+                  cycle_id="c1")
+    assert "cycle c1: poll failed leipzig/svc-A: RuntimeError('boom')" in capsys.readouterr().out

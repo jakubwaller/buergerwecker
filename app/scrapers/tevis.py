@@ -21,6 +21,7 @@ once.
 """
 from __future__ import annotations
 import re
+from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 import requests
 from app.models import Slot, PollPlan
@@ -88,7 +89,8 @@ def _bootstrap_session(http: requests.Session, base: str, md: str) -> None:
     ready: set = getattr(http, "_tevis_ready", None) or set()
     if (base, md) in ready:
         return
-    http.get(f"{base}/select2", params={"md": md}, timeout=30)
+    http.get(f"{base}/select2", params={"md": md},
+             timeout=30).raise_for_status()
     ready.add((base, md))
     http._tevis_ready = ready
 
@@ -101,6 +103,7 @@ def _fetch_location_page(http: requests.Session, base: str, scfg: dict,
                 f"cnc-{plan.appointment_type}": "1"},
         timeout=30,
     )
+    r.raise_for_status()
     return r.text
 
 
@@ -131,9 +134,15 @@ def poll(plan: PollPlan, http: requests.Session) -> list[Slot]:
         # no-op and every poll return [] until process restart. A service with
         # genuinely zero free slots still renders the office forms, so this
         # does not loop on empty results.
-        http.cookies.clear()
-        http._tevis_ready = set()
+        # Only this host's: the poller's session is shared by every tenant.
+        host = urlparse(base).hostname
+        for c in list(http.cookies):
+            if c.domain.lstrip(".") == host:
+                http.cookies.clear(c.domain, c.path, c.name)
+        http._tevis_ready.discard((base, md))
         _bootstrap_session(http, base, md)
         html = _fetch_location_page(http, base, scfg, plan)
+        if not _has_office_list(html):
+            raise RuntimeError(f"tevis {plan.city}: no office list after re-login")
     return parse_slots(html, service_id=plan.appointment_type,
                        locations=plan.locations)

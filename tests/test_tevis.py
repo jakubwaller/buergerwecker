@@ -1,6 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 import pytest
+import requests
 from app.models import PollPlan
 from app.scrapers import tevis, get_scraper
 from app.catalog import load_catalog, booking_start_url
@@ -119,3 +120,27 @@ def test_catalog_locations_match_fixture():
               for s in tevis.parse_slots(FIXTURE, service_id="487",
                                          locations="all")}
     assert parsed == set(catalog.locations.values())
+
+
+def _resp(status, text=""):
+    r = requests.Response()
+    r.status_code, r._content = status, text.encode()
+    return r
+
+
+def test_poll_error_page_is_a_failed_poll_not_zero_slots():
+    http = MagicMock()
+    http.get.side_effect = [_resp(200), _resp(503, FIXTURE)]
+    with pytest.raises(requests.HTTPError):
+        tevis.poll(_plan(), http=http)
+
+
+def test_poll_without_office_list_after_relogin_raises_and_keeps_other_hosts_cookies():
+    http = requests.Session()
+    http.cookies.set("sid", "mine",
+                     domain="termine-buergerbuero.dresden.de")
+    http.cookies.set("sid", "other", domain="other.example.com")
+    http.get = MagicMock(return_value=_resp(200, "<html>Hilfe</html>"))
+    with pytest.raises(RuntimeError, match="no office list"):
+        tevis.poll(_plan(), http=http)
+    assert [c.domain for c in http.cookies] == ["other.example.com"]
