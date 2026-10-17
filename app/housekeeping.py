@@ -536,10 +536,9 @@ def _check_parser_canary(conn, cfg):
         by_vendor.setdefault(vendor, []).append(row)
     # One city at zero is usually a booked-out service, while a parser break
     # empties every city on that system at once.
-    # shortcut: a break that empties one city or host without raising (and
-    # any break on a vendor with one polled city) only shows as zero, so it
-    # does not alert; group by host or add a days-long zero backstop if one
-    # goes unnoticed.
+    # shortcut: a break that empties one city or host without raising only
+    # shows as zero, so it does not alert; group by host or add a days-long
+    # zero backstop if one goes unnoticed.
     for vendor, cities in sorted(by_vendor.items()):
         if len(cities) < 2 or not all(old_enough(r["zero_match_since"]) for r in cities):
             continue
