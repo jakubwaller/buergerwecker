@@ -370,7 +370,9 @@ def test_sync_city_skips_location_probe_for_tenant_without_locations_step(tmp_pa
     res = catalog_sync.sync_city("leipzig-abh", http,
                                  alert_fn=lambda **kw: alerts.append(kw),
                                  catalog_root=root)
-    assert res == {"service_drift": {}, "location_drift": {}}
+    # The static office counts as live: there is nothing to probe it against.
+    assert res == {"service_drift": {}, "location_drift": {},
+                   "live_ids": {"svc-1", "loc-abh"}}
     assert alerts == []
     http.post.assert_not_called()          # no location probing whatsoever
     assert (city / "locations.json").read_text() == loc_before
@@ -478,7 +480,7 @@ def test_sync_tevis_no_drift_makes_no_writes(tmp_tevis_root):
     result = catalog_sync.sync_city("kiel", http,
                                     alert_fn=lambda *a, **k: alerts.append(k),
                                     catalog_root=tmp_tevis_root)
-    assert result == {"service_drift": {}, "location_drift": {}}
+    assert (result["service_drift"], result["location_drift"]) == ({}, {})
     assert alerts == []
     for p, m in mtimes.items():
         assert (city / p).stat().st_mtime_ns == m
@@ -509,6 +511,22 @@ def test_sync_tevis_detects_new_office_and_service(tmp_tevis_root):
         "623": ["74", "78"], "625": ["78"]}
 
 
+def test_sync_without_write_reports_renumbered_ids_and_leaves_files(tmp_tevis_root):
+    """Production only compares (catalog/ is baked into each image): a city
+    that renumbered its ids, as five TEVIS cities did on 2026-10-10, leaves
+    the files alone and hands back the live ids for the subscription check."""
+    city = tmp_tevis_root / "kiel"
+    before = {p.name: p.read_text() for p in city.iterdir()}
+    http = _build_tevis_http({"Personalausweis": "9623"},
+                             {"9623": {"978": "Rathaus"}})
+    result = catalog_sync.sync_city("kiel", http, alert_fn=lambda **kw: None,
+                                    catalog_root=tmp_tevis_root, write=False)
+    assert result["live_ids"] == {"9623", "978"}
+    assert result["service_drift"]["changed_uid"] == [
+        {"name": "Personalausweis", "old_uid": "623", "new_uid": "9623"}]
+    assert {p.name: p.read_text() for p in city.iterdir()} == before
+
+
 def test_sync_tevis_keeps_curated_names_for_known_ids(tmp_tevis_root):
     """A cosmetic live-label difference for a known id must not read as drift
     (catalog names are hand-curated at onboarding)."""
@@ -519,7 +537,7 @@ def test_sync_tevis_keeps_curated_names_for_known_ids(tmp_tevis_root):
     result = catalog_sync.sync_city("kiel", http,
                                     alert_fn=lambda *a, **k: None,
                                     catalog_root=tmp_tevis_root)
-    assert result == {"service_drift": {}, "location_drift": {}}
+    assert (result["service_drift"], result["location_drift"]) == ({}, {})
 
 
 def test_sync_tevis_unparseable_select2_is_error_not_drift(tmp_tevis_root):

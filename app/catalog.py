@@ -197,10 +197,10 @@ _CATALOG_FILES = ("appointment_type.json", "locations.json",
 # cache must (a) hold every tenant — an lru_cache(maxsize=8) over 38 tenants
 # missed on nearly every call, re-reading and re-parsing up to seven JSON
 # files per miss, and the tenant switcher loads all of them per page view —
-# and (b) notice when catalog_sync rewrites a file. The poller runs the sync,
-# but the web workers are separate processes that never restart for it, so
-# "clear the cache after syncing" cannot reach them; a per-load stat of the
-# files (cheap, no parse) can. `load_catalog.cache_clear()` is kept for tests
+# and (b) notice a rewritten file (a local catalog_sync refresh, a hand edit)
+# without a restart; a per-load stat of the files (cheap, no parse) does. In
+# production nothing rewrites them: catalog/ is baked into each image and the
+# daily sync only compares. `load_catalog.cache_clear()` is kept for tests
 # that swap CATALOG_ROOT.
 _CACHE: dict[str, tuple[tuple, "Catalog"]] = {}
 

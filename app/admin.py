@@ -92,28 +92,13 @@ def _walls_detail(walls: dict | None) -> str:
                 "slot may be gone by then")
     return f" ({', '.join(bits)}{tail})"
 
-def _empty_catalogs() -> list[str]:
-    """Tenants whose service or location catalog is empty on disk — what a
-    live API answering `success` with no results leaves after the daily sync
-    rewrites the file. Such a tenant polls nothing and nobody is told, now
-    that drift no longer sends its own mail, so it goes into the summary."""
+
+def _json_meta(value: str | None) -> dict:
     import json
-    from app.catalog import CATALOG_ROOT
-    out: list[str] = []
     try:
-        dirs = sorted(p for p in CATALOG_ROOT.iterdir() if p.is_dir())
-    except OSError:
-        return out
-    for d in dirs:
-        if not (d / "scraper_config.json").is_file():
-            continue  # scaffold, not a live tenant (see available_cities)
-        for name in ("appointment_type.json", "locations.json"):
-            try:
-                if not json.loads((d / name).read_text(encoding="utf-8")):
-                    out.append(f"{d.name}/{name}")
-            except (OSError, ValueError):
-                continue  # missing/garbled files are load_catalog's error to raise
-    return out
+        return json.loads(value) if value else {}
+    except ValueError:
+        return {}
 
 
 def summary_anomalies(s: dict, *, now: datetime) -> list[str]:
@@ -241,12 +226,12 @@ def summary_anomalies(s: dict, *, now: datetime) -> list[str]:
     if bk is None or now - bk > timedelta(hours=BACKUP_STALE_HOURS):
         out.append(f"backup is stale (>{BACKUP_STALE_HOURS}h) or missing")
 
-    empty = s.get("empty_catalogs") or []
-    if empty:
-        out.append("catalog file empty on disk (the sync overwrote it with "
-                   "nothing; empty locations.json stops that tenant's polling, "
-                   "empty appointment_type.json empties its sign-up form): "
-                   + ", ".join(empty))
+    # Ids live subscriptions use that the city's site no longer has: polled
+    # for nothing, silently (housekeeping._sync_catalogs, daily).
+    for city, ids in sorted((s.get("catalog_dead_ids") or {}).items()):
+        out.append(f"{labels.get(city, city)}: {len(ids)} subscribed id(s) no "
+                   f"longer on the city's site ({', '.join(ids[:5])}); fix the "
+                   f"catalog in a PR and remap (scripts/remap_catalog_ids.py)")
 
     return out
 
@@ -742,7 +727,7 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         "upstream_by_host": upstream_by_host,
         "city_labels": city_labels,
         "city_names": city_names,
-        "empty_catalogs": _empty_catalogs(),
+        "catalog_dead_ids": _json_meta(meta_val("catalog_dead_ids")),
         "last_polled_at_by_city": last_polled_at_by_city,
         "slots_cached": scalar("SELECT COUNT(*) FROM slots_cache"),
         "deliverability": _deliverability(conn, cfg),

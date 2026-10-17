@@ -285,35 +285,13 @@ def test_healthy_baseline_has_no_anomalies():
     assert summary_anomalies(_summary_stats(), now=NOW) == []
 
 
-def test_anomaly_empty_catalog_is_reported():
-    """Catalog drift no longer mails; a sync that leaves a catalog file empty
-    kills that tenant's polling, so it must reach the summary."""
-    a = summary_anomalies(_summary_stats(empty_catalogs=["leipzig/appointment_type.json"]),
+def test_anomaly_dead_catalog_ids_are_reported():
+    """A subscribed id the city's site no longer has polls nothing, silently;
+    the daily sync records it and the summary must carry it."""
+    a = summary_anomalies(_summary_stats(catalog_dead_ids={"leipzig": ["svc-1", "loc-9"]}),
                           now=NOW)
-    assert any("catalog file empty on disk" in x and "leipzig/appointment_type.json" in x
-               for x in a)
-
-
-def test_empty_catalogs_finds_an_emptied_file(tmp_path, monkeypatch):
-    import json
-    from app import admin, catalog
-    (tmp_path / "ok").mkdir()
-    (tmp_path / "ok" / "appointment_type.json").write_text(json.dumps({"A": "1"}))
-    (tmp_path / "ok" / "locations.json").write_text(json.dumps({"L": "2"}))
-    (tmp_path / "ok" / "scraper_config.json").write_text("{}")
-    (tmp_path / "scaffold").mkdir()
-    (tmp_path / "scaffold" / "appointment_type.json").write_text("{}")
-    (tmp_path / "dead").mkdir()
-    (tmp_path / "dead" / "scraper_config.json").write_text("{}")
-    (tmp_path / "dead" / "appointment_type.json").write_text("{}")
-    (tmp_path / "dead" / "locations.json").write_text(json.dumps({"L": "2"}))
-    monkeypatch.setattr(catalog, "CATALOG_ROOT", tmp_path)
-    assert admin._empty_catalogs() == ["dead/appointment_type.json"]
-
-
-def test_shipped_catalogs_are_not_empty():
-    from app import admin
-    assert admin._empty_catalogs() == []
+    assert any(x.startswith("Leipzig: 2 subscribed id(s) no longer on the city's site "
+                            "(svc-1, loc-9)") for x in a)
 
 
 def test_anomaly_quota_near_cap():

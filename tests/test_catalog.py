@@ -299,3 +299,18 @@ def test_every_tenant_loads_from_one_cache(monkeypatch):
     for c in cities:
         load_catalog(c)
     assert calls == []
+
+
+def test_shipped_catalogs_are_not_empty():
+    """An empty appointment_type.json empties a tenant's sign-up form and an
+    empty locations.json stops its polling; a catalog PR must never ship one."""
+    from app.catalog import available_cities, load_catalog, CatalogError
+    empty = []
+    for city in available_cities():
+        try:
+            cat = load_catalog(city)
+        except CatalogError:
+            continue    # a scaffold, not a live tenant
+        if not cat.appointment_types or not cat.locations:
+            empty.append(city)
+    assert empty == []

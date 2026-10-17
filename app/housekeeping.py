@@ -567,31 +567,67 @@ def wait_for_catalog_sync(timeout: float | None = None) -> None:
         _sync_thread.join(timeout)
 
 def _sync_catalogs(cfg):
-    """Refresh per-city catalog files from live APIs. Drift is logged, not mailed.
+    """Compare every tenant's catalog with its live site and record, in meta
+    `catalog_dead_ids` ({city: [ids]}), the service and office ids that live
+    subscriptions use and the site no longer has. Those subscribers are polled
+    for something that answers nothing: five TEVIS cities renumbered on
+    2026-10-10 and went silent for three days. The ops summary and /admin list
+    them (admin.summary_anomalies). Drift itself is only logged.
+
+    Nothing is written to catalog/: it is baked into each image, so a write
+    here reached neither the web container nor the next deploy, and only split
+    the two containers' ids. A catalog change goes through a PR.
 
     Gated by CATALOG_SYNC_ENABLED so test environments don't make network calls.
     Failures here must never crash the daily run.
     """
     if not cfg.catalog_sync_enabled:
         return
+    import json
     import requests
     from app import catalog_sync
+    from app.catalog import load_catalog
+    from app.db import connect
+    from app.repo import subscribed_ids
     root = Path(__file__).resolve().parent.parent / "catalog"
     if not root.is_dir():
         return
 
     def _alert(*, city, service_drift, location_drift):
-        # Drift no longer sends a developer mail; the catalog files are still
-        # overwritten with the live values, so just leave a trace in the log.
         print(f"catalog drift: {city} services={service_drift} "
               f"locations={location_drift}", flush=True)
 
+    # Its own connection: this runs on the catalog-sync thread.
+    conn = connect(cfg.db_path)
+    row = conn.execute(
+        "SELECT value FROM meta WHERE key='catalog_dead_ids'").fetchone()
+    try:
+        dead = json.loads(row["value"]) if row else {}
+    except ValueError:
+        dead = {}
+    dead = {c: ids for c, ids in dead.items() if (root / c).is_dir()}
     http = requests.Session()
     for city_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+        city = city_dir.name
         try:
-            catalog_sync.sync_city(city_dir.name, http, alert_fn=_alert)
+            live = catalog_sync.sync_city(city, http, alert_fn=_alert,
+                                          write=False).get("live_ids")
+            if live is None:
+                continue  # skipped or failed: keep what the last run found
+            excluded = {str(s) for s in load_catalog(city).scraper_config
+                        .get("exclude_services") or ()}
+            gone = sorted(subscribed_ids(conn, city) - live - excluded)
         except Exception:
-            pass
+            continue
+        if gone:
+            dead[city] = gone
+        else:
+            dead.pop(city, None)
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES ('catalog_dead_ids', ?) "
+        "ON CONFLICT (key) DO UPDATE SET value=excluded.value, "
+        "updated_at=CURRENT_TIMESTAMP", (json.dumps(dead, sort_keys=True),))
+    conn.close()
 
 
 def _send_summary_email(conn, cfg, failed=()):

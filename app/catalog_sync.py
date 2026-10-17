@@ -92,12 +92,21 @@ def fetch_locations_with_map(http: requests.Session,
 def sync_city(city: str,
               http: requests.Session,
               alert_fn: Callable,
-              catalog_root: Path | None = None) -> dict:
+              catalog_root: Path | None = None, *,
+              write: bool = True) -> dict:
+    """Compare a tenant's catalog with its live site and, with `write`,
+    rewrite the files to match (a local refresh before a catalog PR).
+
+    Production runs it with write=False: `catalog/` is baked into each image,
+    so a write inside the poller container reached neither the web form nor
+    the next deploy, and only split the two containers' ids. A successful
+    run returns the live ids as `live_ids`, which the caller checks the live
+    subscriptions against (housekeeping._sync_catalogs)."""
     root = Path(catalog_root) if catalog_root else REPO_ROOT / "catalog"
     city_dir = root / city
     scfg = json.loads((city_dir / "scraper_config.json").read_text())
     if scfg.get("vendor") == "tevis":
-        return _sync_tevis(city, city_dir, scfg, http, alert_fn)
+        return _sync_tevis(city, city_dir, scfg, http, alert_fn, write=write)
     # The Smart-CJM path below discovers services/locations by driving the
     # booking wizard; a vendor without a sync implementation keeps its static
     # catalog rather than running Smart-CJM HTTP against a config that has no
@@ -141,10 +150,10 @@ def sync_city(city: str,
     # catalog. The English label files are rewritten alongside their German
     # counterparts so the two can never diverge in uuid set. English fetches
     # are best-effort: a failure must never leave the German files unwritten.
-    if service_drift:
+    if write and service_drift:
         _atomic_write_json(svc_path, live_services)
         _atomic_write_json(svc_en_path, live_services_en)
-    if location_drift:
+    if write and location_drift:
         _atomic_write_json(loc_path, live_locations)
         try:
             live_locations_en = fetch_locations(http, scfg["base_url"], scfg["uid"],
@@ -154,7 +163,7 @@ def sync_city(city: str,
                 _atomic_write_json(loc_en_path, live_locations_en)
         except requests.RequestException:
             pass  # German file already written; English stays at its last good value
-    if service_map is not None:
+    if write and service_map is not None:
         _write_service_map_if_changed(city_dir, service_map)
     if service_drift or location_drift:
         alert_fn(city=city,
@@ -162,7 +171,10 @@ def sync_city(city: str,
                  location_drift=location_drift)
 
     return {"service_drift": service_drift,
-            "location_drift": location_drift}
+            "location_drift": location_drift,
+            # The coverage map has ids even where two offices share a name.
+            "live_ids": (set(live_services.values()) | set(live_locations.values())
+                         | {u for locs in (service_map or {}).values() for u in locs})}
 
 
 # ---------- TEVIS ----------
@@ -280,7 +292,8 @@ def _tevis_office_label(form) -> str:
 
 
 def _sync_tevis(city: str, city_dir: Path, scfg: dict,
-                http: requests.Session, alert_fn: Callable) -> dict:
+                http: requests.Session, alert_fn: Callable, *,
+                write: bool = True) -> dict:
     svc_path = city_dir / "appointment_type.json"
     loc_path = city_dir / "locations.json"
     current_services = json.loads(svc_path.read_text())
@@ -317,17 +330,20 @@ def _sync_tevis(city: str, city_dir: Path, scfg: dict,
 
     service_drift = _diff(current_services, live_services)
     location_drift = _diff(current_locations, live_locations)
-    if service_drift:
-        _atomic_write_json(svc_path, live_services)
-    if location_drift:
-        _atomic_write_json(loc_path, live_locations)
-    _write_service_map_if_changed(city_dir, service_map)
+    if write:
+        if service_drift:
+            _atomic_write_json(svc_path, live_services)
+        if location_drift:
+            _atomic_write_json(loc_path, live_locations)
+        _write_service_map_if_changed(city_dir, service_map)
     if service_drift or location_drift:
         alert_fn(city=city,
                  service_drift=service_drift,
                  location_drift=location_drift)
+    # Ids, not names: two offices with one display name share a dict key.
     return {"service_drift": service_drift,
-            "location_drift": location_drift}
+            "location_drift": location_drift,
+            "live_ids": set(live_services.values()) | set(union_by_id)}
 
 
 def _keep_catalog_names(current: dict[str, str],

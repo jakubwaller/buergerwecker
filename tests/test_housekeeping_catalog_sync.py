@@ -57,7 +57,7 @@ def test_housekeeping_does_not_mail_developer_on_catalog_drift(db, monkeypatch):
     _env(monkeypatch, CATALOG_SYNC_ENABLED="1", DEVELOPER_EMAIL="dev@example.com")
     drift_result = {"service_drift": {"added": ["NewService"]}, "location_drift": {}}
 
-    def fake_sync(city, http, alert_fn, catalog_root=None):
+    def fake_sync(city, http, alert_fn, catalog_root=None, write=True):
         alert_fn(city=city,
                  service_drift=drift_result["service_drift"],
                  location_drift=drift_result["location_drift"])
@@ -90,7 +90,7 @@ def test_housekeeping_does_not_wait_for_the_catalog_sync(db, monkeypatch):
     release = threading.Event()
     started = threading.Event()
 
-    def slow_sync(city, http, alert_fn, catalog_root=None):
+    def slow_sync(city, http, alert_fn, catalog_root=None, write=True):
         started.set()
         release.wait(5)
         return {"service_drift": {}, "location_drift": {}}
@@ -102,3 +102,42 @@ def test_housekeeping_does_not_wait_for_the_catalog_sync(db, monkeypatch):
         # run_once has returned while the first city is still syncing.
         release.set()
         wait_for_catalog_sync(5)
+
+
+def test_sync_records_subscribed_ids_the_site_no_longer_has(db, monkeypatch):
+    """Five TEVIS cities renumbered on 2026-10-10; their subscribers were
+    polled for dead ids for three days and nothing said so. The daily sync
+    records such ids for the ops summary, and forgets them once fixed."""
+    import json
+    from app.models import Filter
+    from app.repo import insert_pending, confirm
+    _env(monkeypatch, CATALOG_SYNC_ENABLED="1")
+    sid = insert_pending(db, email="a@example.com", city="leipzig", language="de",
+                         filter_=Filter(["old-svc"], ["old-loc", "kept-loc"], [1],
+                                        time(0, 0), time(23, 59)),
+                         ttl_days=30)
+    confirm(db, sid)
+
+    def live_site(live):
+        def fake(city, http, alert_fn, catalog_root=None, write=True):
+            assert write is False      # production never rewrites catalog/
+            return {"service_drift": {}, "location_drift": {},
+                    "live_ids": live if city == "leipzig" else set()}
+        return fake
+
+    def dead():
+        row = db.execute("SELECT value FROM meta WHERE key='catalog_dead_ids'").fetchone()
+        return json.loads(row["value"])
+
+    with patch("app.mail.send"), \
+         patch("app.catalog_sync.sync_city", side_effect=live_site({"new-svc", "kept-loc"})):
+        run_once(db)
+        wait_for_catalog_sync()
+    assert dead() == {"leipzig": ["old-loc", "old-svc"]}
+
+    with patch("app.mail.send"), \
+         patch("app.catalog_sync.sync_city",
+               side_effect=live_site({"old-svc", "old-loc", "kept-loc"})):
+        run_once(db)
+        wait_for_catalog_sync()
+    assert dead() == {}
