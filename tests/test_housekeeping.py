@@ -1,5 +1,5 @@
 from datetime import datetime, time, timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import pytest
 from app.db import connect, init_schema
 from app.models import Filter
@@ -196,7 +196,22 @@ def test_bounce_counter_survives_while_someone_still_subscribes(db):
 
 
 def _mails_to(send, addr):
-    return [c for c in send.call_args_list if c.args[1] == addr]
+    return [m for m in send.sent if m.to == addr]
+
+
+def _batch_sender(deliver=True):
+    """Stands in for mail.send_batch: records what it was handed and reports
+    it delivered (or, with deliver=False, deferred by the quota)."""
+    from app.mail import BatchResult
+    sent = []
+
+    def fake(conn, items, cfg):
+        assert not conn.in_transaction  # no write lock across the HTTP calls
+        sent.extend(items)
+        return BatchResult(delivered={i.idem_key for i in items} if deliver else set())
+    m = MagicMock(side_effect=fake)
+    m.sent = sent
+    return m
 
 
 def test_checkin_asks_with_two_one_click_answers(db):
@@ -205,16 +220,17 @@ def test_checkin_asks_with_two_one_click_answers(db):
     confirm(db, sid)
     # Move expires_at to 5 days from now (within the 10-day reminder window)
     db.execute("UPDATE subscriptions SET expires_at=datetime('now','+5 days') WHERE id=?", (sid,))
-    with patch("app.mail.send") as send:
+    send = _batch_sender()
+    with patch("app.mail.send"), patch("app.mail.send_batch", send):
         run_once(db)
     (call,) = _mails_to(send, "a@x.com")
-    subj, body = call.args[2], call.args[3]
+    subj, body = call.subject, call.body
     assert subj == "Suchst du noch einen Termin in Leipzig?"
     assert "https://x/renew/" in body
     assert "https://x/unsubscribe/" in body
     assert "https://x/manage/" in body          # the "only certain times?" nudge
     # One-click unsubscribe header too, like every other subscriber mail.
-    assert call.kwargs["unsub_url"].startswith("https://x/unsubscribe/")
+    assert call.unsub_url.startswith("https://x/unsubscribe/")
     # Dates in the mail: when digests stop, and until when "weiter" still works.
     expires = db.execute("SELECT expires_at FROM subscriptions WHERE id=?",
                          (sid,)).fetchone()["expires_at"]
@@ -225,10 +241,11 @@ def test_checkin_asks_with_two_one_click_answers(db):
     # swallowed by this one's record while it is still in sent_idempotency.
     db.execute("UPDATE subscriptions SET reminder_sent_at=NULL, "
                "expires_at=datetime('now','+6 days') WHERE id=?", (sid,))
-    with patch("app.mail.send") as send2:
+    send2 = _batch_sender()
+    with patch("app.mail.send"), patch("app.mail.send_batch", send2):
         run_once(db)
     (call2,) = _mails_to(send2, "a@x.com")
-    assert call2.kwargs["idem_key"] != call.kwargs["idem_key"]
+    assert call2.idem_key != call.idem_key
 
 
 def test_checkin_asks_once_per_term(db):
@@ -236,7 +253,8 @@ def test_checkin_asks_once_per_term(db):
                          filter_=_f(), ttl_days=90)
     confirm(db, sid)
     db.execute("UPDATE subscriptions SET expires_at=datetime('now','+5 days') WHERE id=?", (sid,))
-    with patch("app.mail.send") as send:
+    send = _batch_sender()
+    with patch("app.mail.send"), patch("app.mail.send_batch", send):
         run_once(db)
         run_once(db)
     assert len(_mails_to(send, "a@x.com")) == 1
@@ -247,11 +265,12 @@ def test_checkin_in_english(db):
                          filter_=_f(), ttl_days=90)
     confirm(db, sid)
     db.execute("UPDATE subscriptions SET expires_at=datetime('now','+5 days') WHERE id=?", (sid,))
-    with patch("app.mail.send") as send:
+    send = _batch_sender()
+    with patch("app.mail.send"), patch("app.mail.send_batch", send):
         run_once(db)
     (call,) = _mails_to(send, "a@x.com")
-    assert call.args[2] == "Still looking for an appointment in Leipzig?"
-    assert "Yes, keep looking: https://x/renew/" in call.args[3]
+    assert call.subject == "Still looking for an appointment in Leipzig?"
+    assert "Yes, keep looking: https://x/renew/" in call.body
 
 
 def test_heartbeat_says_what_the_silence_means(db):
@@ -260,11 +279,12 @@ def test_heartbeat_says_what_the_silence_means(db):
     confirm(db, sid)
     db.execute("UPDATE subscriptions SET confirmed_at=datetime('now','-40 days') "
                "WHERE id=?", (sid,))
-    with patch("app.mail.send") as send:
+    send = _batch_sender()
+    with patch("app.mail.send"), patch("app.mail.send_batch", send):
         run_once(db)
     (call,) = _mails_to(send, "a@x.com")
-    assert call.args[2] == "Noch keine passenden Termine in Leipzig"
-    body = call.args[3]
+    assert call.subject == "Noch keine passenden Termine in Leipzig"
+    body = call.body
     assert "In den letzten 30 Tagen war kein Termin frei" in body
     assert "\n\nhttps://x/manage/" in body
     assert "Abmelden: https://x/unsubscribe/" in body
@@ -279,17 +299,40 @@ def test_overdue_subscriber_gets_one_heartbeat_per_run_not_two(db):
     confirm(db, sid)
     db.execute("UPDATE subscriptions SET confirmed_at=datetime('now','-70 days') "
                "WHERE id=?", (sid,))
-    with patch("app.mail.send") as send:
+    send = _batch_sender()
+    with patch("app.mail.send"), patch("app.mail.send_batch", send):
         run_once(db)
     (call,) = _mails_to(send, "a@x.com")
-    assert "In den letzten 30 Tagen" in call.args[3]
+    assert "In den letzten 30 Tagen" in call.body
     # A day later the 60-day one follows.
     db.execute("UPDATE subscriptions SET heartbeat_30d_at=datetime('now','-2 days') "
                "WHERE id=?", (sid,))
-    with patch("app.mail.send") as send:
+    send = _batch_sender()
+    with patch("app.mail.send"), patch("app.mail.send_batch", send):
         run_once(db)
     (call,) = _mails_to(send, "a@x.com")
-    assert "In den letzten 60 Tagen" in call.args[3]
+    assert "In den letzten 60 Tagen" in call.body
+
+
+def test_checkin_deferred_by_the_quota_is_asked_again_next_run(db):
+    sid = insert_pending(db, email="a@x.com", city="leipzig", language="de",
+                         filter_=_f(), ttl_days=90)
+    confirm(db, sid)
+    db.execute("UPDATE subscriptions SET expires_at=datetime('now','+5 days') WHERE id=?", (sid,))
+    deferred = _batch_sender(deliver=False)
+    with patch("app.mail.send"), patch("app.mail.send_batch", deferred):
+        run_once(db)
+    # Not delivered, so the once-per-term latch stays open ...
+    assert db.execute("SELECT reminder_sent_at FROM subscriptions WHERE id=?",
+                      (sid,)).fetchone()[0] is None
+    # ... and tomorrow's run offers the same mail under the same key.
+    again = _batch_sender()
+    with patch("app.mail.send"), patch("app.mail.send_batch", again):
+        run_once(db)
+    (first,), (second,) = _mails_to(deferred, "a@x.com"), _mails_to(again, "a@x.com")
+    assert first.idem_key == second.idem_key
+    assert db.execute("SELECT reminder_sent_at FROM subscriptions WHERE id=?",
+                      (sid,)).fetchone()[0] is not None
 
 
 def test_paused_subscription_gets_no_heartbeat(db):

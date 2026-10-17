@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from app.config import load_config
 from app import mail as _mail
-from app.mail import _idem_key
+from app.mail import Outgoing, _idem_key
 from app.tokens import sign
 from app.config import ttl_days_for
 
@@ -117,6 +117,7 @@ def _send_renewal_reminders(conn, cfg):
         "AND expires_at BETWEEN CURRENT_TIMESTAMP AND datetime('now', ?)",
         (f"+{cfg.renewal_reminder_days_before} days",),
     ).fetchall()
+    items, by_key = [], {}
     for row in rows:
         lang = "en" if row["language"] == "en" else "de"
         links = {}
@@ -130,21 +131,23 @@ def _send_renewal_reminders(conn, cfg):
             expires_at=row["expires_at"], grace_days=cfg.expired_grace_days,
             renew_url=links["renew"], unsub_url=links["unsubscribe"],
             manage_url=links["manage"])
-        try:
-            with transaction(conn):
-                # Mark sent BEFORE the API call: the idempotency table in
-                # mail.py prevents a second provider call, and this transaction
-                # ensures the reminder_sent_at flag is visible even if the
-                # process is killed right after the API call returns.
-                conn.execute("UPDATE subscriptions SET reminder_sent_at=CURRENT_TIMESTAMP "
-                             "WHERE id=?", (row["id"],))
-                mail_send(conn, row["email"], subj, body,
-                          idem_key=_idem_key(row["id"], [],
-                                             f"renewal-{row['id']}-{row['expires_at'][:10]}"),
-                          unsub_url=links["unsubscribe"])
-        except Exception:
-            # transaction rolled back; the row is eligible for retry next pass.
-            pass
+        item = Outgoing(
+            to=row["email"], subject=subj, body=body,
+            idem_key=_idem_key(row["id"], [],
+                               f"renewal-{row['id']}-{row['expires_at'][:10]}"),
+            unsub_url=links["unsubscribe"])
+        items.append(item)
+        by_key[item.idem_key] = row["id"]
+    # Sent outside any transaction: a provider call can take 30 s, and the
+    # write lock must not be held for it. Only delivered mails stamp the latch;
+    # what the quota defers is asked again tomorrow, inside the same window.
+    result = _mail.send_batch(conn, items, cfg)
+    delivered = [by_key[k] for k in result.delivered]
+    if delivered:
+        with transaction(conn):
+            conn.executemany(
+                "UPDATE subscriptions SET reminder_sent_at=CURRENT_TIMESTAMP "
+                "WHERE id=?", [(sid,) for sid in delivered])
 
 def _send_push_checkins(conn, cfg):
     """The still-looking check-in for app subscriptions: the same question
@@ -291,6 +294,7 @@ def _send_heartbeats(conn, cfg, *, milestone_days: int, milestone_col: str,
         f"     OR last_notified_at < datetime('now','-{milestone_days} days')) "
         f"AND confirmed_at < datetime('now','-{milestone_days} days')"
     ).fetchall()
+    items, by_key = [], {}
     for row in rows:
         manage_tok = sign(row["id"], "manage",
                           primary=cfg.token_secret_primary,
@@ -304,20 +308,23 @@ def _send_heartbeats(conn, cfg, *, milestone_days: int, milestone_col: str,
             "en" if row["language"] == "en" else "de",
             city=city_display_name(row["city"], row["language"]),
             days=milestone_days, manage_url=manage_url, unsub_url=unsub_url)
+        item = Outgoing(
+            to=row["email"], subject=subj, body=body,
+            idem_key=_idem_key(row["id"], [],
+                               f"heartbeat-{milestone_days}d-{row['id']}"),
+            unsub_url=unsub_url)
+        items.append(item)
+        by_key[item.idem_key] = row["id"]
+    # Outside any transaction, like the renewal reminders; only delivered
+    # mails are marked, the rest is picked up by the next daily run.
+    result = _mail.send_batch(conn, items, cfg)
+    delivered = [by_key[k] for k in result.delivered]
+    if delivered:
         from app.db import transaction
-        try:
-            with transaction(conn):
-                conn.execute(
-                    f"UPDATE subscriptions SET {milestone_col}=CURRENT_TIMESTAMP "
-                    f"WHERE id=?",
-                    (row["id"],),
-                )
-                mail_send(conn, row["email"], subj, body,
-                          idem_key=_idem_key(row["id"], [],
-                                             f"heartbeat-{milestone_days}d-{row['id']}"),
-                          unsub_url=unsub_url)
-        except Exception:
-            pass
+        with transaction(conn):
+            conn.executemany(
+                f"UPDATE subscriptions SET {milestone_col}=CURRENT_TIMESTAMP "
+                f"WHERE id=?", [(sid,) for sid in delivered])
 
 def _prune_seen_slots(conn):
     conn.execute("DELETE FROM seen_slots WHERE sent_at < datetime('now','-7 days')")

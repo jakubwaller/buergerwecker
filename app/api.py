@@ -92,14 +92,14 @@ import hmac
 import ipaddress
 import re
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 
 from flask import Blueprint, current_app, g, jsonify, request
 
 from app.catalog import (CatalogError, available_cities, load_catalog)
 from app.config import ttl_days_for
-from app.db import connect, transaction
+from app.db import connect, sql_ts, transaction
 from app.models import Filter
 from app.planning import refused_by_plan_cap
 from app.ratelimit import (GLOBAL_IP_LIMITER, db_rate_hit, db_rate_hit_all,
@@ -542,7 +542,10 @@ def _resolve_device():
     if g.credential_verified:
         # An unverified row is on the 24-hour purge clock; touching it would
         # restart the 30-day one.
-        touch_device(conn, row["id"])
+        # Checked here too: the UPDATE's own WHERE would still take the write lock.
+        if row["last_seen_at"] is None or row["last_seen_at"] < sql_ts(
+                datetime.utcnow() - timedelta(hours=1)):
+            touch_device(conn, row["id"])
     g.device = row
     g.conn = conn
     return None
@@ -631,7 +634,7 @@ def register():
         if refusal is not None:
             return refusal
     secret = secrets.token_urlsafe(32)
-    with transaction(conn):
+    with transaction(conn, immediate=True):
         device_id = register_device(conn, platform=platform, token=token,
                                     secret_hash=_hash(secret), language=lang)
         if known is None:
@@ -747,7 +750,7 @@ def device_update():
             refusal = _integrity_refusal(g.conn, body, token, lang)
             if refusal is not None:
                 return refusal
-    with transaction(g.conn):
+    with transaction(g.conn, immediate=True):
         outcome = update_device(g.conn, g.device["id"], secret_hash=g.secret_hash,
                                 token=token, language=language)
         if outcome == "ok" and gate is not None:
@@ -792,13 +795,13 @@ def device_verify():
         code = _json().get("code")
         if (g.device["pending_secret_hash"] and isinstance(code, str)
                 and code.isascii()):
-            with transaction(g.conn):
+            with transaction(g.conn, immediate=True):
                 verify_device(g.conn, g.device["id"], code.strip())
         return jsonify({"verified": True})
     if _device_rate_limited():
         return _error("rate_limited", 429, lang)
     code = _json().get("code")
-    with transaction(g.conn):
+    with transaction(g.conn, immediate=True):
         # A non-ASCII code (a lone surrogate won't even encode) is a wrong one.
         ok = isinstance(code, str) and code.isascii() and verify_device(
             g.conn, g.device["id"], code.strip(), pending_hash=g.pending_hash)

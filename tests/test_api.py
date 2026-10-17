@@ -267,6 +267,15 @@ def test_every_authenticated_call_restarts_the_purge_clock(client):
     assert datetime.fromisoformat(seen) > datetime.utcnow() - timedelta(minutes=1)
 
 
+def test_a_recently_seen_device_costs_no_write(client):
+    dev, secret = _register(client)
+    _db().execute("UPDATE push_devices SET last_seen_at=datetime('now','-5 minutes') "
+                  "WHERE id=?", (dev,))
+    with patch("app.api.touch_device") as touch:
+        client.get("/api/v1/subscriptions", headers=_auth(dev, secret))
+    touch.assert_not_called()
+
+
 def _reg(c, name, addr=None):
     headers = {"X-Forwarded-For": addr} if addr else {}
     return c.post("/api/v1/devices", json={"platform": "apns", "token": tok(name)},
