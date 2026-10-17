@@ -126,6 +126,14 @@ struct Slot: Codable, Equatable {
     let office: String?
 
     var sortKey: String { date + " " + (time ?? "") }
+
+    // A cached slot whose start has passed is no slot (a day-only one lasts the day).
+    func passed(_ now: Date) -> Bool {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        return date + " " + (time ?? "24:00") < f.string(from: now)
+    }
 }
 
 // One city's last answer. `slot == nil && hasData` means "polled, nothing
@@ -314,11 +322,17 @@ struct Words {
         return self("date.atTime", ["day": d, "time": time(t)])
     }
 
-    func asOf(_ date: Date?) -> String? {
+    func asOf(_ date: Date?, now: Date = Date()) -> String? {
         guard let date else { return nil }
         let f = DateFormatter()
         f.dateFormat = "HH:mm"
-        return self("widget.asOf", ["time": f.string(from: date)])
+        var when = f.string(from: date)
+        if !Calendar.current.isDate(date, inSameDayAs: now) {
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.dateFormat = "yyyy-MM-dd"
+            when = slot(Slot(date: f.string(from: date), time: when, office: nil))
+        }
+        return self("widget.asOf", ["time": when])
     }
 }
 
@@ -433,7 +447,11 @@ struct SlotProvider: TimelineProvider {
         Cache.save(cache)
         let rows = current.cities
             .filter { cache[$0.slug]?.gone != true }
-            .map { Row(id: $0.slug, name: $0.name, office: $0.office ?? "", snapshot: cache[$0.slug]) }
+            .map { c -> Row in
+                var snap = cache[c.slug]
+                if let s = snap?.slot, s.passed(Date()) { snap?.slot = nil }
+                return Row(id: c.slug, name: c.name, office: c.office ?? "", snapshot: snap)
+            }
         return SlotEntry(date: Date(), words: words, rows: rows)
     }
 }

@@ -156,7 +156,9 @@ function onNotification(n, tapped) {
 
 // iOS: notifications still in the notification centre, into the list.
 function harvest() {
-  inbox.harvest().then((added) => added && changed("inbox"));
+  // Only while waiting: a delivered code lingers, and a used or expired one
+  // would flag invalid_code on every resume.
+  inbox.harvest(Date.now(), (data) => push.awaitingVerification() && handleVerify(data)).then((added) => added && changed("inbox"));
 }
 
 let errorShown = false;

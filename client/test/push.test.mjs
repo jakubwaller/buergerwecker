@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 
 const prefs = new Map();
 // The native SecureStore (Keychain / AndroidKeyStore): one JSON text or none.
-const secure = { value: null, writes: 0, failSet: false, dropOnSet: false };
+const secure = { value: null, writes: 0, failSet: false, failGet: false, dropOnSet: false };
 globalThis.Capacitor = {
   isNativePlatform: () => true,
   isPluginAvailable: (n) => n === "Preferences" || n === "SecureStore",
@@ -18,7 +18,10 @@ globalThis.Capacitor = {
       clear: async () => prefs.clear(),
     },
     SecureStore: {
-      get: async () => (secure.value == null ? {} : { value: secure.value }),
+      get: async () => {
+        if (secure.failGet) throw new Error("Keystore read failed");
+        return secure.value == null ? {} : { value: secure.value };
+      },
       set: async ({ value }) => {
         if (secure.failSet) throw new Error("Keychain write failed (-34018)");
         secure.writes++;
@@ -51,7 +54,7 @@ globalThis.fetch = async (url, opts) => {
 
 beforeEach(async () => {
   prefs.clear();
-  Object.assign(secure, { value: null, writes: 0, failSet: false, dropOnSet: false });
+  Object.assign(secure, { value: null, writes: 0, failSet: false, failGet: false, dropOnSet: false });
   routes = [];
   calls = [];
   await push.loadDevice();
@@ -68,6 +71,23 @@ test("first token registers the device: id and secret in the secure store, the r
   assertNoSecretInPrefs("sec-first");
   // And the next launch puts the two together again.
   assert.deepEqual(await push.loadDevice(), { id: 5, secret: "sec-first", token: "tok-1", platform: "apns", verified: false });
+});
+
+test("a secure-store read error keeps the verified device: no new registration, and the next token finds it again", async () => {
+  routes = [{ method: "POST", path: "/devices", reply: [201, { device_id: 5, secret: "sec-good", verified: true }] }];
+  await push.onToken("tok-1");
+  secure.failGet = true;
+  assert.equal(await push.loadDevice(), null);
+  calls = [];
+  await push.onToken("tok-1");
+  await push.onToken("tok-2");
+  assert.deepEqual(calls, [], "no POST /devices, no PUT /device");
+  assert.equal(JSON.parse(secure.value).secret, "sec-good");
+  assert.equal(JSON.parse(prefs.get("device")).verified, true);
+  secure.failGet = false;
+  await push.onToken("tok-1");
+  assert.equal(push.getDevice().secret, "sec-good");
+  assert.deepEqual(calls, []);
 });
 
 test("an older build's record moves its id and secret into the secure store on launch", async () => {

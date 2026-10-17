@@ -232,6 +232,15 @@ test("a list older than CONFIG_VERSION is no list on either platform, and the ol
   assert.match(read(`${JAVA}/WidgetBridgePlugin.java`), /remove\(EarliestSlotWidget\.KEY_LEGACY_CACHE\)/);
 });
 
+test("both widgets drop a cached slot whose start has passed, and date an 'As of' from another day", () => {
+  assert.match(read(IOS), /func passed\(_ now: Date\) -> Bool/);
+  assert.match(read(IOS), /s\.passed\(Date\(\)\) \{ snap\?\.slot = nil \}/);
+  assert.match(read(IOS), /isDate\(date, inSameDayAs: now\)/);
+  const java = read(`${JAVA}/EarliestSlotWidget.java`);
+  assert.match(java, /boolean hasSlot\(\) \{[\s\S]*?compareTo\(now\) >= 0/);
+  assert.match(java, /if \(!iso\.equals\(day\.format\(new Date\(\)\)\)\) polled = slotText/);
+});
+
 test("a credential with nothing to ask about lifts the lock on both platforms", () => {
   // An empty list (no alert, or only special-category ones) never fetches,
   // so no answer could ever lift a lock set while the credential was missing.

@@ -174,7 +174,9 @@ export async function record(n, now = Date.now()) {
 }
 
 // What still sits in the notification centre or shade. true when any of it is new.
-export async function harvest(now = Date.now()) {
+// A setup push among it is handed to `onVerify` too: opening the app from its
+// icon instead of the push leaves no tap to carry the code.
+export async function harvest(now = Date.now(), onVerify) {
   let delivered = [];
   try {
     delivered = (await plugin("PushNotifications")?.getDeliveredNotifications?.())?.notifications ?? [];
@@ -183,7 +185,10 @@ export async function harvest(now = Date.now()) {
   }
   const times = (await plugin("PushGate")?.posted?.().catch(() => null))?.times ?? {};
   let changed = false;
-  for (const n of delivered) if (await record({ ...n, postedAt: times[n.tag] }, now)) changed = true;
+  for (const n of delivered) {
+    if (n?.data?.type === "verify") onVerify?.(n.data);
+    else if (await record({ ...n, postedAt: times[n.tag] }, now)) changed = true;
+  }
   return changed;
 }
 

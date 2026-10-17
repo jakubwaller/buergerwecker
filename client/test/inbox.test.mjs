@@ -105,6 +105,14 @@ test("iOS: what sits in the notification centre is picked up once, and not again
   assert.deepEqual(inbox.items().map((e) => e.id), ["n3"]);
 });
 
+test("iOS: a setup push left in the notification centre hands its code over, and is not listed", async () => {
+  const codes = [];
+  delivered.list = [{ id: "v", data: { type: "verify", code: "123456" } }, slotsPush({ id: "n1" })];
+  assert.equal(await inbox.harvest(T0, (d) => codes.push(d.code)), true);
+  assert.deepEqual(codes, ["123456"]);
+  assert.equal(inbox.items().length, 1);
+});
+
 test("iOS: a notification-centre copy is dated by the server's send time, not the app's launch", async () => {
   delivered.list = [slotsPush({ data: { ...slotsPush().data, sent: String(T0 - 3 * 3600000) } })];
   await inbox.harvest(T0);

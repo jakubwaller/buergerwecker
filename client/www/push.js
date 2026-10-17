@@ -25,6 +25,7 @@ import { plugin, platform } from "./native.js";
 const DEVICE_KEY = "device";
 
 let device = null; // { id, secret, token, platform, verified: true|false|null }
+let unreadable = false; // a record is on file but the secure store would not say now
 let verifySeq = 0; // counts accepted verify codes (onToken's race with the push)
 let lang = () => "de";
 let handlers = { changed() {}, error() {}, received() {}, tapped() {} };
@@ -38,7 +39,17 @@ export const credentials = () => (device ? { id: device.id, secret: device.secre
 export async function loadDevice() {
   const fallback = await store.migrateCredential(DEVICE_KEY).catch(() => null);
   const record = await store.get(DEVICE_KEY);
-  let cred = fallback ?? (await store.getCredential().catch(() => null));
+  unreadable = false;
+  let cred = fallback;
+  if (!cred) {
+    try {
+      cred = await store.getCredential();
+    } catch {
+      // A read error is not "no secret": registering again would overwrite
+      // the good, verified one. Keep the record; onToken asks again on resume.
+      unreadable = !!record && typeof record === "object";
+    }
+  }
   if (!record || typeof record !== "object") {
     // A credential with no record beside it belongs to no install here: iOS
     // keeps Keychain items when an app is deleted, so a reinstall finds the
@@ -158,6 +169,8 @@ async function registerFresh(token) {
 // it changed, nothing when it is the one already on file.
 export async function onToken(token) {
   if (!token) return;
+  if (unreadable) await loadDevice();
+  if (unreadable) return; // a key that never recovers just retries on each resume
   if (!device) return registerFresh(token);
   if (device.token === token) return;
   try {

@@ -107,7 +107,11 @@ public class EarliestSlotWidget extends AppWidgetProvider {
         boolean hasData;           // false: the server has no snapshot for it yet
         boolean gone;              // 403 not_subscribed: no live alert in this city any more
 
-        boolean hasSlot() { return date != null; }
+        // A cached slot whose start has passed is no slot (a day-only one lasts the day).
+        boolean hasSlot() {
+            String now = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).format(new Date());
+            return date != null && (date + " " + (time == null ? "24:00" : time)).compareTo(now) >= 0;
+        }
         String sortKey() { return date + " " + (time == null ? "" : time); }
 
         JSONObject toJson() throws JSONException {
@@ -497,7 +501,11 @@ public class EarliestSlotWidget extends AppWidgetProvider {
         if (newest > 0) {
             SimpleDateFormat f = new SimpleDateFormat("HH:mm", Locale.ROOT);
             v.setViewVisibility(R.id.as_of, View.VISIBLE);
-            v.setTextViewText(R.id.as_of, fill(word(strings, "widget.asOf"), "time", f.format(new Date(newest))));
+            String polled = f.format(new Date(newest));
+            SimpleDateFormat day = new SimpleDateFormat("yyyy-MM-dd", Locale.ROOT);
+            String iso = day.format(new Date(newest));
+            if (!iso.equals(day.format(new Date()))) polled = slotText(strings, iso, polled);
+            v.setTextViewText(R.id.as_of, fill(word(strings, "widget.asOf"), "time", polled));
         }
         return v;
     }

@@ -241,17 +241,21 @@ jobs:
     defaults:
       run:
         working-directory: client
-    env:
-      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-      ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
       - run: node ios/asc.mjs ids
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
       - run: node ios/asc.mjs cert ios/distribution.csr "$RUNNER_TEMP/distribution.cer"
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
       - uses: actions/upload-artifact@v4
         with:
           name: distribution-certificate
@@ -286,9 +290,6 @@ jobs:
       run:
         working-directory: client
     env:
-      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-      ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v4
@@ -316,6 +317,10 @@ jobs:
           security list-keychain -d user -s "$KEYCHAIN"
           rm "$RUNNER_TEMP/dist.p12"
       - name: Fresh App Store profile
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
         run: |
           node ios/asc.mjs profiles "$RUNNER_TEMP/profiles"
           # Xcode 16 moved the directory; older tools still read the first one.
@@ -323,6 +328,9 @@ jobs:
             mkdir -p "$d" && cp "$RUNNER_TEMP"/profiles/*.mobileprovision "$d/"
           done
       - name: API key where xcodebuild can read it
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
         run: |
           mkdir -p "$RUNNER_TEMP/keys"
           printf '%s' "$ASC_API_KEY_P8" > "$RUNNER_TEMP/keys/AuthKey_$ASC_KEY_ID.p8"
@@ -345,6 +353,9 @@ jobs:
       # The export re-signs with the App Store profile, which turns
       # aps-environment from the project's `development` into `production`.
       - name: Export and upload to App Store Connect
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
         run: |
           cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
