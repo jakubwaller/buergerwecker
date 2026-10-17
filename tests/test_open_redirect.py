@@ -68,23 +68,20 @@ def test_subscribe_cannot_redirect_off_site(client, payload):
     # GLOBAL_IP_LIMITER is a singleton for the whole test session, so each
     # POST needs an IP nobody else claims — 203.0.113.x is already spoken for
     # by the rate-limit tests.
-    from unittest.mock import patch
     form = {
         "lang": "de", "city": payload, "email": "alice@example.com",
         "appointment_type": "29cd0a26-fe7a-4d65-88cd-1e05fd749c71",
         "all_locations": "1", "time_start": "00:00", "time_end": "23:59",
         "weekdays": ["1"], "website": "",
     }
-    with patch("app.web._send_confirmation_email", return_value=True):
-        r = client.post("/subscribe", data=form,
-                        headers={"X-Forwarded-For": f"198.51.100.{100 + PAYLOADS.index(payload)}"})
+    r = client.post("/subscribe", data=form,
+                    headers={"X-Forwarded-For": f"198.51.100.{100 + PAYLOADS.index(payload)}"})
     assert not _offsite(r.headers.get("Location")), r.headers.get("Location")
     assert r.status_code == 400
 
 
 def test_unknown_city_is_not_stored_as_a_subscription(client):
     """It could never be polled, so it is a row nobody will ever notify."""
-    from unittest.mock import patch
     import os
     form = {
         "lang": "de", "city": "not-a-city", "email": "bob@example.com",
@@ -92,9 +89,8 @@ def test_unknown_city_is_not_stored_as_a_subscription(client):
         "all_locations": "1", "time_start": "00:00", "time_end": "23:59",
         "weekdays": ["1"], "website": "",
     }
-    with patch("app.web._send_confirmation_email", return_value=True):
-        client.post("/subscribe", data=form,
-                    headers={"X-Forwarded-For": "198.51.100.150"})
+    client.post("/subscribe", data=form,
+                headers={"X-Forwarded-For": "198.51.100.150"})
     conn = connect(os.environ["DB_PATH"])
     assert conn.execute("SELECT COUNT(*) FROM subscriptions").fetchone()[0] == 0
 

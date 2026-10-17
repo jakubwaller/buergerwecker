@@ -5,8 +5,7 @@ import pytest
 from app.db import connect, init_schema
 from app.models import Filter
 from app.repo import insert_pending, confirm, pending_confirmations
-from app.confirmations import (build_confirmation, send_confirmation_now,
-                               send_pending_confirmations)
+from app.confirmations import build_confirmation, send_pending_confirmations
 
 
 @pytest.fixture
@@ -47,14 +46,12 @@ def _pending_ids(conn):
 
 def test_deferred_confirmation_is_kept_then_delivered_by_retry(db):
     sid = _sub(db)
-    # All quota exhausted → the immediate send defers.
+    # All quota exhausted → the cycle's send defers.
     with patch("app.mail._call_mailjet_batch", return_value=200), \
          patch("app.mail._call_brevo_batch", return_value=201):
-        delivered = send_confirmation_now(db, sid, "a@x.com", "de", "leipzig",
-                                          _cfg(mailjet_hourly_quota=0,
-                                               mailjet_daily_quota=0,
-                                               brevo_daily_quota=0))
-    assert delivered is False
+        send_pending_confirmations(db, _cfg(mailjet_hourly_quota=0,
+                                            mailjet_daily_quota=0,
+                                            brevo_daily_quota=0))
     assert _sent_at(db, sid) is None          # not marked sent
     assert sid in _pending_ids(db)            # still awaiting confirmation
 
@@ -69,11 +66,44 @@ def test_deferred_confirmation_is_kept_then_delivered_by_retry(db):
 def test_retry_is_idempotent_once_delivered(db):
     sid = _sub(db)
     with patch("app.mail._call_mailjet_batch", return_value=200):
-        assert send_confirmation_now(db, sid, "a@x.com", "de", "leipzig", _cfg()) is True
+        send_pending_confirmations(db, _cfg())
+    assert _sent_at(db, sid) is not None
     # A second retry pass must not re-send an already-confirmed-sent sign-up.
     with patch("app.mail._call_mailjet_batch", return_value=200) as mb:
         send_pending_confirmations(db, _cfg())
     mb.assert_not_called()
+
+
+def _spend_pool(conn, n):
+    """`n` sends in the rolling 24h, what pool_usage counts."""
+    conn.executemany("INSERT INTO sent_idempotency (idem_key, provider) "
+                     "VALUES (?, 'brevo')", [(f"k{i}",) for i in range(n)])
+
+
+def test_confirmations_stop_at_the_pool_pressure_line(db):
+    """A flood of sign-ups must not spend the share of the pool the slot
+    digests need: with mailjet 200 + brevo 300 a day and an 80% line,
+    confirmations may take the pool to 400 and no further."""
+    first, second = _sub(db, "one@x.com"), _sub(db, "two@x.com")
+    _spend_pool(db, 399)
+    with patch("app.mail._call_mailjet_batch", return_value=200) as mb:
+        send_pending_confirmations(db, _cfg(mail_pool_pressure_pct=80))
+    assert [len(c.args[0]) for c in mb.call_args_list] == [1]
+    assert _sent_at(db, first) is not None    # oldest first
+    assert second in _pending_ids(db)         # held, not dropped
+
+    with patch("app.mail._call_mailjet_batch", return_value=200) as mb:
+        send_pending_confirmations(db, _cfg(mail_pool_pressure_pct=80))
+    mb.assert_not_called()                    # at the line: nothing goes
+    assert second in _pending_ids(db)
+
+
+def test_no_pressure_line_sends_everything_pending(db):
+    _sub(db, "one@x.com"), _sub(db, "two@x.com")
+    _spend_pool(db, 450)
+    with patch("app.mail._call_mailjet_batch", return_value=200) as mb:
+        send_pending_confirmations(db, _cfg(mail_pool_pressure_pct=0))
+    assert [len(c.args[0]) for c in mb.call_args_list] == [2]
 
 
 def test_retry_skips_already_confirmed_users(db):

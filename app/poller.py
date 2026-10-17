@@ -30,10 +30,6 @@ def main() -> None:
                       cycle_id=cycle_id,
                       cfg=cfg,
                       http=http)
-            # Retry confirmation emails deferred by quota exhaustion. After
-            # run_cycle so time-sensitive slot notifications get quota first.
-            from app.confirmations import send_pending_confirmations
-            send_pending_confirmations(conn, cfg)
             consecutive_failures = 0
         except Exception as exc:
             consecutive_failures += 1
@@ -41,8 +37,20 @@ def main() -> None:
                   flush=True)
             if consecutive_failures >= 3:
                 _maybe_alert(conn, cfg, str(exc))
+        # After run_cycle so time-sensitive slot notifications get quota
+        # first, and outside its try: this is the only path a confirmation
+        # takes, so a failing poll must not hold up sign-ups.
+        _send_confirmations(conn, cfg)
         # After the cycle: its slots go out before a slow mail provider stalls.
         _check_canary(conn, cfg)
+
+def _send_confirmations(conn, cfg) -> None:
+    """Send the pending sign-ups' confirmation emails. Never breaks the loop."""
+    try:
+        from app.confirmations import send_pending_confirmations
+        send_pending_confirmations(conn, cfg)
+    except Exception as exc:
+        print(f"confirmations failed: {exc!r}", flush=True)
 
 def _prune_rate_events(conn) -> None:
     """Drop the API's rate events past their window, every cycle: the ones

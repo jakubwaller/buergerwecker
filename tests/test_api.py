@@ -941,12 +941,11 @@ def _leipzig_services(n):
 def _web_signup(client, svc, email, *, confirmed=True):
     """A website sign-up, through the form; confirmed in the database
     (the confirmation click is not what is under test)."""
-    with patch("app.web._send_confirmation_email", return_value=True):
-        r = client.post("/subscribe", data={
-            "lang": "de", "city": "leipzig", "email": email,
-            "appointment_type": svc, "all_locations": "1",
-            "time_start": "00:00", "time_end": "23:59", "weekdays": ["1"],
-            "website": ""})
+    r = client.post("/subscribe", data={
+        "lang": "de", "city": "leipzig", "email": email,
+        "appointment_type": svc, "all_locations": "1",
+        "time_start": "00:00", "time_end": "23:59", "weekdays": ["1"],
+        "website": ""})
     if r.status_code == 302 and confirmed:
         _db().execute("UPDATE subscriptions SET confirmed_at=CURRENT_TIMESTAMP "
                       "WHERE email=?", (email,))

@@ -35,39 +35,49 @@ def _form(email="alice@example.com"):
         "website":"",
     }
 
-def test_subscribe_success_with_mocked_mail(client):
+def _subscription_count():
+    import os
+    return connect(os.environ["DB_PATH"]).execute(
+        "SELECT COUNT(*) FROM subscriptions").fetchone()[0]
+
+
+def test_subscribe_saves_the_signup_and_leaves_the_mail_to_the_poller(client):
+    """The request never waits on a mail provider: a slow provider used to
+    hold one of the four web workers for up to a minute per sign-up. The
+    poller sends the confirmation on its next cycle."""
     from unittest.mock import patch
-    with patch("app.web._send_confirmation_email", return_value=True) as send:
+    with patch("app.confirmations.send_batch") as batch, \
+            patch("app.web.mail_send") as send:
         r = client.post("/subscribe", data=_form())
     assert r.status_code == 302
     assert "confirmed=pending" in r.headers.get("Location", "")
-    send.assert_called_once()
+    batch.assert_not_called()
+    send.assert_not_called()
+    assert _subscription_count() == 1
 
 
 def test_subscribe_redirect_returns_to_the_city_and_language(client):
     """The post-subscribe banner has to land back on the tenant that was just
     signed up for — the root is the city picker, not anyone's form."""
-    from unittest.mock import patch
     # A real Bonn service: the id has to be one the tenant's catalog offers.
     form = _form("bob@example.com") | {
         "city": "bonn", "lang": "en",
         "appointment_type": "f9fc18f3-c5db-4d9d-9168-942d44063ca6"}
-    with patch("app.web._send_confirmation_email", return_value=True):
-        r = client.post("/subscribe", data=form,
-                        headers={"X-Forwarded-For": "203.0.113.9"})
+    r = client.post("/subscribe", data=form,
+                    headers={"X-Forwarded-For": "203.0.113.9"})
     loc = r.headers["Location"]
     assert loc.startswith("/bonn?")
     assert "lang=en" in loc and "confirmed=pending" in loc
 
-def test_subscribe_quota_deferral_keeps_registration_and_shows_queued(client):
-    """When the confirmation email is deferred (daily quota exhausted), the
-    sign-up must stay a valid pending row — NOT be discarded — and the user is
-    told it may arrive tomorrow. The poller retry pass sends it later."""
+def test_subscribe_under_pool_pressure_keeps_registration_and_shows_queued(client):
+    """When the poller is holding confirmations back (the mail pool is at its
+    pressure line), the sign-up must stay a valid pending row — NOT be
+    discarded — and the user is told it may arrive tomorrow."""
     import os
     from unittest.mock import patch
     from app.db import connect
     email = "queued@example.com"
-    with patch("app.web._send_confirmation_email", return_value=False):
+    with patch("app.confirmations.confirmation_room", return_value=0):
         r = client.post("/subscribe", data=_form(email=email),
                         headers={"X-Forwarded-For": "9.9.9.9"})
     assert r.status_code == 302, r.data[:300]
@@ -79,90 +89,62 @@ def test_subscribe_quota_deferral_keeps_registration_and_shows_queued(client):
     assert row["deleted_at"] is None      # kept, not discarded
     assert row["confirmed_at"] is None    # still awaiting confirmation
 
-def test_subscribe_mail_error_keeps_registration_not_discarded(client):
-    """Even an unexpected send error must not lose the sign-up: keep it pending
-    and let the retry pass handle it (shown to the user as 'queued')."""
-    import os
-    from unittest.mock import patch
-    from app.db import connect
-    email = "mailerr@example.com"
-    with patch("app.web._send_confirmation_email",
-               side_effect=RuntimeError("mail provider exploded")):
-        r = client.post("/subscribe", data=_form(email=email),
-                        headers={"X-Forwarded-For": "8.8.8.8"})
-    assert r.status_code == 302
-    assert "confirmed=queued" in r.headers.get("Location", "")
-    conn = connect(os.environ["DB_PATH"])
-    row = conn.execute("SELECT deleted_at FROM subscriptions WHERE email=?",
-                       (email,)).fetchone()
-    assert row is not None and row["deleted_at"] is None
-
 def test_honeypot_silently_drops_and_does_not_email(client):
-    from unittest.mock import patch
     f = _form()
     f["website"] = "im-a-spam-bot"
-    with patch("app.web._send_confirmation_email") as send:
-        r = client.post("/subscribe", data=f)
+    r = client.post("/subscribe", data=f)
     assert r.status_code in (200, 302)
-    send.assert_not_called()
+    assert _subscription_count() == 0
 
 def test_ip_ratelimit(client):
-    from unittest.mock import patch
-    with patch("app.web._send_confirmation_email"):
-        for _ in range(2):
-            r = client.post("/subscribe", data=_form(email="b@x.com"),
-                            headers={"X-Forwarded-For":"1.2.3.4"})
-            assert r.status_code in (200, 302)
-        r = client.post("/subscribe", data=_form(email="c@x.com"),
+    for _ in range(2):
+        r = client.post("/subscribe", data=_form(email="b@x.com"),
                         headers={"X-Forwarded-For":"1.2.3.4"})
-        assert r.status_code == 429
+        assert r.status_code in (200, 302)
+    r = client.post("/subscribe", data=_form(email="c@x.com"),
+                    headers={"X-Forwarded-For":"1.2.3.4"})
+    assert r.status_code == 429
 
 def test_ip_ratelimit_prefers_cf_connecting_ip(client):
     """Behind Cloudflare, X-Forwarded-For is the CF edge IP shared by many
     visitors; CF-Connecting-IP is the real client and must key the limit."""
-    from unittest.mock import patch
-    with patch("app.web._send_confirmation_email"):
-        for i in range(2):
-            r = client.post("/subscribe", data=_form(email=f"cf{i}@x.com"),
-                            headers={"X-Forwarded-For": "104.16.0.1",
-                                     "CF-Connecting-IP": "5.5.5.5"})
-            assert r.status_code in (200, 302)
-        # Same edge IP, different real client: must NOT be rate-limited.
-        r = client.post("/subscribe", data=_form(email="cf-other@x.com"),
+    for i in range(2):
+        r = client.post("/subscribe", data=_form(email=f"cf{i}@x.com"),
                         headers={"X-Forwarded-For": "104.16.0.1",
-                                 "CF-Connecting-IP": "5.5.5.6"})
-        assert r.status_code in (200, 302)
-        # Same real client a third time: limited.
-        r = client.post("/subscribe", data=_form(email="cf3@x.com"),
-                        headers={"X-Forwarded-For": "104.16.0.2",
                                  "CF-Connecting-IP": "5.5.5.5"})
-        assert r.status_code == 429
+        assert r.status_code in (200, 302)
+    # Same edge IP, different real client: must NOT be rate-limited.
+    r = client.post("/subscribe", data=_form(email="cf-other@x.com"),
+                    headers={"X-Forwarded-For": "104.16.0.1",
+                             "CF-Connecting-IP": "5.5.5.6"})
+    assert r.status_code in (200, 302)
+    # Same real client a third time: limited.
+    r = client.post("/subscribe", data=_form(email="cf3@x.com"),
+                    headers={"X-Forwarded-For": "104.16.0.2",
+                             "CF-Connecting-IP": "5.5.5.5"})
+    assert r.status_code == 429
 
 def test_ip_ratelimit_ignores_spoofed_cf_header(client):
     """CF-Connecting-IP from a non-Cloudflare peer is attacker-controlled and
     must be ignored — the limit keys on the peer IP instead."""
-    from unittest.mock import patch
-    with patch("app.web._send_confirmation_email"):
-        for i in range(2):
-            r = client.post("/subscribe", data=_form(email=f"sp{i}@x.com"),
-                            headers={"X-Forwarded-For": "203.0.113.7",
-                                     "CF-Connecting-IP": f"10.0.0.{i}"})
-            assert r.status_code in (200, 302)
-        # Third request from the same peer with yet another fake CF header:
-        # still rate-limited because the fake header didn't rotate the key.
-        r = client.post("/subscribe", data=_form(email="sp3@x.com"),
+    for i in range(2):
+        r = client.post("/subscribe", data=_form(email=f"sp{i}@x.com"),
                         headers={"X-Forwarded-For": "203.0.113.7",
-                                 "CF-Connecting-IP": "10.0.0.99"})
-        assert r.status_code == 429
+                                 "CF-Connecting-IP": f"10.0.0.{i}"})
+        assert r.status_code in (200, 302)
+    # Third request from the same peer with yet another fake CF header:
+    # still rate-limited because the fake header didn't rotate the key.
+    r = client.post("/subscribe", data=_form(email="sp3@x.com"),
+                    headers={"X-Forwarded-For": "203.0.113.7",
+                             "CF-Connecting-IP": "10.0.0.99"})
+    assert r.status_code == 429
 
 def test_subscribe_stores_max_days_ahead(client):
     import os, json
-    from unittest.mock import patch
     from app.db import connect
     f = _form(email="window@example.com")
     f["max_days_ahead"] = "7"
-    with patch("app.web._send_confirmation_email", return_value=True):
-        r = client.post("/subscribe", data=f, headers={"X-Forwarded-For": "7.7.7.7"})
+    r = client.post("/subscribe", data=f, headers={"X-Forwarded-For": "7.7.7.7"})
     assert r.status_code == 302
     conn = connect(os.environ["DB_PATH"])
     row = conn.execute("SELECT filters_json FROM subscriptions WHERE email=?",
@@ -171,12 +153,10 @@ def test_subscribe_stores_max_days_ahead(client):
 
 def test_subscribe_empty_max_days_ahead_means_no_limit(client):
     import os, json
-    from unittest.mock import patch
     from app.db import connect
     f = _form(email="nolimit@example.com")
     f["max_days_ahead"] = ""
-    with patch("app.web._send_confirmation_email", return_value=True):
-        client.post("/subscribe", data=f, headers={"X-Forwarded-For": "7.7.7.8"})
+    client.post("/subscribe", data=f, headers={"X-Forwarded-For": "7.7.7.8"})
     conn = connect(os.environ["DB_PATH"])
     row = conn.execute("SELECT filters_json FROM subscriptions WHERE email=?",
                        ("nolimit@example.com",)).fetchone()
@@ -194,11 +174,9 @@ def test_subscribe_empty_max_days_ahead_means_no_limit(client):
 def test_subscribe_rejects_undeliverable_addresses(client, email):
     """Sign-up used to accept anything containing an '@'. A domain with no TLD
     is undeliverable, and Mailjet rejects the entire batch it lands in."""
-    from unittest.mock import patch
-    with patch("app.web._send_confirmation_email") as send:
-        r = client.post("/subscribe", data=_form(email=email))
+    r = client.post("/subscribe", data=_form(email=email))
     assert r.status_code == 400
-    send.assert_not_called()
+    assert _subscription_count() == 0
 
 @pytest.mark.parametrize("email,ip", [
     ("subscriber@example.com", "10.9.0.1"),
@@ -208,10 +186,8 @@ def test_subscribe_still_accepts_normal_addresses(client, email, ip):
     # Distinct X-Forwarded-For per case: GLOBAL_IP_LIMITER is a module-level
     # singleton whose counts outlive the test, so sharing 127.0.0.1 with the
     # other subscribe tests would 429 this one in a full-suite run.
-    from unittest.mock import patch
-    with patch("app.web._send_confirmation_email", return_value=True):
-        r = client.post("/subscribe", data=_form(email=email),
-                        headers={"X-Forwarded-For": ip})
+    r = client.post("/subscribe", data=_form(email=email),
+                    headers={"X-Forwarded-For": ip})
     assert r.status_code == 302
 
 
@@ -248,7 +224,6 @@ def test_a_completed_signup_does_lift_a_bounce_block(client, tmp_path):
     and a real sign-up is the evidence it works now — so the confirmation must
     be allowed out rather than dropped into the suppression list while the page
     says "check your inbox"."""
-    from unittest.mock import patch
     from app.db import connect
     from app.repo import is_suppressed, suppress_address
     conn = connect(str(tmp_path / "t.db"))
@@ -257,9 +232,8 @@ def test_a_completed_signup_does_lift_a_bounce_block(client, tmp_path):
     conn.execute("INSERT INTO email_failures (email, failures) VALUES (?, 3)",
                  (email,))
 
-    with patch("app.web._send_confirmation_email", return_value=True):
-        r = client.post("/subscribe", data=_form(email=email),
-                        headers={"X-Forwarded-For": "198.51.100.8"})
+    r = client.post("/subscribe", data=_form(email=email),
+                    headers={"X-Forwarded-For": "198.51.100.8"})
     assert r.status_code == 302
     assert not is_suppressed(conn, email)
     assert conn.execute("SELECT 1 FROM email_failures WHERE email=?",
@@ -283,37 +257,31 @@ def test_a_complaint_block_is_never_lifted_by_signing_up(client, tmp_path):
 def test_subscribe_rejects_a_service_the_catalog_does_not_offer(client):
     """An unknown appointment_type used to be stored anyway: it became a
     PollPlan sent upstream every cycle and counted toward the city's plan cap."""
-    from unittest.mock import patch
     form = _form("junk@example.com") | {"appointment_type": "x&services=y"}
-    with patch("app.web._send_confirmation_email", return_value=True) as send:
-        r = client.post("/subscribe", data=form,
-                        headers={"X-Forwarded-For": "203.0.113.50"})
+    r = client.post("/subscribe", data=form,
+                    headers={"X-Forwarded-For": "203.0.113.50"})
     assert r.status_code == 400
     assert "Anliegen unbekannt" in r.get_data(as_text=True)
-    send.assert_not_called()
+    assert _subscription_count() == 0
 
 
 def test_subscribe_rejects_a_location_the_catalog_does_not_offer(client):
-    from unittest.mock import patch
     form = _form("loc@example.com") | {"all_locations": "0",
                                        "locations": ["not-an-office"]}
-    with patch("app.web._send_confirmation_email", return_value=True) as send:
-        r = client.post("/subscribe", data=form,
-                        headers={"X-Forwarded-For": "203.0.113.51"})
+    r = client.post("/subscribe", data=form,
+                    headers={"X-Forwarded-For": "203.0.113.51"})
     assert r.status_code == 400
     assert "Standort unbekannt" in r.get_data(as_text=True)
-    send.assert_not_called()
+    assert _subscription_count() == 0
 
 
 def test_subscribe_accepts_a_location_the_catalog_offers(client):
-    from unittest.mock import patch
     from app.catalog import load_catalog
     office = next(iter(load_catalog("leipzig").locations.values()))
     form = _form("loc2@example.com") | {"all_locations": "0",
                                         "locations": [office]}
-    with patch("app.web._send_confirmation_email", return_value=True):
-        r = client.post("/subscribe", data=form,
-                        headers={"X-Forwarded-For": "203.0.113.52"})
+    r = client.post("/subscribe", data=form,
+                    headers={"X-Forwarded-For": "203.0.113.52"})
     assert r.status_code == 302
 
 
@@ -322,16 +290,14 @@ def test_subscribe_stores_a_repeated_office_once(client):
     # form's 500 kB limit let one id repeat tens of thousands of times.
     import json
     import os
-    from unittest.mock import patch
     from app.catalog import load_catalog
     from app.db import connect
     office = next(iter(load_catalog("leipzig").locations.values()))
     form = _form("loc3@example.com") | {"all_locations": "0",
                                         "locations": [office] * 1000,
                                         "weekdays": ["2", "2", "²", "1"] * 50}
-    with patch("app.web._send_confirmation_email", return_value=True):
-        r = client.post("/subscribe", data=form,
-                        headers={"X-Forwarded-For": "203.0.113.53"})
+    r = client.post("/subscribe", data=form,
+                    headers={"X-Forwarded-For": "203.0.113.53"})
     assert r.status_code == 302
     row = connect(os.environ["DB_PATH"]).execute(
         "SELECT filters_json FROM subscriptions WHERE email=?",
@@ -347,25 +313,21 @@ def test_subscribe_stores_a_repeated_office_once(client):
     ("09:00", "08:00", "203.0.113.62"), ("9", "17:00", "203.0.113.63")])
 def test_subscribe_rejects_a_malformed_time_window(client, start, end, ip):
     """These used to raise inside _parse_hhmm and surface as a 500."""
-    from unittest.mock import patch
     form = _form("time@example.com") | {"time_start": start, "time_end": end}
-    with patch("app.web._send_confirmation_email", return_value=True) as send:
-        r = client.post("/subscribe", data=form,
-                        headers={"X-Forwarded-For": ip})
+    r = client.post("/subscribe", data=form,
+                    headers={"X-Forwarded-For": ip})
     assert r.status_code == 400
     assert "Zeitfenster" in r.get_data(as_text=True)
-    send.assert_not_called()
+    assert _subscription_count() == 0
 
 
 def test_subscribe_drops_weekdays_outside_the_week(client):
     import os
-    from unittest.mock import patch
     from app.db import connect
     from app.models import Filter
     form = _form("days@example.com") | {"weekdays": ["0", "3", "8"]}
-    with patch("app.web._send_confirmation_email", return_value=True):
-        r = client.post("/subscribe", data=form,
-                        headers={"X-Forwarded-For": "203.0.113.54"})
+    r = client.post("/subscribe", data=form,
+                    headers={"X-Forwarded-For": "203.0.113.54"})
     assert r.status_code == 302
     conn = connect(os.environ["DB_PATH"])
     row = conn.execute("SELECT filters_json FROM subscriptions WHERE email=?",

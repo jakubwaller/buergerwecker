@@ -69,6 +69,11 @@ def test_full_flow(env):
             "website":"",
         })
         assert r.status_code in (200, 302)
+        assert sent_mails == []           # the request itself mails nothing
+        # The poller's next cycle sends the confirmation.
+        from app.config import load_config
+        from app.confirmations import send_pending_confirmations
+        send_pending_confirmations(connect(env), load_config())
     assert any("bestätig" in s.lower() for _, s in sent_mails)
 
     # 2. confirm

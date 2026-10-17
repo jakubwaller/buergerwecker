@@ -1,15 +1,16 @@
 """Confirmation-email delivery for pending sign-ups.
 
-Confirmation emails go through the same quota-aware batch path as digests, so
-when the daily email quota is exhausted a sign-up is NOT lost: its pending row
-stays valid and `send_pending_confirmations` re-sends the confirmation on a
-later poll cycle (i.e. the next day once quota resets). `confirmation_sent_at`
-marks a sign-up as done so it isn't re-sent.
+Only the poller sends them, once a cycle after the digests, through the same
+quota-aware batch path. The sign-up request just saves the row: a web request
+never waits on a mail provider. When the quota is exhausted a sign-up is NOT
+lost: its pending row stays valid and a later cycle sends it (i.e. the next
+day once quota resets). `confirmation_sent_at` marks a sign-up as done so it
+isn't re-sent.
 """
 from __future__ import annotations
 import sqlite3
 from urllib.parse import urlsplit
-from app.mail import send_batch, Outgoing, _idem_key
+from app.mail import send_batch, pool_usage, Outgoing, _idem_key
 from app.repo import set_confirmation_sent, pending_confirmations
 from app.tokens import sign
 
@@ -67,24 +68,30 @@ def build_confirmation(sub_id: int, email: str, lang: str, city: str,
                     idem_key=_idem_key(sub_id, [], f"confirm-{sub_id}"))
 
 
-def send_confirmation_now(conn: sqlite3.Connection, sub_id: int, email: str,
-                          lang: str, city: str, cfg) -> bool:
-    """Try to send this sign-up's confirmation immediately. Returns True if it
-    went out, False if it was deferred (quota exhausted) — in which case the
-    pending row stays put and `send_pending_confirmations` retries it later."""
-    item = build_confirmation(sub_id, email, lang, city, cfg)
-    result = send_batch(conn, [item], cfg)
-    if item.idem_key in result.delivered:
-        set_confirmation_sent(conn, sub_id)
-        return True
-    return False
+def confirmation_room(conn: sqlite3.Connection, cfg) -> int | None:
+    """How many confirmations may still go out before the mail pool's
+    rolling-24h usage reaches MAIL_POOL_PRESSURE_PCT of its summed daily caps;
+    None when no such line is set. Sign-ups never spend the pool past it, so a
+    flood of them, real or scripted, leaves the rest to the slot digests
+    instead of deferring every digest for a day. A held sign-up stays pending
+    and goes out once the window frees, within its 7-day retry window."""
+    pct = getattr(cfg, "mail_pool_pressure_pct", 0) or 0
+    if not pct:
+        return None
+    used, pool = pool_usage(conn, cfg)
+    if not pool:
+        return None
+    return max(0, pool * pct // 100 - used)
 
 
 def send_pending_confirmations(conn: sqlite3.Connection, cfg, *,
                                max_age_days: int = 7) -> None:
-    """Retry confirmation emails for sign-ups that never got one (quota was
-    exhausted when they registered). Called once per poll cycle."""
+    """Send the confirmation emails of sign-ups that have not had one, oldest
+    first, no further than `confirmation_room`. Called once per poll cycle."""
     pending = pending_confirmations(conn, max_age_days=max_age_days)
+    room = confirmation_room(conn, cfg)
+    if room is not None:
+        pending = pending[:room]
     if not pending:
         return
     items = [build_confirmation(sub_id, email, lang, city, cfg)

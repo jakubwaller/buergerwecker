@@ -259,10 +259,14 @@ failing:
   `flush_digests` sorts by `last_notified_at` (never-notified first), and a
   deferred digest never stamps that column — so whoever was passed over leads
   the next cycle.
-- **Sign-ups are never lost to quota.** If the confirmation email can't go out
-  immediately, the registration is kept and the poller re-sends the
-  confirmation on a later cycle (i.e. next day once quota resets); the user is
-  told it may arrive later.
+- **Sign-ups are never lost to quota, and never spend the digests' share.**
+  The sign-up request only saves the row; the poller sends the confirmation
+  after the cycle's digests, and only while the pool's rolling-24h usage is
+  below `MAIL_POOL_PRESSURE_PCT`. A held sign-up stays pending and is sent on
+  a later cycle (within 7 days); the user is told it may arrive later. A
+  scripted flood of sign-ups can therefore push the pool to that line (and
+  every subscriber to `MAIL_CAP_UNDER_PRESSURE`) but no further; keeping
+  strangers from being mailed at all would need a challenge on the form.
 - **Low-quota alert.** When the **combined** rolling-24h usage across every
   provider that can actually send crosses `QUOTA_ALERT_THRESHOLD_PCT` of the
   summed daily caps, or when notifications are deferred for lack of quota,

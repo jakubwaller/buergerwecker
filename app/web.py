@@ -379,15 +379,6 @@ def _filter_from_form(form, catalog) -> tuple[Filter, bool]:
     )
 
 
-def _send_confirmation_email(conn, sub_id: int, email: str, lang: str,
-                             city: str, cfg) -> bool:
-    """Try to send the confirmation now. Returns True if delivered, False if
-    deferred (quota exhausted) — the sign-up stays pending and the poller's
-    retry pass sends it later (e.g. next day once quota resets)."""
-    from app.confirmations import send_confirmation_now
-    return send_confirmation_now(conn, sub_id, email, lang, city, cfg)
-
-
 def _end_date(expires_at: str | None, lang: str) -> str | None:
     """A subscription's end date, formatted for the language; None if gone."""
     if not expires_at:
@@ -950,10 +941,10 @@ def create_app() -> Flask:
             if refused_by_plan_cap(conn, city, f, push=False,
                                    max_plans_per_city=cfg.max_plans_per_city):
                 return _result_page("waitlist_full", lang, status=503)
-            sub_id = insert_pending(conn, email=email, city=city,
-                                    language=lang, filter_=f,
-                                    ttl_days=ttl_days_for(cfg, sensitive),
-                                    consent_special=sensitive)
+            insert_pending(conn, email=email, city=city,
+                           language=lang, filter_=f,
+                           ttl_days=ttl_days_for(cfg, sensitive),
+                           consent_special=sensitive)
             # A bounce, or a run of provider rejections, only ever claimed the
             # mailbox was broken *then*; a completed sign-up is the evidence it
             # works now, so the block lifts and the confirmation below is
@@ -969,20 +960,16 @@ def create_app() -> Flask:
             # address they do not own, as often as they liked. Tied to the
             # insert it can only ever be a side effect of a real sign-up.
             clear_delivery_block(conn, email)
-        # Try to send the confirmation now. If the daily email quota is
-        # exhausted (or the send errors), we KEEP the pending sign-up and the
-        # poller's retry pass sends the confirmation on a later cycle — so the
-        # registration is never lost. Only the message differs: "check your
-        # inbox" vs "it may arrive tomorrow". No soft-delete, no lockout.
-        try:
-            delivered = _send_confirmation_email(conn, sub_id, email, lang,
-                                                 city, cfg)
-        except Exception:
-            log.exception("confirmation email errored for sub %s; will retry", sub_id)
-            delivered = False
+        # The poller sends the confirmation on its next cycle (see
+        # app.confirmations): this request never waits on a mail provider,
+        # and sign-ups never spend the mail pool past its pressure line.
+        # Held there, the sign-up stays pending and the banner says the mail
+        # may come tomorrow. No soft-delete, no lockout.
+        from app.confirmations import confirmation_room
+        held = confirmation_room(conn, cfg) == 0
         # Carry the city and language back, or the banner would land on the
         # picker in German no matter who just signed up for what.
-        args = {"confirmed": "pending" if delivered else "queued"}
+        args = {"confirmed": "queued" if held else "pending"}
         if lang == "en":
             args["lang"] = lang
         return redirect(f"/{city}?{urlencode(args)}")

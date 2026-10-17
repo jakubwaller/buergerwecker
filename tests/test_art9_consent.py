@@ -12,7 +12,6 @@ import json
 import os
 from datetime import datetime, time
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import pytest
 
@@ -157,19 +156,16 @@ def test_english_form_offers_the_consent_in_english(client):
 def test_subscribe_to_sensitive_service_without_consent_is_rejected(client):
     """The box is hidden by script while an ordinary Anliegen is selected, and
     a POST need never have rendered the page at all — so the gate is here."""
-    with patch("app.web._send_confirmation_email", return_value=True) as send:
-        r = _post(client, _form(SENSITIVE_SVC, email="nc@example.com"),
-                  "198.51.100.1")
+    r = _post(client, _form(SENSITIVE_SVC, email="nc@example.com"),
+              "198.51.100.1")
     assert r.status_code == 400
     assert "Einwilligung" in r.data.decode()
     assert _row("nc@example.com") is None
-    send.assert_not_called()
 
 
 def test_subscribe_with_consent_records_it_and_shortens_retention(client):
-    with patch("app.web._send_confirmation_email", return_value=True):
-        r = _post(client, _form(SENSITIVE_SVC, email="yes@example.com",
-                                consent_special="1"), "198.51.100.2")
+    r = _post(client, _form(SENSITIVE_SVC, email="yes@example.com",
+                            consent_special="1"), "198.51.100.2")
     assert r.status_code == 302
     row = _row("yes@example.com")
     assert row["consent_special_at"] is not None   # Art. 7(1) record of consent
@@ -179,9 +175,8 @@ def test_subscribe_with_consent_records_it_and_shortens_retention(client):
 def test_ordinary_service_never_records_a_special_consent(client):
     """A stray checkbox on an ordinary Anliegen must not stamp a consent that
     was never needed, nor cut that subscriber's retention short."""
-    with patch("app.web._send_confirmation_email", return_value=True):
-        r = _post(client, _form(ORDINARY_SVC, email="ord@example.com",
-                                consent_special="1"), "198.51.100.3")
+    r = _post(client, _form(ORDINARY_SVC, email="ord@example.com",
+                            consent_special="1"), "198.51.100.3")
     assert r.status_code == 302
     row = _row("ord@example.com")
     assert row["consent_special_at"] is None
