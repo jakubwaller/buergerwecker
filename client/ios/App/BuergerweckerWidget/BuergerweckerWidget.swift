@@ -127,13 +127,15 @@ struct Slot: Codable, Equatable {
 
     var sortKey: String { date + " " + (time ?? "") }
 
-    // A cached slot whose start has passed is no slot (a day-only one lasts the day).
-    func passed(_ now: Date) -> Bool {
+    // A slot whose start has passed, by the cities' own clock (a day-only one lasts the day).
+    static func passed(date: String, time: String?, now: Date) -> Bool {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "Europe/Berlin")
         f.dateFormat = "yyyy-MM-dd HH:mm"
         return date + " " + (time ?? "24:00") < f.string(from: now)
     }
+    func passed(_ now: Date) -> Bool { Slot.passed(date: date, time: time, now: now) }
 }
 
 // One city's last answer. `slot == nil && hasData` means "polled, nothing
@@ -210,7 +212,8 @@ enum SlotsAPI {
         var best: Slot?
         for svc in wanted {
             for alert in alerts where alert.service == svc.id {
-                for e in svc.slots ?? [] where Filter.matches(alert, date: e.date, time: e.time, location: e.location, now: now) {
+                for e in svc.slots ?? [] where !Slot.passed(date: e.date, time: e.time, now: now)
+                    && Filter.matches(alert, date: e.date, time: e.time, location: e.location, now: now) {
                     let slot = Slot(date: e.date, time: e.time, office: e.location_name)
                     if best == nil || slot.sortKey < best!.sortKey { best = slot }
                 }

@@ -169,8 +169,11 @@ async function registerFresh(token) {
 // it changed, nothing when it is the one already on file.
 export async function onToken(token) {
   if (!token) return;
-  if (unreadable) await loadDevice();
-  if (unreadable) return; // a key that never recovers just retries on each resume
+  if (unreadable) {
+    await loadDevice();
+    if (unreadable) return; // a key that never recovers just retries on each resume
+    handlers.changed(device); // the list, the widget and the app's id cache all waited for it
+  }
   if (!device) return registerFresh(token);
   if (device.token === token) return;
   try {
@@ -288,6 +291,8 @@ export async function updateLanguage(language) {
 // everything this app kept. An already-gone device (401/410) is as deleted
 // as it gets.
 export async function deleteEverything() {
+  // Without the credential the server's row cannot be deleted; saying "deleted" would be a lie.
+  if (unreadable) throw new Error("The stored login cannot be read right now. Try again in a moment.");
   if (device) {
     try {
       await api.deleteDevice();

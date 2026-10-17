@@ -31,9 +31,13 @@ public class SecureStorePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "clear", returnType: CAPPluginReturnPromise),
     ]
 
-    // { value: "<json>" }, or {} with nothing stored.
+    // { value: "<json>" }, or {} with nothing stored. Any other Keychain error
+    // (locked before the first unlock, say) rejects: it is not "no credential".
     @objc func get(_ call: CAPPluginCall) {
-        if let value = DeviceKeychain.read() { call.resolve(["value": value]) } else { call.resolve([:]) }
+        let (value, status) = DeviceKeychain.lookup()
+        if let value { call.resolve(["value": value]) }
+        else if status == errSecItemNotFound { call.resolve([:]) }
+        else { call.reject("Keychain read failed (\(status))") }
     }
 
     @objc func set(_ call: CAPPluginCall) {
@@ -77,14 +81,16 @@ enum DeviceKeychain {
          kSecAttrSynchronizable as String: false]
     }
 
-    static func read() -> String? {
+    static func read() -> String? { lookup().value }
+
+    static func lookup() -> (value: String?, status: OSStatus) {
         var query = match
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var out: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess,
-              let data = out as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        let status = SecItemCopyMatching(query as CFDictionary, &out)
+        guard status == errSecSuccess, let data = out as? Data else { return (nil, status) }
+        return (String(data: data, encoding: .utf8), status)
     }
 
     static func write(_ value: String) -> OSStatus {

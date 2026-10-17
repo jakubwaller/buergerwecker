@@ -90,6 +90,20 @@ test("a secure-store read error keeps the verified device: no new registration, 
   assert.deepEqual(calls, []);
 });
 
+test("while the credential is unreadable, 'Delete my data' fails instead of claiming success; recovery announces the device", async () => {
+  routes = [{ method: "POST", path: "/devices", reply: [201, { device_id: 5, secret: "sec-good", verified: true }] }];
+  await push.onToken("tok-1");
+  secure.failGet = true;
+  await push.loadDevice();
+  await assert.rejects(push.deleteEverything());
+  assert.ok(prefs.has("device"), "nothing erased");
+  secure.failGet = false;
+  const seen = [];
+  push.init({ changed: (d) => seen.push(d?.id) });
+  await push.onToken("tok-1");
+  assert.deepEqual(seen, [5]);
+});
+
 test("an older build's record moves its id and secret into the secure store on launch", async () => {
   prefs.set("device", JSON.stringify({ id: 5, secret: "sec-legacy", token: "tok-1", platform: "apns", verified: true }));
   prefs.set("lang", JSON.stringify("en"));

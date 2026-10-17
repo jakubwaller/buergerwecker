@@ -232,13 +232,19 @@ test("a list older than CONFIG_VERSION is no list on either platform, and the ol
   assert.match(read(`${JAVA}/WidgetBridgePlugin.java`), /remove\(EarliestSlotWidget\.KEY_LEGACY_CACHE\)/);
 });
 
-test("both widgets drop a cached slot whose start has passed, and date an 'As of' from another day", () => {
-  assert.match(read(IOS), /func passed\(_ now: Date\) -> Bool/);
-  assert.match(read(IOS), /s\.passed\(Date\(\)\) \{ snap\?\.slot = nil \}/);
-  assert.match(read(IOS), /isDate\(date, inSameDayAs: now\)/);
+test("both widgets skip passed slots while choosing, drop cached ones that pass later, by Berlin time, and date an old 'As of'", () => {
+  const swift = read(IOS);
   const java = read(`${JAVA}/EarliestSlotWidget.java`);
-  assert.match(java, /boolean hasSlot\(\) \{[\s\S]*?compareTo\(now\) >= 0/);
+  assert.match(swift, /where !Slot\.passed\(date: e\.date, time: e\.time, now: now\)/);
+  assert.match(swift, /s\.passed\(Date\(\)\) \{ snap\?\.slot = nil \}/);
+  assert.match(swift, /f\.timeZone = TimeZone\(identifier: "Europe\/Berlin"\)\n\s+f\.dateFormat = "yyyy-MM-dd HH:mm"/);
+  assert.match(swift, /isDate\(date, inSameDayAs: now\)/);
+  assert.match(java, /if \(date == null \|\| passed\(date, time\)\) continue;/);
+  assert.match(java, /boolean hasSlot\(\) \{ return date != null && !passed\(date, time\); \}/);
+  assert.match(java, /getTimeZone\("Europe\/Berlin"\)\);\n\s+return \(date \+ " "/);
   assert.match(java, /if \(!iso\.equals\(day\.format\(new Date\(\)\)\)\) polled = slotText/);
+  // A Keychain error other than "not found" is a rejection, not "no credential".
+  assert.match(read(IOS_SECURE), /status == errSecItemNotFound \{ call\.resolve\(\[:\]\) \}\s+else \{ call\.reject\(/);
 });
 
 test("a credential with nothing to ask about lifts the lock on both platforms", () => {

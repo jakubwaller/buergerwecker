@@ -158,7 +158,9 @@ function onNotification(n, tapped) {
 function harvest() {
   // Only while waiting: a delivered code lingers, and a used or expired one
   // would flag invalid_code on every resume.
-  inbox.harvest(Date.now(), (data) => push.awaitingVerification() && handleVerify(data)).then((added) => added && changed("inbox"));
+  inbox.harvest(Date.now(), async (data) => {
+    if (push.awaitingVerification()) await handleVerify(data);
+  }).then((added) => added && changed("inbox"));
 }
 
 let errorShown = false;

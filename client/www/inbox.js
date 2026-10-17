@@ -185,9 +185,19 @@ export async function harvest(now = Date.now(), onVerify) {
   }
   const times = (await plugin("PushGate")?.posted?.().catch(() => null))?.times ?? {};
   let changed = false;
+  // Only the newest setup push: Resend invalidates the codes before it.
+  let verify = null;
+  const sent = (n) => Number(n.data.sent) || 0;
   for (const n of delivered) {
-    if (n?.data?.type === "verify") onVerify?.(n.data);
-    else if (await record({ ...n, postedAt: times[n.tag] }, now)) changed = true;
+    if (n?.data?.type === "verify") {
+      if (!verify || sent(n) >= sent(verify)) verify = n;
+    } else if (await record({ ...n, postedAt: times[n.tag] }, now)) changed = true;
+  }
+  if (verify) {
+    await onVerify?.(verify.data);
+    // Used up; it would only come back on the next resume.
+    const stale = delivered.filter((n) => n?.data?.type === "verify");
+    await plugin("PushNotifications")?.removeDeliveredNotifications?.({ notifications: stale }).catch?.(() => {});
   }
   return changed;
 }

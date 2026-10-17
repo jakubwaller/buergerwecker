@@ -108,10 +108,8 @@ public class EarliestSlotWidget extends AppWidgetProvider {
         boolean gone;              // 403 not_subscribed: no live alert in this city any more
 
         // A cached slot whose start has passed is no slot (a day-only one lasts the day).
-        boolean hasSlot() {
-            String now = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).format(new Date());
-            return date != null && (date + " " + (time == null ? "24:00" : time)).compareTo(now) >= 0;
-        }
+        // The cache outlives the slot: one that has passed since is no slot.
+        boolean hasSlot() { return date != null && !passed(date, time); }
         String sortKey() { return date + " " + (time == null ? "" : time); }
 
         JSONObject toJson() throws JSONException {
@@ -294,6 +292,13 @@ public class EarliestSlotWidget extends AppWidgetProvider {
         }
     }
 
+    /** A slot whose start is past, by the cities' own clock (a day-only one lasts the day). */
+    static boolean passed(String date, String time) {
+        SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT);
+        f.setTimeZone(TimeZone.getTimeZone("Europe/Berlin"));
+        return (date + " " + (time == null ? "24:00" : time)).compareTo(f.format(new Date())) < 0;
+    }
+
     /**
      * The earliest slot that would also trigger one of the alerts: the alert's
      * own service, and its filter on top (matches() below).
@@ -318,7 +323,7 @@ public class EarliestSlotWidget extends AppWidgetProvider {
                 String date = e.optString("date", null);
                 String time = e.isNull("time") ? null : e.optString("time");
                 String location = e.isNull("location") ? null : e.optString("location");
-                if (date == null) continue;
+                if (date == null || passed(date, time)) continue;
                 boolean ok = false;
                 for (JSONObject a : mine) if (matches(a, date, time, location, now)) { ok = true; break; }
                 if (!ok) continue;
