@@ -144,3 +144,18 @@ def test_poll_without_office_list_after_relogin_raises_and_keeps_other_hosts_coo
     with pytest.raises(RuntimeError, match="no office list"):
         tevis.poll(_plan(), http=http)
     assert [c.domain for c in http.cookies] == ["other.example.com"]
+
+
+def test_a_relogin_rebootstraps_every_tenant_on_its_host():
+    """Tenants on one host share its cookies (path-scoped, or one at /). Once a
+    re-login clears them, each sibling must bootstrap again, or it polls with
+    no session and clears the host for the next one, every cycle."""
+    plan = _plan()
+    base = load_catalog(plan.city).scraper_config["base_url"].rstrip("/")
+    http = requests.Session()
+    http._tevis_ready = {(base, "sibling"), ("https://other.example.com", "1")}
+    http.get = MagicMock(return_value=_resp(200, "<html>Hilfe</html>"))
+    with pytest.raises(RuntimeError):
+        tevis.poll(plan, http=http)
+    assert (base, "sibling") not in http._tevis_ready
+    assert ("https://other.example.com", "1") in http._tevis_ready

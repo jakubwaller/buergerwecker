@@ -139,7 +139,11 @@ def poll(plan: PollPlan, http: requests.Session) -> list[Slot]:
         for c in list(http.cookies):
             if c.domain.lstrip(".") == host:
                 http.cookies.clear(c.domain, c.path, c.name)
-        http._tevis_ready.discard((base, md))
+        # Every tenant on this host lost its cookie with them, so each must
+        # bootstrap again; a stale ready mark would poll with no session and
+        # clear the host for the next sibling, every cycle.
+        http._tevis_ready = {k for k in http._tevis_ready
+                             if urlparse(k[0]).hostname != host}
         _bootstrap_session(http, base, md)
         html = _fetch_location_page(http, base, scfg, plan)
         if not _has_office_list(html):
