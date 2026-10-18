@@ -89,7 +89,7 @@ _RESULT_MESSAGES: dict[str, dict] = {
     # GET of the unsubscribe link: mail scanners open every link, so only the
     # button's POST deletes.
     "confirm_unsubscribe": {
-        "kind": "success",
+        "kind": None,  # a question, not an outcome: no badge
         "de": ("Abmelden", "Möchtest du dich abmelden?",
                "Mit einem Klick auf den Button beendest du deine "
                "Termin-Benachrichtigungen."),

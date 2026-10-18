@@ -230,6 +230,7 @@ def test_unsubscribe_soft_deletes(client):
     # A mail scanner's GET only shows the button.
     r = c.get(f"/unsubscribe/{unsub}?lang=en")
     assert r.status_code == 200 and f'action="/unsubscribe/{unsub}?lang=en"' in r.get_data(as_text=True)
+    assert "class=\"notice " not in r.get_data(as_text=True)  # nothing has happened yet
     row = conn.execute("SELECT deleted_at FROM subscriptions WHERE id=?", (sid,)).fetchone()
     assert row["deleted_at"] is None
     r = c.post(f"/unsubscribe/{unsub}")
