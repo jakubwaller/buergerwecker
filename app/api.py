@@ -874,7 +874,6 @@ def cities():
             "label": cat.display_text("label", lang) or slug,
             "heading": cat.display_text("heading", lang),
             "note": cat.display_text("note", lang),
-            "has_sensitive": cat.has_sensitive,
         })
     return jsonify({"cities": out})
 
@@ -890,9 +889,13 @@ def city(slug):
     except CatalogError:
         return _error("unknown_city", 404, lang)
     cfg = _cfg()
-    services = [{"id": uuid, "name": name, "sensitive": cat.is_sensitive(uuid),
+    # Never a special-category service (Art. 9): the app offers none since
+    # App Review read its consent screen as "sensitive user information"
+    # (5.1.1(ix), 2026-10-20). The website keeps the consent flow.
+    services = [{"id": uuid, "name": name,
                  "locations": cat.service_locations.get(uuid)}
-                for name, uuid in cat.appointment_types_for(lang).items()]
+                for name, uuid in cat.appointment_types_for(lang).items()
+                if not cat.is_sensitive(uuid)]
     locations = [{"id": uuid, "name": name}
                  for name, uuid in cat.locations_for(lang).items()]
     return jsonify({
@@ -904,7 +907,6 @@ def city(slug):
         "services": services,
         "locations": locations,
         "ttl_days": ttl_days_for(cfg, False),
-        "sensitive_ttl_days": ttl_days_for(cfg, True),
         "booking_url": f"{cfg.public_base_url}/go/{slug}"
                        + ("?lang=en" if lang == "en" else ""),
     })
@@ -1173,6 +1175,8 @@ def _filter_from_json(body: dict, catalog) -> tuple[Filter, bool]:
         raise FormError("unknown_location")
     all_locations = locations == "all" or not locations
     weekdays = body.get("weekdays")
+    if catalog.is_sensitive(str(body.get("appointment_type") or "").strip()):
+        raise FormError("unknown_type")    # not offered to the app, see city()
     return build_filter(
         catalog,
         appointment_type=body.get("appointment_type"),
@@ -1182,7 +1186,7 @@ def _filter_from_json(body: dict, catalog) -> tuple[Filter, bool]:
         time_start=body.get("time_start"),
         time_end=body.get("time_end"),
         max_days_ahead=body.get("max_days_ahead"),
-        consent_special=body.get("consent_special") is True,
+        consent_special=False,
     )
 
 

@@ -530,8 +530,6 @@ def test_cities_lists_every_tenant_with_its_city_name(client):
     by_slug = {c["slug"]: c for c in body["cities"]}
     assert by_slug["leipzig"]["city"] == "Leipzig"
     assert by_slug["leipzig"]["office"] == "Bürgerbüro"
-    assert by_slug["leipzig"]["has_sensitive"] is False
-    assert by_slug["muenster-standesamt"]["has_sensitive"] is True
     en = client.get("/api/v1/cities?lang=en").get_json()
     assert {c["slug"]: c for c in en["cities"]}["leipzig"]["office"] == "Citizens' office"
 
@@ -539,16 +537,33 @@ def test_cities_lists_every_tenant_with_its_city_name(client):
 def test_city_returns_the_form_the_website_shows(client):
     body = client.get("/api/v1/cities/leipzig").get_json()
     assert body["city"] == "Leipzig" and body["ttl_days"] == 90
-    assert body["sensitive_ttl_days"] == 30
     assert body["booking_url"] == "https://x/go/leipzig"
     services = {s["id"]: s for s in body["services"]}
     assert services[LEIPZIG_SVC]["name"] == "Abholung Ausweisdokumente"
-    assert services[LEIPZIG_SVC]["sensitive"] is False
     assert any(loc["id"] == LEIPZIG_LOC for loc in body["locations"])
     en = client.get("/api/v1/cities/leipzig?lang=en").get_json()
     assert en["booking_url"] == "https://x/go/leipzig?lang=en"
-    sbgg = client.get("/api/v1/cities/muenster-standesamt").get_json()
-    assert {s["id"]: s for s in sbgg["services"]}[SBGG_SVC]["sensitive"] is True
+
+
+def test_the_app_never_offers_a_special_category_service(client):
+    # App Review 5.1.1(ix), 2026-10-20: no Art. 9 service in the app, hence
+    # no consent screen. The website keeps both.
+    body = client.get("/api/v1/cities/muenster-standesamt").get_json()
+    offered = {s["id"] for s in body["services"]}
+    assert "2434" in offered and SBGG_SVC not in offered
+    assert not any("sensitive" in s for s in body["services"])
+    dev, secret = _register(client)
+    auth = _auth(dev, secret)
+    r = _subscribe(client, auth, city="muenster-standesamt", appointment_type=SBGG_SVC,
+                   consent_special=True)
+    assert r.status_code == 400 and r.get_json()["error"] == "unknown_type"
+    sid = _subscribe(client, auth, city="muenster-standesamt",
+                     appointment_type="2434").get_json()["id"]
+    r = client.put(f"/api/v1/subscriptions/{sid}", headers=auth,
+                   json={"appointment_type": SBGG_SVC, "consent_special": True})
+    assert r.status_code == 400 and r.get_json()["error"] == "unknown_type"
+    sub = client.get(f"/api/v1/subscriptions/{sid}", headers=auth).get_json()
+    assert sub["appointment_type"] == "2434" and sub["consent_special"] is False
 
 
 def test_city_slots_is_the_last_poll_per_watched_service(client):
@@ -609,6 +624,20 @@ def _snapshot(city, service, slot_loc="loc-x"):
         plan.key(): [Slot("2026-06-10", "10:30", slot_loc, service, "t")]})
 
 
+def _art9_subscription(device_id, city="muenster-standesamt"):
+    """A watcher of a special-category service can only date from before the
+    app stopped offering them (App Review 5.1.1(ix), 2026-10-20); the API
+    refuses one now, so it goes in through the repo."""
+    from app.catalog import load_catalog
+    from app.repo import insert_push_subscription
+    from app.signup import build_filter
+    f, _ = build_filter(load_catalog(city), appointment_type=SBGG_SVC, locations=[],
+                        all_locations=True, weekdays=[], time_start=None, time_end=None,
+                        max_days_ahead=None, consent_special=True)
+    return insert_push_subscription(_db(), device_id=device_id, city=city, language="de",
+                                    filter_=f, ttl_days=30, consent_special=True)
+
+
 def test_city_slots_is_for_a_verified_device_that_watches_the_city(client):
     _snapshot("leipzig", LEIPZIG_SVC)
     url = "/api/v1/cities/leipzig/slots"
@@ -663,8 +692,7 @@ def test_city_slots_shows_a_special_category_service_only_to_its_own_watchers(cl
     body = client.get(url + f"?service={SBGG_SVC}", headers=_auth(ordinary, so)).get_json()
     assert body["services"] == [] and body["polled_at"] is None
     watcher, sw = _register(client, token="watcher")
-    assert _subscribe(client, _auth(watcher, sw), city=city, appointment_type=SBGG_SVC,
-                      consent_special=True).status_code == 201
+    _art9_subscription(watcher, city)
     body = client.get(url, headers=_auth(watcher, sw)).get_json()
     assert {s["id"] for s in body["services"]} == {SBGG_SVC, "2434"}
 
@@ -813,26 +841,6 @@ def test_error_message_follows_the_device_language(client):
     assert "isn't offered" in r.get_json()["message"]
 
 
-def test_a_special_category_service_needs_the_separate_consent(client):
-    dev, secret = _register(client)
-    auth = _auth(dev, secret)
-    r = _subscribe(client, auth, city="muenster-standesamt", appointment_type=SBGG_SVC)
-    assert r.status_code == 400 and r.get_json()["error"] == "consent_required"
-    r = _subscribe(client, auth, city="muenster-standesamt", appointment_type=SBGG_SVC,
-                   consent_special="yes")    # only a JSON true counts
-    assert r.status_code == 400
-    r = _subscribe(client, auth, city="muenster-standesamt", appointment_type=SBGG_SVC,
-                   consent_special=True)
-    assert r.status_code == 201
-    body = r.get_json()
-    assert body["consent_special"] is True
-    # The shorter term, and the consent stamped as evidence.
-    row = _db().execute("SELECT consent_special_at, expires_at FROM subscriptions "
-                        "WHERE id=?", (body["id"],)).fetchone()
-    assert row["consent_special_at"] is not None
-    assert datetime.fromisoformat(row["expires_at"]) < datetime.utcnow() + timedelta(days=31)
-
-
 def test_subscribe_counts_toward_the_city_plan_cap(client, monkeypatch):
     # A cap of 2 leaves the app a share of one service of its own.
     monkeypatch.setenv("MAX_PLANS_PER_CITY", "2")
@@ -896,30 +904,6 @@ def test_edit_replaces_the_filter_and_resets_the_cadence_state(client):
     r = client.put(f"/api/v1/subscriptions/{sid}", headers=auth,
                    json={"appointment_type": "svc-nope"})
     assert r.status_code == 400 and r.get_json()["error"] == "unknown_type"
-
-
-def test_edit_into_and_out_of_a_special_category_service(client):
-    dev, secret = _register(client)
-    auth = _auth(dev, secret)
-    sid = _subscribe(client, auth, city="muenster-standesamt",
-                     appointment_type="2434").get_json()["id"]
-    db = _db()
-    r = client.put(f"/api/v1/subscriptions/{sid}", headers=auth,
-                   json={"appointment_type": SBGG_SVC})
-    assert r.status_code == 400 and r.get_json()["error"] == "consent_required"
-    r = client.put(f"/api/v1/subscriptions/{sid}", headers=auth,
-                   json={"appointment_type": SBGG_SVC, "consent_special": True})
-    assert r.status_code == 200 and r.get_json()["consent_special"] is True
-    row = db.execute("SELECT consent_special_at, expires_at FROM subscriptions WHERE id=?",
-                     (sid,)).fetchone()
-    assert row["consent_special_at"] is not None
-    assert datetime.fromisoformat(row["expires_at"]) < datetime.utcnow() + timedelta(days=31)
-    # Back to an ordinary service: the consent covered that one selection.
-    r = client.put(f"/api/v1/subscriptions/{sid}", headers=auth,
-                   json={"appointment_type": "2434"})
-    assert r.status_code == 200 and r.get_json()["consent_special"] is False
-    assert db.execute("SELECT consent_special_at FROM subscriptions WHERE id=?",
-                      (sid,)).fetchone()[0] is None
 
 
 def test_edit_respects_the_plan_cap_minus_its_own_plan(client, monkeypatch):
@@ -1292,8 +1276,7 @@ def test_renew_starts_a_new_term_and_clears_the_checkin_latch(client):
 def test_renew_keeps_the_shorter_special_category_term(client):
     dev, secret = _register(client)
     auth = _auth(dev, secret)
-    sid = _subscribe(client, auth, city="muenster-standesamt", appointment_type=SBGG_SVC,
-                     consent_special=True).get_json()["id"]
+    sid = _art9_subscription(dev)
     client.post(f"/api/v1/subscriptions/{sid}/renew", json={}, headers=auth)
     row = _db().execute("SELECT expires_at FROM subscriptions WHERE id=?", (sid,)).fetchone()
     assert datetime.fromisoformat(row["expires_at"]) < datetime.utcnow() + timedelta(days=31)
