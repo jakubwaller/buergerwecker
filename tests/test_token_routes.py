@@ -462,6 +462,18 @@ def test_datenschutz_states_the_configured_terms(client):
     assert "paused for 14 days" in en
 
 
+def test_datenschutz_drops_the_shorter_term_when_both_are_equal(client, monkeypatch):
+    """Prod runs SUBSCRIPTION_TTL_DAYS=14 with the sensitive default of 30, which
+    ttl_days_for clamps to 14 — the page must not say "nach 14 statt nach 14 Tagen"."""
+    monkeypatch.setenv("SUBSCRIPTION_TTL_DAYS", "14")
+    c = create_app().test_client()
+    de = c.get("/datenschutz").data.decode()
+    assert "statt nach" not in de and "nach 14 Tagen" not in de
+    assert "gesondert behandelt: Unsere Benachrichtigungen" in de
+    en = c.get("/datenschutz?lang=en").data.decode()
+    assert "days instead of" not in en and "14 days for the sensitive" not in en
+
+
 def test_datenschutz_has_the_deletion_anchor(client):
     """Play Console's data deletion link points at #daten-loeschen."""
     c, _sid = client
