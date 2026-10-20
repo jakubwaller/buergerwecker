@@ -9,8 +9,8 @@ subscription it holds.
 
 The rules are the website's rules. A subscription is validated against the
 tenant's catalog by the same `app.signup.build_filter` the form uses, counts
-toward the same per-city plan cap, needs the same Art. 9 consent for a
-special-category service, lives for the same term and is asked the same
+toward the same per-city plan cap, is never a special-category service
+(the app lists none, see city()), lives for the same term and is asked the same
 still-looking question before it ends (as a push, see housekeeping). The one
 difference is the opt-in: the OS permission prompt the app had to pass is
 the opt-in, so a push subscription is live at once.
@@ -999,7 +999,7 @@ def list_subscriptions():
 @authenticated
 def create_subscription():
     """`{city, appointment_type, locations: [...] | "all", weekdays: [...],
-    time_start, time_end, max_days_ahead, consent_special, language}`.
+    time_start, time_end, max_days_ahead, language}`.
     Live at once; the first matching slot arrives as a push."""
     lang = g.device["language"]
     if _device_rate_limited():
@@ -1045,7 +1045,7 @@ def get_subscription(sub_id):
 @authenticated
 def update_subscription(sub_id):
     """Replace the filter (a full PUT, every field as on a sign-up): the same
-    validation, consent gate and plan-cap check as the website's manage
+    validation and plan-cap check as the website's manage
     form, and the same reset of the cadence state, which was measured
     against the old filter."""
     lang = g.device["language"]

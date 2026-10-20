@@ -44,8 +44,8 @@ gets an id and a secret, kept in the Keychain (iOS) or encrypted under an Androi
    or a notification, the alert's service comes first. The snapshot is read through a one-minute
    cache (`citySlots` in `state.js`) shared with My alerts, since the route allows a device about
    60 reads an hour together with the widget; a push for the city drops that city's copy.
-5. **Subscribe / edit form**: service (with the Art. 9 consent box for a `sensitive`
-   service), offices filtered by the service, weekdays, time window, how far ahead.
+5. **Subscribe / edit form**: service (the server lists no Art. 9 service to the app, so the
+   consent box in `form.js` never shows), offices filtered by the service, weekdays, time window, how far ahead.
 6. **My alerts**: each with its filter, "runs until", the soonest slots that alert would notify
    about right now (the server's `app/filters.py` rules over the city's snapshot, `filters.js`)
    as a row into the city overview, "Book on the city's site" when there is one, "Keep looking"

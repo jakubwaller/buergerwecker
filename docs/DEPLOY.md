@@ -718,7 +718,9 @@ are missing or wrong on the VPS: check `docker compose logs poller | grep
 - `GET/POST /api/v1/subscriptions`, `GET/PUT/DELETE
   /api/v1/subscriptions/<id>`, `POST /api/v1/subscriptions/<id>/renew`: the
   website's rules over JSON. Same validation against the catalog, same
-  Art. 9 consent for a special-category service, same term, same renewal,
+  term, same renewal, but never a special-category service: the app lists
+  none since App Review 5.1.1(ix) (2026-10-20); the consent flow is the
+  website's alone.
   and the per-city plan cap with the app limited to its share (below). No
   double opt-in: the OS permission prompt is the opt-in, so a push
   subscription is live at once.
