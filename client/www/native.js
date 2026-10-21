@@ -14,10 +14,14 @@ export const plugin = (name) => {
 export const platform = () => cap()?.getPlatform?.() ?? "web";
 export const isNative = () => !!cap()?.isNativePlatform?.();
 
-// Opens a page in the system browser (SFSafariViewController / Custom Tabs).
+// Opens a page in the system browser, leaving the app. Capacitor hands any
+// top-level navigation to an outside origin to the OS (Safari, the default
+// browser on Android). Not the in-app Safari view: App Review took a city's
+// booking page shown inside the app for the app's own content (5.1.1(ix),
+// 2026-10-21).
+// shortcut: @capacitor/browser stays installed but unused, drop it with the next cap sync.
 export async function openExternal(url) {
-  const b = plugin("Browser");
-  if (b) await b.open({ url });
+  if (isNative()) globalThis.location.href = url;
   else globalThis.open?.(url, "_blank", "noopener");
 }
 
