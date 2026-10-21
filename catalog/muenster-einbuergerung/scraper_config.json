@@ -1,5 +1,6 @@
 {
   "vendor": "tevis",
+  "website_only": true,
   "base_url": "https://termine.stadt-muenster.de",
   "md": 41,
   "mdt": 209,

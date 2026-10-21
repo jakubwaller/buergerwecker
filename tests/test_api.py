@@ -534,6 +534,20 @@ def test_cities_lists_every_tenant_with_its_city_name(client):
     assert {c["slug"]: c for c in en["cities"]}["leipzig"]["office"] == "Citizens' office"
 
 
+def test_a_website_only_tenant_is_invisible_to_the_app(client):
+    # App Review 5.1.1(ix), 2026-10-21: "Ausländerbehörde" in the app's city
+    # list read as sensitive user information. The website keeps the tenant.
+    slugs = {c["slug"] for c in client.get("/api/v1/cities").get_json()["cities"]}
+    assert "leipzig" in slugs and "leipzig-abh" not in slugs
+    assert "muenster-einbuergerung" not in slugs
+    assert client.get("/api/v1/cities/leipzig-abh").status_code == 404
+    dev, secret = _register(client)
+    auth = _auth(dev, secret)
+    assert client.get("/api/v1/cities/leipzig-abh/slots", headers=auth).status_code == 404
+    r = _subscribe(client, auth, city="leipzig-abh")
+    assert r.status_code == 400 and r.get_json()["error"] == "unknown_city"
+
+
 def test_city_returns_the_form_the_website_shows(client):
     body = client.get("/api/v1/cities/leipzig").get_json()
     assert body["city"] == "Leipzig" and body["ttl_days"] == 90
