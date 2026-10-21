@@ -855,16 +855,25 @@ def _device_json(row, verified: bool) -> dict:
 # ---------------------------------------------------------------------------
 # Catalog (public, same content as the website)
 
+def _app_catalog(slug):
+    """The tenant as the app may see it: None for an unknown slug and for a
+    website-only tenant alike, so the app cannot tell the two apart."""
+    try:
+        cat = load_catalog(slug)
+    except CatalogError:
+        return None
+    return None if cat.website_only else cat
+
 @api.route("/cities", methods=["GET"])
 def cities():
-    """Every tenant, for the city picker: one entry per Amt with the city
-    name it belongs to, like the website's switcher."""
+    """Every tenant the app carries, for the city picker: one entry per Amt
+    with the city name it belongs to, like the website's switcher minus the
+    website-only tenants."""
     lang = _lang(request.args.get("lang"))
     out = []
     for slug in available_cities():
-        try:
-            cat = load_catalog(slug)
-        except CatalogError:
+        cat = _app_catalog(slug)
+        if cat is None:
             continue
         city_name = cat.display_text("city_name", lang) or slug
         out.append({
@@ -884,9 +893,8 @@ def city(slug):
     service, and the terms, so the app can build the same sign-up form the
     website shows."""
     lang = _lang(request.args.get("lang"))
-    try:
-        cat = load_catalog(slug)
-    except CatalogError:
+    cat = _app_catalog(slug)
+    if cat is None:
         return _error("unknown_city", 404, lang)
     cfg = _cfg()
     # Never a special-category service (Art. 9): the app offers none since
@@ -935,9 +943,8 @@ def city_slots(slug):
                        MAX_SLOT_READS_PER_DEVICE_PER_HOUR, 3600)
     if wait:
         return _error("rate_limited", 429, lang, retry_after=wait)
-    try:
-        cat = load_catalog(slug)
-    except CatalogError:
+    cat = _app_catalog(slug)
+    if cat is None:
         return _error("unknown_city", 404, lang)
     now = datetime.utcnow()
     watched = [s for s in subscriptions_for_device(g.conn, g.device["id"])
@@ -1006,10 +1013,7 @@ def create_subscription():
         return _error("rate_limited", 429, lang)
     body = _json()
     slug = str(body.get("city", "")).strip()
-    try:
-        catalog = load_catalog(slug) if slug else None
-    except CatalogError:
-        catalog = None
+    catalog = _app_catalog(slug) if slug else None
     if catalog is None:
         return _error("unknown_city", 400, lang)
     try:

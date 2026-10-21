@@ -83,6 +83,10 @@ class Catalog:
     # (confirmation, digest), so folding the Amt into it would give the game
     # away there.
     sensitive_services: frozenset = field(default_factory=frozenset)
+    # The website carries this tenant, the store app does not: App Review
+    # read "Ausländerbehörde" in the app's city list as sensitive user
+    # information (5.1.1(ix), 2026-10-21). `website_only` in scraper_config.json.
+    website_only: bool = False
     # What counts as one piece of news for this tenant. Defaults by vendor
     # (see _default_granularity); `notify_granularity` in scraper_config.json
     # overrides it for one tenant:
@@ -283,6 +287,7 @@ def _read_catalog(city: str, city_dir: Path) -> Catalog:
                    appointment_types_en=ats_en, locations_en=locs_en,
                    display=display, service_locations=svc_locs,
                    sensitive_services=sensitive,
+                   website_only=bool(scfg.get("website_only")),
                    notify_granularity=granularity)
 
 

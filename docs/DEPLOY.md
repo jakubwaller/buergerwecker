@@ -698,7 +698,8 @@ are missing or wrong on the VPS: check `docker compose logs poller | grep
   rotated token or a new language; delete my data (the device row and, by
   cascade, every subscription it holds).
 - `GET /api/v1/cities`, `GET /api/v1/cities/<slug>`: the catalog the sign-up
-  form shows, public.
+  form shows, public. A tenant with `website_only: true` in its
+  `scraper_config.json` is absent here and `404` by slug; the website keeps it.
 - `GET /api/v1/cities/<slug>/slots`: what the last polls found free, per
   watched service, soonest first, with the earliest slot for the widget. For
   a verified device only (the main secret; `401 unauthorized`, `403
