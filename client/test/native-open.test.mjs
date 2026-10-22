@@ -23,6 +23,7 @@ const { openExternal } = await import("../www/native.js");
 test("an active app navigates at once, and only to http(s)", async () => {
   await openExternal("https://termine.example.com/select2?md=4");
   assert.equal(globalThis.location.href, "https://termine.example.com/select2?md=4");
+  assert.equal(listeners.length, 0);
   await openExternal("javascript:alert(1)");
   assert.equal(globalThis.location.href, "https://termine.example.com/select2?md=4");
 });

@@ -28,14 +28,14 @@ export async function openExternal(url) {
     return;
   }
   const app = plugin("App");
-  if (app?.getState && !(await app.getState()).isActive) {
-    await new Promise((resolve) => {
-      const handle = app.addListener("appStateChange", ({ isActive }) => {
-        if (!isActive) return;
-        Promise.resolve(handle).then((h) => h?.remove?.());
-        resolve();
-      });
+  if (app?.getState) {
+    // Subscribe before asking: an activation between the two would be lost.
+    let handle;
+    const active = new Promise((resolve) => {
+      handle = app.addListener("appStateChange", ({ isActive }) => isActive && resolve());
     });
+    if (!(await app.getState()).isActive) await active;
+    (await handle)?.remove?.();
   }
   globalThis.location.href = url;
 }
