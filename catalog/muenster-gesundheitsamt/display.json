@@ -1,0 +1,22 @@
+{
+  "city_name": {
+    "de": "Münster",
+    "en": "Münster"
+  },
+  "office": {
+    "de": "Gesundheitsamt",
+    "en": "Health department"
+  },
+  "label": {
+    "de": "Münster: Gesundheitsamt",
+    "en": "Münster: health department"
+  },
+  "heading": {
+    "de": "Nie wieder freie Beratungstermine beim Gesundheitsamt Münster verpassen",
+    "en": "Never miss a free counselling slot at Münster's health department"
+  },
+  "note": {
+    "de": "Hinweis: Dieser Dienst meldet den jeweils frühesten freien Termin (so zeigt es auch die Terminseite der Stadt an). Gebucht wird weiterhin selbst auf der offiziellen Terminseite der Stadt Münster.",
+    "en": "Note: this service reports the earliest free slot (matching what the city's appointment page shows). You still book yourself on the City of Münster's official appointment page."
+  }
+}

@@ -540,6 +540,7 @@ def test_a_website_only_tenant_is_invisible_to_the_app(client):
     slugs = {c["slug"] for c in client.get("/api/v1/cities").get_json()["cities"]}
     assert "leipzig" in slugs and "leipzig-abh" not in slugs
     assert "muenster-einbuergerung" not in slugs
+    assert "muenster-gesundheitsamt" not in slugs
     assert client.get("/api/v1/cities/leipzig-abh").status_code == 404
     dev, secret = _register(client)
     auth = _auth(dev, secret)
