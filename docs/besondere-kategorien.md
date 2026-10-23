@@ -4,7 +4,7 @@ Kurzbeschreibung der Verarbeitung für Anliegen, deren bloße Auswahl eine
 besondere Kategorie personenbezogener Daten offenbart. Gedacht als Grundlage
 für die Abstimmung mit den Datenschutzbeauftragten der beteiligten Städte.
 
-Stand: 2026-10-13. Verantwortlicher: siehe Impressum auf
+Stand: 2026-10-23. Verantwortlicher: siehe Impressum auf
 <https://buergerwecker.de/impressum>.
 
 ## Worum es geht
