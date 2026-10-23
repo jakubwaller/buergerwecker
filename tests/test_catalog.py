@@ -198,8 +198,9 @@ def test_sensitive_services_survive_a_service_being_withdrawn(tmp_path,
 def test_only_city_approved_tenants_offer_a_sensitive_service():
     """Guards the promise made to the cities: a special-category Anliegen goes
     live only after the city has agreed. Münster approved the Standesamt's
-    SBGG-Anmeldung on 2026-08-13; every other tenant (including the still
-    unbuilt Gesundheitsamt) needs its own approval before joining this list."""
+    SBGG-Anmeldung on 2026-08-13 and the Gesundheitsamt's STI-Beratung on
+    2026-10-23; every other tenant needs its own approval before joining this
+    list."""
     from app.catalog import available_cities, load_catalog, CatalogError
     offering = []
     for city in available_cities():
@@ -208,7 +209,21 @@ def test_only_city_approved_tenants_offer_a_sensitive_service():
                 offering.append(city)
         except CatalogError:
             continue
-    assert offering == ["muenster-standesamt"]
+    assert offering == ["muenster-gesundheitsamt", "muenster-standesamt"]
+
+
+def test_a_tenant_offering_only_sensitive_services_stays_off_the_app():
+    """The app offers no Art. 9 service (App Review 5.1.1(ix)), so a tenant
+    with nothing else would show up there as an empty form."""
+    from app.catalog import available_cities, load_catalog, CatalogError
+    for city in available_cities():
+        try:
+            cat = load_catalog(city)
+        except CatalogError:
+            continue
+        if cat.appointment_types and all(
+                cat.is_sensitive(u) for u in cat.appointment_types.values()):
+            assert cat.website_only, city
 
 
 def test_shipped_bochum_kfz_tenants_protect_the_shared_host():

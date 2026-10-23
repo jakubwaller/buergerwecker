@@ -4,7 +4,7 @@ Kurzbeschreibung der Verarbeitung für Anliegen, deren bloße Auswahl eine
 besondere Kategorie personenbezogener Daten offenbart. Gedacht als Grundlage
 für die Abstimmung mit den Datenschutzbeauftragten der beteiligten Städte.
 
-Stand: 2026-10-13. Verantwortlicher: siehe Impressum auf
+Stand: 2026-10-23. Verantwortlicher: siehe Impressum auf
 <https://buergerwecker.de/impressum>.
 
 ## Worum es geht
@@ -86,8 +86,12 @@ Ergebnis der Abstimmung mit der Stadt Münster (2026-08-13): die „Anmeldung zu
 Abgabe einer Erklärung nach dem Selbstbestimmungsgesetz" wird angeboten, mit
 allen oben beschriebenen Maßnahmen. Die „Abgabe der Erklärung nach dem
 Selbstbestimmungsgesetz (SBGG)" bleibt auf Wunsch des Standesamts dauerhaft
-ausgenommen, da sie mit besonderen Fristen verbunden ist. Die STI-Beratung des
-Gesundheitsamts ist weiterhin nicht angebunden.
+ausgenommen, da sie mit besonderen Fristen verbunden ist.
+
+Am 2026-10-23 hat die Stadt Münster nach Rückmeldung des Gesundheitsamts auch
+den „Beratungstermin zu sexuell übertragbaren Infektionen (STI) und ggf.
+Testung" freigegeben. Er wird mit denselben Maßnahmen angeboten, und zwar nur
+auf der Website: die App bietet keine Anliegen dieser Kategorie an.
 
 Seit 2026-10-13 sind außerdem diese Anliegen ausgenommen. Bei ihnen verrät
 schon die Auswahl Gesundheitsdaten, die Religion oder die sexuelle

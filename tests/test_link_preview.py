@@ -82,6 +82,10 @@ def test_amt_of_a_special_category_tenant_stays_off_the_card(client):
     assert _meta(html, "og:title") == "Münster: freie Termine beim Amt – Bürgerwecker"
     assert "Standesamt" not in _meta(html, "og:title")
     assert "Standesamt" not in _meta(html, "og:description")
+    html = client.get("/muenster-gesundheitsamt").get_data(as_text=True)
+    assert 'name="consent_special"' in html
+    assert "Gesundheitsamt" not in _meta(html, "og:title")
+    assert "Gesundheitsamt" not in _meta(html, "og:description")
 
 
 def test_token_paths_never_put_their_token_in_og_url(client):
