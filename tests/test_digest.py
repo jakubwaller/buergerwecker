@@ -337,3 +337,13 @@ def test_send_digest_signs_a_manage_link_into_every_digest():
                 matched_slots=[Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")],
                 cycle_id="c1", cfg=cfg, sink=sink)
     assert "Filter anpassen: https://x/manage/" in sink[0].item.body
+
+
+def test_digest_app_hint_only_where_the_app_offers_the_service():
+    from dataclasses import replace
+    slots = [Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")]
+    hint = "Bürgerwecker fürs iPhone"
+    assert hint in _render(_sub("de"), slots, catalog=_cat())
+    assert hint not in _render(_sub("de"), slots, catalog=replace(_cat(), website_only=True))
+    assert hint not in _render(_sub("de"), slots,
+                               catalog=replace(_cat(), sensitive_services=frozenset({"svc-A"})))
