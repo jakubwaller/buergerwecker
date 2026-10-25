@@ -39,7 +39,7 @@
       </select>
     </label>
 
-    {{ special_consent(lang, sensitive_services, sensitive_ttl_days, consent_special) }}
+    {{ special_consent(lang, sensitive_services, sensitive_ttl_days, ttl_days, consent_special) }}
 
     <label>
       <input type="checkbox" name="all_locations" value="1" {% if all_locations %}checked{% endif %}>

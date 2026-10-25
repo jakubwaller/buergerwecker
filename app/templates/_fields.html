@@ -6,7 +6,7 @@
    and — where scripting is available — shown only while such a service is
    selected. It degrades to always-visible without JS, and /subscribe and
    /manage reject the POST regardless, so the box is never the enforcement. #}
-{% macro special_consent(lang, sensitive_services, ttl_days, checked=False) %}
+{% macro special_consent(lang, sensitive_services, ttl_days, usual_ttl_days, checked=False) %}
   {% if sensitive_services %}
     <script id="sensitive-services" type="application/json">{{ sensitive_services | tojson }}</script>
     <div class="consent-block" id="consent-special">
@@ -43,13 +43,15 @@
       <p class="consent-note">
         {% if lang == 'en' %}
           The notification emails never name the appointment type or the
-          office, and this subscription expires automatically after
-          {{ ttl_days }} days instead of the usual 90. Details in the
+          office{% if ttl_days != usual_ttl_days %}, and this subscription
+          expires automatically after {{ ttl_days }} days instead of the
+          usual {{ usual_ttl_days }}{% endif %}. Details in the
           <a href="/datenschutz?lang=en">privacy notice</a>.
         {% else %}
-          Die Benachrichtigungen nennen weder das Anliegen noch das Amt, und
-          diese Anmeldung läuft automatisch nach {{ ttl_days }} Tagen ab statt
-          nach 90. Näheres in der
+          Die Benachrichtigungen nennen weder das Anliegen noch das
+          Amt{% if ttl_days != usual_ttl_days %}, und diese Anmeldung läuft
+          automatisch nach {{ ttl_days }} Tagen ab statt nach
+          {{ usual_ttl_days }}{% endif %}. Näheres in der
           <a href="/datenschutz">Datenschutzerklärung</a>.
         {% endif %}
       </p>

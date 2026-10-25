@@ -888,8 +888,8 @@ def create_app() -> Flask:
                                locations=catalog.locations_for(lang),
                                service_locations=catalog.service_locations,
                                sensitive_services=_offered_sensitive(catalog),
-                               sensitive_ttl_days=app.config["TERMINE_CONFIG"]
-                               .sensitive_subscription_ttl_days,
+                               sensitive_ttl_days=ttl_days_for(
+                                   app.config["TERMINE_CONFIG"], True),
                                kofi_url=app.config["TERMINE_CONFIG"].kofi_url)
 
     @app.route("/subscribe", methods=["POST"])
@@ -1139,7 +1139,7 @@ def create_app() -> Flask:
                                appointment_types=catalog.appointment_types_for(lang),
                                locations=catalog.locations_for(lang), token=token,
                                sensitive_services=_offered_sensitive(catalog),
-                               sensitive_ttl_days=cfg.sensitive_subscription_ttl_days,
+                               sensitive_ttl_days=ttl_days_for(cfg, True),
                                consent_special=("consent_special_at" in row.keys()
                                                 and row["consent_special_at"] is not None),
                                current=Filter.from_json(row["filters_json"]))

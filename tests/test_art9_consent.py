@@ -150,6 +150,19 @@ def test_english_form_offers_the_consent_in_english(client):
     assert "Art. 9(2)(a) GDPR" in body
 
 
+
+def test_consent_note_states_the_term_that_applies(client, monkeypatch):
+    """The note used to print the raw SENSITIVE_SUBSCRIPTION_TTL_DAYS against a
+    hard-coded 90; prod runs 14 days, which ttl_days_for clamps the 30 to."""
+    def note(c):
+        return " ".join(c.get(f"/{SENSITIVE_CITY}").data.decode().split())
+    assert "nach 30 Tagen ab statt nach 90." in note(client)
+    monkeypatch.setenv("SUBSCRIPTION_TTL_DAYS", "14")
+    body = note(create_app().test_client())
+    assert 'name="consent_special"' in body
+    assert "statt nach" not in body and "30 Tagen" not in body
+
+
 # ---------- /subscribe ----------
 
 def test_subscribe_to_sensitive_service_without_consent_is_rejected(client):
