@@ -17,6 +17,7 @@
   "digest.no_repeat_note": "Note: each email only lists appointments that are new since your last notification. Previously reported ones may still be available.",
   "digest.manage_hint": "Only certain days or times? Adjust your filter: {manage_url}",
   "digest.unsubscribe": "Unsubscribe: {unsubscribe_url}",
+  "digest.app_hint": "Rather get a push than an email? Bürgerwecker for iPhone: https://apps.apple.com/app/id6819977614",
   "digest.kofi": "Did this notification help? You can buy me a coffee: {kofi_url} (only if you want — the service stays free.)",
   "digest.selection_window_label": "Window",
   "digest.window_days": "within the next {n} days",
