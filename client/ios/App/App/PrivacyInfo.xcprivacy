@@ -7,15 +7,28 @@
 	<key>NSPrivacyTrackingDomains</key>
 	<array/>
 	<!-- The push token goes to buergerwecker.de so the app can be told about
-	     free slots; it names the install, not a person, and is used for
-	     nothing else. No account, no address, no analytics. -->
+	     free slots, and the server keeps it with the install's alerts (city,
+	     service, offices). Apple counts data tied to a device as linked, so
+	     both are declared linked. No account, no address, no analytics. -->
 	<key>NSPrivacyCollectedDataTypes</key>
 	<array>
 		<dict>
 			<key>NSPrivacyCollectedDataType</key>
 			<string>NSPrivacyCollectedDataTypeDeviceID</string>
 			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
 			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeOtherDataTypes</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
 			<key>NSPrivacyCollectedDataTypeTracking</key>
 			<false/>
 			<key>NSPrivacyCollectedDataTypePurposes</key>
