@@ -320,6 +320,7 @@ def test_digest_nudges_toward_the_filter_when_given_a_manage_link():
         public_base_url="https://x", kofi_url="https://ko-fi.com/me",
         catalog=_cat(), manage_url="https://x/manage/tok")
     assert "Only certain days or times? Adjust your filter: https://x/manage/tok" in text_en
+    assert "Bürgerwecker for iPhone: https://apps.apple.com/app/id6819977614" in text_en
     # Callers without a link (one-off renders) get no dangling sentence.
     assert "Filter anpassen" not in _render(_sub("de"), slots, catalog=_cat())
 

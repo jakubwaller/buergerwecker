@@ -175,6 +175,7 @@ def render_digest_text(sub: Subscription, slots: list[Slot], *,
     lines.append("")
     lines.append(t(lang, "digest.unsubscribe", unsubscribe_url=unsubscribe_url))
     lines.append("")
+    lines.append(t(lang, "digest.app_hint"))
     lines.append(t(lang, "digest.kofi", kofi_url=kofi_url))
     return "\n".join(lines)
 

@@ -17,6 +17,7 @@
   "digest.no_repeat_note": "Hinweis: Jede E-Mail enthält nur neue Termine seit deiner letzten Benachrichtigung. Früher gemeldete Termine können ebenfalls noch frei sein.",
   "digest.manage_hint": "Nur bestimmte Tage oder Zeiten? Filter anpassen: {manage_url}",
   "digest.unsubscribe": "Abmelden: {unsubscribe_url}",
+  "digest.app_hint": "Lieber Push statt Mail? Bürgerwecker fürs iPhone: https://apps.apple.com/app/id6819977614",
   "digest.kofi": "Hat dir diese Benachrichtigung geholfen? Du kannst mir einen Kaffee spendieren: {kofi_url} (aber nur, wenn du magst — der Dienst bleibt kostenlos.)",
   "digest.selection_window_label": "Zeitraum",
   "digest.window_days": "innerhalb der nächsten {n} Tage",
