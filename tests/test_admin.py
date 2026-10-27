@@ -669,10 +669,14 @@ def test_app_stats_reads_the_collectors_apps_json(tmp_path):
     from app.admin import app_stats
     conn = connect(str(tmp_path/"t.db")); init_schema(conn)
     conn.execute("INSERT INTO push_devices (platform, token, secret_hash, verified_at) "
-                 "VALUES ('ios', 't1', 'h', CURRENT_TIMESTAMP), ('ios', 't2', 'h', NULL)")
+                 "VALUES ('apns', 't1', 'h', CURRENT_TIMESTAMP), ('apns', 't2', 'h', NULL), "
+                 "('fcm', 't3', 'h', CURRENT_TIMESTAMP)")
     now = datetime(2026, 10, 27, 12, 0)
     missing = app_stats(conn, path=str(tmp_path/"none.json"), now=now)
-    assert missing == {"devices": {"ios": 1}, "store": None}
+    assert missing == {"devices": {"apns": 1, "fcm": 1}, "store": None,
+                       "store_note": "not written yet — has the collector's apps.py run?"}
+    gone = app_stats(conn, path=str(tmp_path/"no-dir"/"apps.json"), now=now)
+    assert gone["store_note"] == "not mounted on this host"
     p = tmp_path/"apps.json"
     p.write_text(json.dumps({"generated_at": "2026-10-27T06:40:00Z", "apps": {"buergerwecker": {
         "days": {"2026-10-25": {"ios_downloads": 3, "ios_updates": 0},
@@ -689,11 +693,11 @@ def test_app_stats_reads_the_collectors_apps_json(tmp_path):
 
 
 def test_admin_renders_app_section_without_the_collector(client, monkeypatch, tmp_path):
-    monkeypatch.setenv("APP_STATS_PATH", str(tmp_path/"none.json"))
+    monkeypatch.setenv("APP_STATS_PATH", str(tmp_path/"none"/"apps.json"))
     r = client.get("/admin?token=admin-tok")
     assert r.status_code == 200
     assert b"iOS devices registered" in r.data
-    assert b"apps.json is not mounted" in r.data
+    assert b"apps.json is not mounted on this host" in r.data
 
 
 def test_admin_renders_app_section_with_store_figures(client, monkeypatch, tmp_path):

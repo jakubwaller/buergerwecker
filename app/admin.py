@@ -790,23 +790,27 @@ APP_STATS_DAYS = 30
 def app_stats(conn: sqlite3.Connection, path: str | None = None,
               now: datetime | None = None) -> dict:
     """The /admin App section: installs that registered a push device here
-    (verified, not retired) per platform, and `store`, the App Store / Play
-    figures from apps.json — None when the file is absent or unreadable (no
-    collector on this host). Sums run over complete UTC days, never today."""
+    (verified, not retired) per push platform (apns, fcm), and `store`, the
+    App Store / Play figures from apps.json — None when the file is absent or
+    unreadable, `store_note` then says which. Sums run over complete UTC days,
+    never today."""
     import json
     devices = {r["platform"]: r["n"] for r in conn.execute(
         "SELECT platform, COUNT(*) AS n FROM push_devices "
         "WHERE verified_at IS NOT NULL AND retired_at IS NULL GROUP BY platform")}
+    path = path or os.environ.get("APP_STATS_PATH", APP_STATS_PATH)
+    store, note = None, None
     try:
-        with open(path or os.environ.get("APP_STATS_PATH", APP_STATS_PATH)) as f:
+        with open(path) as f:
             store = _store_figures(json.load(f), now or datetime.utcnow())
     except FileNotFoundError:
-        store = None
+        note = ("not written yet — has the collector's apps.py run?"
+                if os.path.isdir(os.path.dirname(path)) else "not mounted on this host")
     except Exception:  # noqa: BLE001 — another repo's file: a bad one blanks the section, never /admin
         import logging
         logging.getLogger(__name__).exception("apps.json unreadable")
-        store = None
-    return {"devices": devices, "store": store}
+        note = "unreadable — see the web container's log"
+    return {"devices": devices, "store": store, "store_note": note}
 
 
 def _store_figures(data: dict, now: datetime) -> dict:

@@ -336,12 +336,12 @@
       <summary><h2>App <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· App Store and Play figures from the fleet collector, every 6 h · complete UTC days</span></h2></summary>
       {% set st = app.store %}
       <div class="mini-stats">
-        <div><div class="ms-num">{{ app.devices.get('ios', 0) }}</div><div class="ms-lbl">iOS devices registered</div></div>
-        <div><div class="ms-num">{{ app.devices.get('android', 0) }}</div><div class="ms-lbl">Android devices registered</div></div>
+        <div><div class="ms-num">{{ app.devices.get('apns', 0) }}</div><div class="ms-lbl">iOS devices registered</div></div>
+        <div><div class="ms-num">{{ app.devices.get('fcm', 0) }}</div><div class="ms-lbl">Android devices registered</div></div>
         {% if st and st.configured.ios %}
           <div><div class="ms-num">{{ st.downloads['7d'] }}</div><div class="ms-lbl">App Store downloads · 7d</div></div>
           <div><div class="ms-num">{{ st.downloads['30d'] }}</div><div class="ms-lbl">Downloads · 30d</div></div>
-          <div><div class="ms-num">{{ st.downloads['all'] }}</div><div class="ms-lbl">Downloads · since {{ st.since }}</div></div>
+          <div><div class="ms-num">{{ st.downloads['all'] }}</div><div class="ms-lbl">Downloads · {% if st.since %}since {{ st.since }}{% else %}all{% endif %}</div></div>
           <div><div class="ms-num">{{ st.updates_7d }}</div><div class="ms-lbl">Updates · 7d</div></div>
         {% endif %}
         {% if st and st.ratings %}
@@ -354,7 +354,7 @@
         {% endif %}
       </div>
       {% if not st %}
-        <p class="adm-muted">No store figures: the fleet collector's apps.json is not mounted on this host.</p>
+        <p class="adm-muted">No store figures: the fleet collector's apps.json is {{ app.store_note }}.</p>
       {% else %}
         {% if st.stale %}<p class="adm-muted"><span class="dot dot-warn"></span> apps.json is from {{ st.generated_at or 'an unknown time' }}, over a day old — is the apps.py cron running?</p>{% endif %}
         {% for src, err in st.errors|dictsort %}<p class="adm-muted"><span class="dot dot-warn"></span> {{ src }} failed on the last run: {{ err }}</p>{% endfor %}
