@@ -332,6 +332,55 @@
   </section>
 
   <section class="adm-section">
+    <details class="adm-collapse" open>
+      <summary><h2>App <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· App Store and Play figures from the fleet collector, every 6 h · complete UTC days</span></h2></summary>
+      {% set st = app.store %}
+      <div class="mini-stats">
+        <div><div class="ms-num">{{ app.devices.get('apns', 0) }}</div><div class="ms-lbl">iOS devices registered</div></div>
+        <div><div class="ms-num">{{ app.devices.get('fcm', 0) }}</div><div class="ms-lbl">Android devices registered</div></div>
+        {% if st and st.configured.ios %}
+          <div><div class="ms-num">{{ st.downloads['7d'] }}</div><div class="ms-lbl">App Store downloads · 7d</div></div>
+          <div><div class="ms-num">{{ st.downloads['30d'] }}</div><div class="ms-lbl">Downloads · 30d</div></div>
+          <div><div class="ms-num">{{ st.downloads['all'] }}</div><div class="ms-lbl">Downloads · {% if st.since %}since {{ st.since }}{% else %}all{% endif %}</div></div>
+          <div><div class="ms-num">{{ st.updates_7d }}</div><div class="ms-lbl">Updates · 7d</div></div>
+        {% endif %}
+        {% if st and st.ratings %}
+          <div><div class="ms-num">{{ st.ratings.total }}{% if st.ratings.avg %} · ★ {{ '%.1f'|format(st.ratings.avg) }}{% endif %}</div><div class="ms-lbl">Ratings{% for cc, r in st.ratings.stores|dictsort %} · {{ cc }} {{ r.count }}{% endfor %}</div></div>
+          <div><div class="ms-num">{{ st.ratings.version or '?' }}</div><div class="ms-lbl">Live version · since {{ st.ratings.released or '?' }}</div></div>
+        {% endif %}
+        {% if st and st.configured.android %}
+          <div><div class="ms-num">{{ st.installs['7d'] }}</div><div class="ms-lbl">Play installs · 7d</div></div>
+          <div><div class="ms-num">{{ st.android_active if st.android_active is not none else '–' }}</div><div class="ms-lbl">Play active devices</div></div>
+        {% endif %}
+      </div>
+      {% if not st %}
+        <p class="adm-muted">No store figures: the fleet collector's apps.json is {{ app.store_note }}.</p>
+      {% else %}
+        {% if st.stale %}<p class="adm-muted"><span class="dot dot-warn"></span> apps.json is from {{ st.generated_at or 'an unknown time' }}, over a day old — is the apps.py cron running?</p>{% endif %}
+        {% for src, err in st.errors|dictsort %}<p class="adm-muted"><span class="dot dot-warn"></span> {{ src }} failed on the last run: {{ err }}</p>{% endfor %}
+        {% if not st.configured.ios %}<p class="adm-muted">Downloads need the ASC_* variables in the collector's fleet-ops.env.</p>{% endif %}
+        {% if st.configured.ios %}
+          {% set dmax = (st.series|map(attribute='ios_downloads')|select|max) or 1 %}
+          <div class="bars">
+            {% for d in st.series %}
+              <div class="bar-col" title="{{ d.day }} · {% if d.ios_downloads is defined %}{{ d.ios_downloads }} downloads, {{ d.ios_updates|default(0) }} updates{% else %}no report{% endif %}">
+                {% if d.ios_downloads %}
+                  <div class="bar" style="height: {{ (100 * d.ios_downloads / dmax)|round(1) }}%"><div class="bar-fill" style="height: 100%"></div></div>
+                {% else %}
+                  <div class="bar empty"></div>
+                {% endif %}
+              </div>
+            {% endfor %}
+          </div>
+          {% set first_day = st.series|first %}{% set last_day = st.series|last %}
+          <div class="bar-axis"><span>{{ first_day.day }}</span><span>{{ last_day.day }}</span></div>
+          <p class="adm-muted" style="font-size:0.8rem;">App Store first-time downloads per day (TestFlight not included){% if st.pending %}; Apple has not published {{ st.pending|join(', ') }} yet{% endif %}.</p>
+        {% endif %}
+      {% endif %}
+    </details>
+  </section>
+
+  <section class="adm-section">
     <h2>Notifications <span class="adm-title-sub" style="font-weight:500;font-size:1rem;">· appointment slots delivered to subscribers</span></h2>
     <table class="adm-table">
       <tr><td class="k">Subscribers notified</td><td class="v">24h {{ s.notifications_24h }} · 7d {{ s.notifications_7d }} · ever {{ s.subscribers_ever_notified }}</td></tr>
