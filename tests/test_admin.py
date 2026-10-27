@@ -712,3 +712,14 @@ def test_admin_renders_app_section_with_store_figures(client, monkeypatch, tmp_p
     for text in (b"App Store downloads", b"2 \xc2\xb7 \xe2\x98\x85 4.5", b"android failed on the last run: HTTP 403",
                  b"over a day old", b"Play active devices", b"has not published 2026-10-26"):
         assert text in r.data, text
+
+
+def test_app_stats_survives_a_malformed_apps_json(tmp_path):
+    import json
+    from app.admin import app_stats
+    conn = connect(str(tmp_path/"t.db")); init_schema(conn)
+    p = tmp_path/"apps.json"
+    for bad in ({"apps": {"buergerwecker": {"days": []}}},
+                {"apps": {"buergerwecker": {"days": {"2026-10-25": None}}}}, [1]):
+        p.write_text(json.dumps(bad))
+        assert app_stats(conn, path=str(p))["store"] is None
