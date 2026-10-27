@@ -800,7 +800,11 @@ def app_stats(conn: sqlite3.Connection, path: str | None = None,
     try:
         with open(path or os.environ.get("APP_STATS_PATH", APP_STATS_PATH)) as f:
             store = _store_figures(json.load(f), now or datetime.utcnow())
+    except FileNotFoundError:
+        store = None
     except Exception:  # noqa: BLE001 — another repo's file: a bad one blanks the section, never /admin
+        import logging
+        logging.getLogger(__name__).exception("apps.json unreadable")
         store = None
     return {"devices": devices, "store": store}
 
@@ -819,7 +823,7 @@ def _store_figures(data: dict, now: datetime) -> dict:
     active = [v["android_active"] for _, v in sorted(days.items()) if "android_active" in v]
     ratings = app.get("ratings")
     if ratings is not None:
-        ratings = {"stores": {}} | ratings
+        ratings = ratings | {"stores": ratings.get("stores") or {}}
     return {
         "configured": app.get("configured") or {},
         "errors": app.get("errors") or {},

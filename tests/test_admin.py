@@ -723,3 +723,12 @@ def test_app_stats_survives_a_malformed_apps_json(tmp_path):
                 {"apps": {"buergerwecker": {"days": {"2026-10-25": None}}}}, [1]):
         p.write_text(json.dumps(bad))
         assert app_stats(conn, path=str(p))["store"] is None
+
+
+def test_admin_renders_ratings_with_null_stores(client, monkeypatch, tmp_path):
+    import json
+    p = tmp_path/"apps.json"
+    p.write_text(json.dumps({"generated_at": "2026-10-27T06:40:00Z", "apps": {"buergerwecker": {
+        "days": {}, "ratings": {"total": 0, "stores": None}}}}))
+    monkeypatch.setenv("APP_STATS_PATH", str(p))
+    assert client.get("/admin?token=admin-tok").status_code == 200
