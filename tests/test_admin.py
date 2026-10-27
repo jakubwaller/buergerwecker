@@ -662,3 +662,53 @@ def test_stats_plan_counts_use_the_loaded_config_cap(tmp_path, monkeypatch):
     # Two distinct plans over a cap of one collapse to a single "all" plan.
     assert stats(conn, cfg)["current_plan_count_by_city"]["dresden"] == 1
     assert stats(conn)["current_plan_count_by_city"]["dresden"] == 2
+
+
+def test_app_stats_reads_the_collectors_apps_json(tmp_path):
+    import json
+    from app.admin import app_stats
+    conn = connect(str(tmp_path/"t.db")); init_schema(conn)
+    conn.execute("INSERT INTO push_devices (platform, token, secret_hash, verified_at) "
+                 "VALUES ('ios', 't1', 'h', CURRENT_TIMESTAMP), ('ios', 't2', 'h', NULL)")
+    now = datetime(2026, 10, 27, 12, 0)
+    missing = app_stats(conn, path=str(tmp_path/"none.json"), now=now)
+    assert missing == {"devices": {"ios": 1}, "store": None}
+    p = tmp_path/"apps.json"
+    p.write_text(json.dumps({"generated_at": "2026-10-27T06:40:00Z", "apps": {"buergerwecker": {
+        "days": {"2026-10-25": {"ios_downloads": 3, "ios_updates": 0},
+                 "2026-10-26": {"ios_downloads": 2, "ios_updates": 1},
+                 "2026-10-27": {"ios_downloads": 9}},     # today: never summed
+        "configured": {"ios": True, "android": False}, "errors": {}, "pending": [],
+        "ratings": {"total": 1, "avg": 5.0, "stores": {"de": {"count": 1, "avg": 5.0}},
+                    "version": "1.0", "released": "2026-10-25"}}}}))
+    st = app_stats(conn, path=str(p), now=now)["store"]
+    assert st["downloads"] == {"7d": 5, "30d": 5, "all": 5}
+    assert st["updates_7d"] == 1 and st["stale"] is False and st["since"] == "2026-10-25"
+    assert [d["day"] for d in st["series"]][-1] == "2026-10-26" and len(st["series"]) == 30
+    assert app_stats(conn, path=str(p), now=datetime(2026, 10, 29))["store"]["stale"] is True
+
+
+def test_admin_renders_app_section_without_the_collector(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("APP_STATS_PATH", str(tmp_path/"none.json"))
+    r = client.get("/admin?token=admin-tok")
+    assert r.status_code == 200
+    assert b"iOS devices registered" in r.data
+    assert b"apps.json is not mounted" in r.data
+
+
+def test_admin_renders_app_section_with_store_figures(client, monkeypatch, tmp_path):
+    import json
+    p = tmp_path/"apps.json"
+    p.write_text(json.dumps({"generated_at": "2026-10-01T06:40:00Z", "apps": {"buergerwecker": {
+        "days": {"2026-10-25": {"ios_downloads": 3, "ios_updates": 0, "android_installs": 1,
+                                "android_active": 4}},
+        "configured": {"ios": True, "android": True}, "errors": {"android": "HTTP 403"},
+        "pending": ["2026-10-26"],
+        "ratings": {"total": 2, "avg": 4.5, "stores": {"de": {"count": 2, "avg": 4.5}},
+                    "version": "1.0", "released": "2026-10-25"}}}}))
+    monkeypatch.setenv("APP_STATS_PATH", str(p))
+    r = client.get("/admin?token=admin-tok")
+    assert r.status_code == 200
+    for text in (b"App Store downloads", b"2 \xc2\xb7 \xe2\x98\x85 4.5", b"android failed on the last run: HTTP 403",
+                 b"over a day old", b"Play active devices", b"has not published 2026-10-26"):
+        assert text in r.data, text

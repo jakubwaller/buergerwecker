@@ -780,6 +780,57 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
     }
 
 
+# The fleet collector's store figures (pi-monitoring fleet-ops/apps.py, every
+# 6 h), its out/ directory mounted read-only into the web container.
+APP_STATS_PATH = "/fleet-ops/apps.json"
+APP_STATS_STALE_HOURS = 24
+APP_STATS_DAYS = 30
+
+
+def app_stats(conn: sqlite3.Connection, path: str | None = None,
+              now: datetime | None = None) -> dict:
+    """The /admin App section: installs that registered a push device here
+    (verified, not retired) per platform, and `store`, the App Store / Play
+    figures from apps.json — None when the file is absent or unreadable (no
+    collector on this host). Sums run over complete UTC days, never today."""
+    import json
+    devices = {r["platform"]: r["n"] for r in conn.execute(
+        "SELECT platform, COUNT(*) AS n FROM push_devices "
+        "WHERE verified_at IS NOT NULL AND retired_at IS NULL GROUP BY platform")}
+    try:
+        with open(path or os.environ.get("APP_STATS_PATH", APP_STATS_PATH)) as f:
+            data = json.load(f)
+        app = data["apps"]["buergerwecker"]
+        days = app["days"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return {"devices": devices, "store": None}
+    now = now or datetime.utcnow()
+    today = now.strftime("%Y-%m-%d")
+
+    def total(key, n=None):
+        since = (now - timedelta(days=n)).strftime("%Y-%m-%d") if n else ""
+        return sum(v.get(key, 0) for d, v in days.items() if since <= d < today)
+    series = [days.get((now - timedelta(days=i)).strftime("%Y-%m-%d"), {}) | {
+        "day": (now - timedelta(days=i)).strftime("%Y-%m-%d")} for i in range(APP_STATS_DAYS, 0, -1)]
+    generated = _parse_ts(data.get("generated_at"))
+    active = [v["android_active"] for _, v in sorted(days.items()) if "android_active" in v]
+    return {"devices": devices, "store": {
+        "configured": app.get("configured") or {},
+        "errors": app.get("errors") or {},
+        "pending": app.get("pending") or [],
+        "ratings": app.get("ratings"),
+        "since": min(days) if days else None,
+        "downloads": {"7d": total("ios_downloads", 7), "30d": total("ios_downloads", 30),
+                      "all": total("ios_downloads")},
+        "updates_7d": total("ios_updates", 7),
+        "installs": {"7d": total("android_installs", 7), "all": total("android_installs")},
+        "android_active": active[-1] if active else None,
+        "series": series,
+        "generated_at": data.get("generated_at"),
+        "stale": generated is None or now - generated > timedelta(hours=APP_STATS_STALE_HOURS),
+    }}
+
+
 def _availability(conn: sqlite3.Connection, city_labels: dict) -> list[dict]:
     """Availability summary rows with catalog labels resolved for display.
 

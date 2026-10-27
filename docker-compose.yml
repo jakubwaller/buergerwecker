@@ -18,6 +18,12 @@ services:
       # shared .env that one of them cannot see stops it, and the web
       # container sends the verification push inside the register request.
       - ./secrets:/run/secrets:ro
+      # The fleet collector's output (pi-monitoring/fleet-ops, a sibling
+      # checkout on the VPS), read-only: /admin's App section reads apps.json
+      # (app.admin.app_stats). The directory, not the file: the collector
+      # replaces it atomically and a file mount would keep the old inode.
+      # Absent, the section says so.
+      - ../pi-monitoring/fleet-ops/out:/fleet-ops:ro
     restart: unless-stopped
     expose:
       - "8000"
