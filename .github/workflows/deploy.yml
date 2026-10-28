@@ -1,5 +1,6 @@
 # Auto-deploy: every push to main (i.e. every squash-merge) redeploys the VPS.
-# The command it runs is the Redeploy step of docs/DEPLOY.md — that file stays
+# The command it runs is the Redeploy step of docs/DEPLOY.md, except that it merges the
+# pushed commit instead of pulling the tip — that file stays
 # the runbook; change the command there and here together.
 name: Deploy
 
@@ -88,7 +89,12 @@ jobs:
         env:
           TARGET: ${{ secrets.DEPLOY_SSH_TARGET }}
         run: |
-          ssh "$TARGET" 'cd ~/buergerwecker && git pull --ff-only && docker compose up -d --build'
+          # Fast-forward to the triggering commit, not origin's tip: when two
+          # merges land back to back, a plain pull deploys the newer one and
+          # the verify step below fails. GITHUB_SHA expands on the runner
+          # (double quotes); the checkout stays on its branch. The ancestor
+          # check refuses a workflow_dispatch run on an unmerged branch.
+          ssh "$TARGET" "cd ~/buergerwecker && git fetch origin && git merge-base --is-ancestor $GITHUB_SHA origin/main && git merge --ff-only $GITHUB_SHA && docker compose up -d --build"
 
       - name: Verify the VPS runs this commit
         env:
