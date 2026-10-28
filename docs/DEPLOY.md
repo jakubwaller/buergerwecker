@@ -31,7 +31,9 @@
 ## Redeploy
 
 Every push to `main` (i.e. every squash-merge) deploys automatically:
-`.github/workflows/deploy.yml` runs the command below over SSH, checks the VPS
+`.github/workflows/deploy.yml` runs the same steps as the command below over SSH,
+except that it fast-forwards to the commit that triggered it (and only if that
+commit is on main) instead of pulling the tip. It then checks the VPS
 checkout is at the pushed commit, and probes `/healthz`. Watch the Deploy run
 go green instead of deploying by hand; the manual path below remains the
 fallback when the action is red or the secrets aren't set.
