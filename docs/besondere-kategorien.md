@@ -54,8 +54,10 @@ er löscht die Anmeldung.
   Auch der Link enthält den Namen des Amtes nicht: er trägt eine signierte
   Kennung und wird erst auf dem Server aufgelöst. Eine E-Mail im Posteingang
   oder auf einem Sperrbildschirm verrät damit nichts.
-- **Kürzere Speicherdauer.** 30 Tage statt 90; danach läuft die Anmeldung
-  automatisch ab. Verlängerung nur wieder um 30 Tage.
+- **Begrenzte Speicherdauer.** Höchstens 30 Tage und nie länger als eine
+  gewöhnliche Anmeldung; bei der derzeitigen Laufzeit von 14 Tagen sind es
+  also ebenfalls 14. Danach läuft die Anmeldung automatisch ab, eine
+  Verlängerung gilt wieder nur für diese Frist.
 - **Kein Referrer.** Alle Seiten senden `Referrer-Policy: no-referrer`, damit
   die aufgerufene Adresse (die das Amt benennt) nicht an Dritte weitergegeben
   wird, wenn jemand einem Link folgt.
