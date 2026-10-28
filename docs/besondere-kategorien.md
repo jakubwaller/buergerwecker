@@ -4,7 +4,7 @@ Kurzbeschreibung der Verarbeitung für Anliegen, deren bloße Auswahl eine
 besondere Kategorie personenbezogener Daten offenbart. Gedacht als Grundlage
 für die Abstimmung mit den Datenschutzbeauftragten der beteiligten Städte.
 
-Stand: 2026-10-23. Verantwortlicher: siehe Impressum auf
+Stand: 2026-10-28. Verantwortlicher: siehe Impressum auf
 <https://buergerwecker.de/impressum>.
 
 ## Worum es geht
@@ -54,10 +54,13 @@ er löscht die Anmeldung.
   Auch der Link enthält den Namen des Amtes nicht: er trägt eine signierte
   Kennung und wird erst auf dem Server aufgelöst. Eine E-Mail im Posteingang
   oder auf einem Sperrbildschirm verrät damit nichts.
-- **Begrenzte Speicherdauer.** Höchstens 30 Tage und nie länger als eine
+- **Begrenzte Laufzeit.** Höchstens 30 Tage und nie länger als eine
   gewöhnliche Anmeldung; bei der derzeitigen Laufzeit von 14 Tagen sind es
   also ebenfalls 14. Danach läuft die Anmeldung automatisch ab, eine
-  Verlängerung gilt wieder nur für diese Frist.
+  Verlängerung gilt wieder nur für diese Frist. Wie lange die Daten danach
+  noch gespeichert bleiben (Pause, Löschfrist, Sicherungen), steht im
+  Abschnitt „Speicherdauer“ der Datenschutzerklärung
+  (<https://buergerwecker.de/datenschutz>).
 - **Kein Referrer.** Alle Seiten senden `Referrer-Policy: no-referrer`, damit
   die aufgerufene Adresse (die das Amt benennt) nicht an Dritte weitergegeben
   wird, wenn jemand einem Link folgt.
