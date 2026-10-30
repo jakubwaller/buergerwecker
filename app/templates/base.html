@@ -405,7 +405,8 @@
       Made with ♥ in Hamburg ·
       <a href="/impressum{% if lang == 'en' %}?lang=en{% endif %}">{% if lang == 'en' %}Imprint{% else %}Impressum{% endif %}</a> ·
       <a href="/datenschutz{% if lang == 'en' %}?lang=en{% endif %}">{% if lang == 'en' %}Privacy{% else %}Datenschutz{% endif %}</a> ·
-      <a href="https://apps.apple.com/app/id6819977614">{% if lang == 'en' %}iPhone app{% else %}iPhone-App{% endif %}</a>
+      <a href="https://apps.apple.com/app/id6819977614">{% if lang == 'en' %}iPhone app{% else %}iPhone-App{% endif %}</a> ·
+      <a href="/{% if lang == 'en' %}?lang=en{% endif %}#app">{% if lang == 'en' %}Android app (beta){% else %}Android-App (Beta){% endif %}</a>
       <br>
       {% if lang == 'en' %}Born from weeks of reloading Leipzig's booking page. Free and ad-free ·{% else %}Entstanden nach wochenlangem Neuladen der Leipziger Terminseite. Kostenlos und werbefrei ·{% endif %}
       <a class="kofi" href="{{ kofi_url or 'https://ko-fi.com/jakubwaller' }}">{% if lang == 'en' %}☕ Buy me a coffee{% else %}☕ Kaffee spendieren{% endif %}</a>

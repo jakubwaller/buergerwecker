@@ -18,6 +18,7 @@
   "digest.manage_hint": "Nur bestimmte Tage oder Zeiten? Filter anpassen: {manage_url}",
   "digest.unsubscribe": "Abmelden: {unsubscribe_url}",
   "digest.app_hint": "Lieber Push statt Mail? Bürgerwecker fürs iPhone: https://apps.apple.com/app/id6819977614",
+  "digest.android_beta": "Du nutzt Android? Hilf uns beim Testen der App: 1) tritt https://groups.google.com/g/buergerwecker-beta bei 2) melde dich unter https://play.google.com/apps/testing/de.buergerwecker.app als Tester an und installiere die App aus Play. Bitte bleib mindestens 14 Tage dabei, richte einen echten Alarm in der App ein und schreib uns kurz, wie es lief: {contact_url}",
   "digest.kofi": "Hat dir diese Benachrichtigung geholfen? Du kannst mir einen Kaffee spendieren: {kofi_url} (aber nur, wenn du magst — der Dienst bleibt kostenlos.)",
   "digest.selection_window_label": "Zeitraum",
   "digest.window_days": "innerhalb der nächsten {n} Tage",

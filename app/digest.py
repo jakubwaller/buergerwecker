@@ -178,6 +178,8 @@ def render_digest_text(sub: Subscription, slots: list[Slot], *,
     # The app carries neither website-only tenants nor Art. 9 services.
     if catalog is not None and not catalog.website_only and not redacted:
         lines.append(t(lang, "digest.app_hint"))
+    # Remove when the Android app is public on Play (also i18n digest.android_beta).
+    lines.append(t(lang, "digest.android_beta", contact_url=f"{public_base_url}/kontakt?projekt=buergerwecker"))
     lines.append(t(lang, "digest.kofi", kofi_url=kofi_url))
     return "\n".join(lines)
 
