@@ -180,7 +180,9 @@ def render_digest_text(sub: Subscription, slots: list[Slot], *,
         lines.append(t(lang, "digest.app_hint"))
         # Remove when the Android app is public on Play (also i18n digest.android_beta).
         contact_url = f"{public_base_url}/kontakt?projekt=buergerwecker" + ("&lang=en" if lang == "en" else "")
+        lines.append("")
         lines.append(t(lang, "digest.android_beta", contact_url=contact_url))
+        lines.append("")
     lines.append(t(lang, "digest.kofi", kofi_url=kofi_url))
     return "\n".join(lines)
 
