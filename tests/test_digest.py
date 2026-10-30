@@ -347,3 +347,15 @@ def test_digest_app_hint_only_where_the_app_offers_the_service():
     assert hint not in _render(_sub("de"), slots, catalog=replace(_cat(), website_only=True))
     assert hint not in _render(_sub("de"), slots,
                                catalog=replace(_cat(), sensitive_services=frozenset({"svc-A"})))
+
+
+def test_digest_asks_android_users_to_test():
+    slots = [Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")]
+    from dataclasses import replace
+    url = "https://play.google.com/apps/testing/de.buergerwecker.app"
+    for lang in ("de", "en"):
+        assert url in _render(_sub(lang), slots, catalog=_cat())
+    assert "/kontakt?projekt=buergerwecker&lang=en" in _render(_sub("en"), slots, catalog=_cat())
+    assert url not in _render(_sub("de"), slots, catalog=replace(_cat(), website_only=True))
+    assert url not in _render(_sub("de"), slots,
+                              catalog=replace(_cat(), sensitive_services=frozenset({"svc-A"})))
