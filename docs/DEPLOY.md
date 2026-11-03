@@ -216,19 +216,18 @@ failing:
   the cap exists to move; the ops summary carries the same line. Deliveries
   are counted in `digest_deliveries` (7-day prune), seeded once at migration
   from `seen_slots` so the cap binds from the first cycle.
-- **Under pressure the cap tightens for everyone before anyone is
+- **Under pressure the cap tightens for mail subscribers before anyone is
   deferred** (`MAIL_POOL_PRESSURE_PCT`, default 80, and
   `MAIL_CAP_UNDER_PRESSURE`, default 1; `0` turns it off, and so does
   turning the ordinary cap off). The pool is the
   free provider chain and there is no paid capacity behind it, so when the
-  combined rolling-24h usage reaches the percentage, every subscriber's
-  daily cap, **mail and app alike**, drops to the tightened value for as
-  long as the pressure lasts. A thinner day for everyone is the fair
-  degradation; a deferral is one person not told at all. App (push)
-  subscribers have no pool of their own and are tightened all the same: the
-  same cap on both channels is the rule, and a tighter day for mail alone
-  would make the app the way to more notifications. The poller logs
-  `mail pool under pressure, every subscriber (mail and app) capped` on each
+  combined rolling-24h usage reaches the percentage, every **mail**
+  subscriber's daily cap drops to the tightened value for as long as the
+  pressure lasts. A thinner day for mail is the fair degradation; a deferral
+  is one person not told at all. App (push) subscribers use no mail quota
+  and keep the ordinary cap (the digest mail says so, to move people to the
+  app). The poller logs
+  `mail pool under pressure, mail subscribers capped` on each
   cycle it applies, and `/admin` and the ops summary show the tightened cap
   while it is on.
 - **When mail is out of quota, push waits behind it: one queue, one wall**
@@ -267,7 +266,7 @@ failing:
   sign-up stays pending and is sent on
   a later cycle (within 7 days); the user is told it may arrive later. A
   scripted flood of sign-ups can therefore push the pool to that line plus the
-  reserve, never past 90% of the pool (and every subscriber to `MAIL_CAP_UNDER_PRESSURE`) but no further; keeping
+  reserve, never past 90% of the pool (and every mail subscriber to `MAIL_CAP_UNDER_PRESSURE`) but no further; keeping
   strangers from being mailed at all would need a challenge on the form.
 - **Low-quota alert.** When the **combined** rolling-24h usage across every
   provider that can actually send crosses `QUOTA_ALERT_THRESHOLD_PCT` of the

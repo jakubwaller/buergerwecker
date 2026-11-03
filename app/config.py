@@ -80,9 +80,10 @@ class Config:
     max_token_requests_per_ip_per_10_min: int = 10
     # The mail pool is the free provider chain (about 600/day). When its
     # rolling-24h usage reaches `mail_pool_pressure_pct` of the summed caps,
-    # every subscriber's daily cap, mail and app alike, drops to
-    # `mail_cap_under_pressure` for as long as the pressure lasts, so the
-    # pool degrades for everyone a little before it defers anyone entirely.
+    # every mail subscriber's daily cap drops to `mail_cap_under_pressure`
+    # for as long as the pressure lasts, so the pool degrades a little
+    # before it defers anyone entirely. App (push) subscribers keep the
+    # ordinary cap: push uses no mail quota.
     # 0 for the tightened cap turns the rule off.
     mail_pool_pressure_pct: int = 80
     mail_cap_under_pressure: int = 1
