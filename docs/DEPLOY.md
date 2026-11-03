@@ -261,7 +261,7 @@ failing:
   The sign-up request only saves the row; the poller sends the confirmation
   after the cycle's digests, and only while the pool's rolling-24h usage is
   below `MAIL_POOL_PRESSURE_PCT`, plus a reserve of
-  `CONFIRMATION_RESERVE_PER_DAY` (default 50, `0` = none) confirmations per
+  `CONFIRMATION_RESERVE_PER_DAY` (default 150, `0` = none; a busy day like 2026-11-03, with 67 sign-ups, would already use up 50 below the line) confirmations per
   rolling 24h past the line, still bound by the provider caps (on 2026-11-03
   the pool hit 587/600 and 19 sign-ups waited 10+ hours without it). A held
   sign-up stays pending and is sent on
