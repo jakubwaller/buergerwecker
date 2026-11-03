@@ -119,8 +119,8 @@ def test_reserve_past_the_pressure_line(db):
 
 
 def test_reserve_bounds_confirmations_at_150_a_rolling_day_with_no_90_percent_ceiling(db):
-    """Confirmations go before the digests now, so the old 90% ceiling is
-    gone: past the pressure line, even at 89% of the pool, the reserve alone
+    """The digests leave CONFIRMATION_HEADROOM free, so the old 90% ceiling
+    is gone: past the pressure line, even at 89% of the pool, the reserve alone
     bounds them, at 150 per rolling 24h."""
     from app.confirmations import confirmation_room
     _spend_pool(db, 445)                       # 89% of 500

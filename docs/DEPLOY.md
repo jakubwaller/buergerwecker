@@ -265,8 +265,11 @@ failing:
   (default 150, `0` = none) confirmations per rolling 24h past the line, still
   bound by the provider caps. On 2026-11-02 and 2026-11-03 the digests took the
   pool past the old 90% ceiling for confirmations and 37 and 46 sign-ups waited
-  for hours; with the headroom there is no ceiling, and the reserve is
-  the flood bound. Digests also stop `CONFIRMATION_HEADROOM` (default 20,
+  for hours; the headroom now covers bursts of up to `CONFIRMATION_HEADROOM`
+  confirmations per cycle at a full pool (the busiest hour on 2026-11-03 had
+  17; per 1-minute cycle it is normally 1-2). A larger backlog drains in
+  batches of up to 20 as the rolling window frees; raise
+  `CONFIRMATION_HEADROOM` if bursts grow. The reserve is the flood bound. Digests also stop `CONFIRMATION_HEADROOM` (default 20,
   `0` = off) mails short of the pool's summed daily caps (580 of 600), so a
   sign-up after hours of digests and no sign-ups still finds room (the busiest
   hour so far had 17 confirmations). Only the daily windows and only mail

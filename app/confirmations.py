@@ -1,8 +1,8 @@
 """Confirmation-email delivery for pending sign-ups.
 
-Only the poller sends them, once a cycle before the digests, through the same
-quota-aware batch path, so they take pool room first and the digests get what
-is left. The sign-up request just saves the row: a web request
+Only the poller sends them, once a cycle after the digests, through the same
+quota-aware batch path; the digests' CONFIRMATION_HEADROOM keeps pool room
+free for them. The sign-up request just saves the row: a web request
 never waits on a mail provider. When the quota is exhausted a sign-up is NOT
 lost: its pending row stays valid and a later cycle sends it (i.e. the next
 day once quota resets). `confirmation_sent_at` marks a sign-up as done so it
