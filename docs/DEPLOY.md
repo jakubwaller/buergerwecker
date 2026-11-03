@@ -267,7 +267,7 @@ failing:
   sign-up stays pending and is sent on
   a later cycle (within 7 days); the user is told it may arrive later. A
   scripted flood of sign-ups can therefore push the pool to that line plus the
-  reserve (and every subscriber to `MAIL_CAP_UNDER_PRESSURE`) but no further; keeping
+  reserve, never past 90% of the pool (and every subscriber to `MAIL_CAP_UNDER_PRESSURE`) but no further; keeping
   strangers from being mailed at all would need a challenge on the form.
 - **Low-quota alert.** When the **combined** rolling-24h usage across every
   provider that can actually send crosses `QUOTA_ALERT_THRESHOLD_PCT` of the

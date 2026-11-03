@@ -102,7 +102,7 @@ def test_reserve_past_the_pressure_line(db):
     from app.confirmations import confirmation_room
     for i in range(3):
         _sub(db, f"u{i}@x.com")
-    _spend_pool(db, 450)                       # 500 pool, line at 400: over it
+    _spend_pool(db, 420)                       # 500 pool, line at 400: over it
     cfg = _cfg(mail_pool_pressure_pct=80, confirmation_reserve_per_day=2)
     assert confirmation_room(db, cfg) == 2
     with patch("app.mail._call_mailjet_batch", return_value=200):
@@ -116,6 +116,13 @@ def test_reserve_past_the_pressure_line(db):
     db.execute("UPDATE subscriptions SET confirmation_sent_at="
                "datetime('now','-2 day') WHERE confirmation_sent_at IS NOT NULL")
     assert confirmation_room(db, cfg) == 2
+
+
+def test_reserve_never_pushes_the_pool_past_90_percent(db):
+    from app.confirmations import confirmation_room
+    _spend_pool(db, 445)                       # 89% of 500
+    assert confirmation_room(db, _cfg(mail_pool_pressure_pct=80,
+                                      confirmation_reserve_per_day=150)) == 5
 
 
 def test_below_the_line_room_is_the_larger_of_the_two(db):

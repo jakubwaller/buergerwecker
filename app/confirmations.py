@@ -15,6 +15,10 @@ from app.repo import set_confirmation_sent, pending_confirmations
 from app.tokens import sign
 
 
+# Confirmations alone never take the pool past this share: the last 10% stays
+# for digests even during a sign-up flood.
+_CONFIRMATION_CEILING_PCT = 90
+
 _TEXT = {
     "de": {
         "subject": "Bitte bestätige deine Anmeldung bei Bürgerwecker",
@@ -73,8 +77,9 @@ def confirmation_room(conn: sqlite3.Connection, cfg) -> int | None:
     rolling-24h usage reaches MAIL_POOL_PRESSURE_PCT of its summed daily caps;
     None when no such line is set. Past it, sign-ups get only a reserve of
     CONFIRMATION_RESERVE_PER_DAY a day (an unconfirmed sign-up is usually lost
-    for good, a held digest only goes out later), so a flood of them, real or
-    scripted, still leaves the rest to the slot digests. The provider caps
+    for good, a held digest only goes out later), and never past 90% of the
+    pool, so a flood of them, real or scripted, still leaves the last 10% to
+    the slot digests. The provider caps
     apply on top, in send_batch. A held sign-up stays pending and goes out once
     the window frees, within its 7-day retry window."""
     pct = getattr(cfg, "mail_pool_pressure_pct", 0) or 0
@@ -87,7 +92,8 @@ def confirmation_room(conn: sqlite3.Connection, cfg) -> int | None:
     sent = conn.execute("SELECT COUNT(*) FROM subscriptions WHERE "
                         "confirmation_sent_at > datetime('now','-1 day')"
                         ).fetchone()[0]
-    return max(0, pool * pct // 100 - used, reserve - sent)
+    return max(0, pool * pct // 100 - used,
+               min(reserve - sent, pool * _CONFIRMATION_CEILING_PCT // 100 - used))
 
 
 def _queue(conn: sqlite3.Connection, cfg, max_age_days: int = 7) -> list:
