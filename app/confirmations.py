@@ -11,7 +11,7 @@ isn't re-sent.
 from __future__ import annotations
 import sqlite3
 from urllib.parse import urlsplit
-from app.mail import send_batch, pool_usage, pool_room, Outgoing, _idem_key, _dead_addresses
+from app.mail import send_batch, pool_usage, pool_room, daily_room, Outgoing, _idem_key, _dead_addresses
 from app.repo import set_confirmation_sent, pending_confirmations
 from app.tokens import sign
 
@@ -76,8 +76,8 @@ def confirmation_room(conn: sqlite3.Connection, cfg) -> int | None:
     CONFIRMATION_RESERVE_PER_DAY a day (an unconfirmed sign-up is usually lost
     for good, a held digest only goes out later). The reserve is the flood
     bound: a burst of sign-ups, real or scripted, takes at most that much of
-    the digests' share a day. Capped by `mail.pool_room`, what the providers
-    can take right now, so a pool the digests filled reads as held. A held sign-up stays pending and goes out once
+    the digests' share a day. Capped by `mail.daily_room` (`pool_room` when a
+    provider has no daily window), so a pool the digests filled reads as held. A held sign-up stays pending and goes out once
     the window frees, within its 7-day retry window."""
     pct = getattr(cfg, "mail_pool_pressure_pct", 0) or 0
     if not pct:
@@ -91,7 +91,10 @@ def confirmation_room(conn: sqlite3.Connection, cfg) -> int | None:
                         ).fetchone()[0]
     # Never more than the providers can take right now: digests may have
     # filled the pool, and a room send_batch would defer is a held sign-up.
-    return min(pool_room(conn, cfg),
+    # Daily windows only: an hourly throttle clears within the hour, so it
+    # must not read as "possibly tomorrow"; send_batch still honours it.
+    day = daily_room(conn, cfg)
+    return min(pool_room(conn, cfg) if day is None else day,
                max(0, pool * pct // 100 - used, reserve - sent))
 
 

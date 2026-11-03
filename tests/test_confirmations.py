@@ -141,13 +141,27 @@ def test_a_pool_the_digests_filled_holds_signups_despite_an_unused_reserve(db):
     reserve is untouched, but the providers would defer any send, so a
     sign-up is held and must be told so."""
     from app.confirmations import confirmation_held, confirmation_room
-    _spend_pool(db, 500)                       # brevo at its cap
+    _spend_pool(db, 300)                       # brevo at its daily cap
+    db.executemany("INSERT INTO sent_idempotency (idem_key, provider) "
+                   "VALUES (?, 'mailjet')", [(f"m{i}",) for i in range(200)])
     cfg = _cfg(mail_pool_pressure_pct=80, confirmation_reserve_per_day=150,
-               mailjet_hourly_quota=0)         # mailjet can send nothing either
+               mailjet_hourly_quota=1000)      # mailjet at its daily cap too
     assert confirmation_room(db, cfg) == 0
     assert confirmation_held(db, cfg, extra=1)
     _sub(db, "waiting@example.com")
     assert confirmation_held(db, cfg)
+
+
+def test_an_hourly_throttle_does_not_read_as_held(db):
+    """Mailjet's hourly cap clears within the hour: with daily room left,
+    the sign-up is not told "possibly tomorrow" (send_batch still holds the
+    hourly line on the actual send)."""
+    from app.confirmations import confirmation_held, confirmation_room
+    _spend_pool(db, 300)                       # brevo full, mailjet's day free
+    cfg = _cfg(mail_pool_pressure_pct=80, confirmation_reserve_per_day=150,
+               mailjet_hourly_quota=0)
+    assert confirmation_room(db, cfg) == 150
+    assert not confirmation_held(db, cfg, extra=1)
 
 
 def test_held_before_signup_counts_the_signup_about_to_be_made(db):

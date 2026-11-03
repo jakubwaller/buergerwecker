@@ -288,9 +288,8 @@ def load_config() -> Config:
         max_token_requests_per_ip_per_10_min=int(
             os.environ.get("MAX_TOKEN_REQUESTS_PER_IP_PER_10_MIN", "10")),
         mail_pool_pressure_pct=int(os.environ.get("MAIL_POOL_PRESSURE_PCT", "80")),
-        confirmation_reserve_per_day=int(
-            os.environ.get("CONFIRMATION_RESERVE_PER_DAY", "150")),
-        confirmation_headroom=int(os.environ.get("CONFIRMATION_HEADROOM", "20")),
+        confirmation_reserve_per_day=_nonneg_int("CONFIRMATION_RESERVE_PER_DAY", "150"),
+        confirmation_headroom=_nonneg_int("CONFIRMATION_HEADROOM", "20"),
         mail_cap_under_pressure=int(
             os.environ.get("MAIL_CAP_UNDER_PRESSURE", "1")),
         max_app_subscriptions_per_city=_nonneg_int(

@@ -197,8 +197,11 @@ def _cycle(db, cycle_id="c1"):
 def test_digests_leave_the_headroom_free_and_wait_for_it(db, monkeypatch):
     sub = _pool_at_cap_minus_20(db, monkeypatch)
     from app.mail import deferrals_today
+    from app.mail import deferral_walls_today, describe_deferral, last_deferral
     assert _cycle(db) == []
     assert deferrals_today(db) == 1
+    assert deferral_walls_today(db) == {"headroom": 1}
+    assert "free for confirmations" in describe_deferral(last_deferral(db))
     # Deferred, not dropped: unrecorded, so a later cycle with room sends it.
     assert not _has_seen(db, sub) and _last_notified(db, sub) is None
     db.execute("DELETE FROM sent_idempotency WHERE idem_key='k0'")

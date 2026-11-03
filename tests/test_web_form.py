@@ -333,6 +333,6 @@ def test_form_warns_when_the_providers_are_full_though_the_reserve_is_unused(cli
     """The reserve allows 150 more, but the providers can take nothing
     right now: the form must still warn."""
     from unittest.mock import patch
-    with patch("app.confirmations.pool_room", return_value=0):
+    with patch("app.confirmations.daily_room", return_value=0):
         body = client.get("/leipzig").data.decode()
     assert "Gerade sind viele Anmeldungen da" in body

@@ -372,7 +372,7 @@ def _past_the_confirmation_headroom(conn: sqlite3.Connection, sink: list,
     like a quota deferral: unrecorded, they lead the next cycle. Daily
     windows only (the hourly ones are send_batch's as before), mail only,
     and confirmations (sent by the poller before the cycle) may use it."""
-    from app.mail import WALL_DAILY, _dead_addresses, _record_deferrals, daily_room
+    from app.mail import WALL_HEADROOM, _dead_addresses, _record_deferrals, daily_room
     headroom = getattr(cfg, "confirmation_headroom", 0) or 0
     if not headroom:
         return set()
@@ -389,7 +389,7 @@ def _past_the_confirmation_headroom(conn: sqlite3.Connection, sink: list,
             else:
                 held.add(q.item.idem_key)
     if held:
-        _record_deferrals(conn, len(held), WALL_DAILY)    # counted like quota's
+        _record_deferrals(conn, len(held), WALL_HEADROOM)
         print(f"mail: {len(held)} digest(s) wait, the last {headroom} of the "
               f"pool stay free for confirmations", flush=True)
     return held

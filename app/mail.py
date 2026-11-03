@@ -611,6 +611,7 @@ def send_batch(conn: sqlite3.Connection, items: list[Outgoing], cfg) -> BatchRes
 WALL_OUTAGE = "outage"   # a provider had room and failed: next cycle retries
 WALL_HOURLY = "hourly"   # Mailjet's warm-up throttle: clears within the hour
 WALL_DAILY = "daily"     # the combined pool: waits for the rolling 24h window
+WALL_HEADROOM = "headroom"  # digests held so the pool's last mails stay for confirmations
 
 def _deferral_wall(conn: sqlite3.Connection, cfg,
                    unusable: set[str]) -> tuple[str, str | None]:
@@ -692,6 +693,10 @@ def describe_deferral(d: dict) -> str:
     if wall == WALL_OUTAGE:
         return (f"At {at} UTC a provider with quota left failed outright — an "
                 "outage, not the quota; the next cycle retries.")
+    if wall == WALL_HEADROOM:
+        return (f"At {at} UTC digests were held back to keep the last "
+                "CONFIRMATION_HEADROOM mails of the daily pool free for "
+                "confirmations; they lead the next cycle with room.")
     if wall == WALL_HOURLY:
         return (f"At {at} UTC they hit an hourly cap (Mailjet's warm-up "
                 f"throttle); a slot frees at {frees or '?'} UTC, so the next "

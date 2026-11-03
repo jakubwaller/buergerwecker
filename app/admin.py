@@ -85,7 +85,8 @@ def _walls_detail(walls: dict | None) -> str:
     outage by the next retry."""
     if not walls:
         return ""
-    bits = [f"{w} {walls[w]}" for w in ("outage", "hourly", "daily") if walls.get(w)]
+    bits = [f"{w} {walls[w]}" for w in ("outage", "hourly", "headroom", "daily")
+            if walls.get(w)]
     tail = ""
     if walls.get("daily"):
         tail = (" — the daily ones wait for the rolling 24h window, and the "

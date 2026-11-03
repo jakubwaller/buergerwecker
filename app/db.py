@@ -195,8 +195,9 @@ CREATE TABLE IF NOT EXISTS email_deferral_counts (
 -- cannot tell a deferral against Mailjet's hourly warm-up cap — cleared by the
 -- next cycle, nobody notices — from one against the combined daily pool, which
 -- holds until the rolling 24h window frees a slot, by which time the
--- appointment is usually gone. `wall` is 'hourly', 'daily' or 'outage' (every
--- provider with room failed at the HTTP level); `frees_at` is when the
+-- appointment is usually gone. `wall` is 'hourly', 'daily', 'outage' (every
+-- provider with room failed at the HTTP level) or 'headroom' (digests held so
+-- the pool's last CONFIRMATION_HEADROOM mails stay free for confirmations); `frees_at` is when the
 -- tightest-bound provider gets one slot back, i.e. the earliest a retry can
 -- succeed. Pruned after 90 days; the per-day counter keeps the totals.
 CREATE TABLE IF NOT EXISTS email_deferrals (
