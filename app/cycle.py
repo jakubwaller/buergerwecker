@@ -191,17 +191,16 @@ def _due_cities(conn: sqlite3.Connection, cities: set[str]) -> set[str]:
 
 
 def subscriber_cap(conn: sqlite3.Connection, cfg) -> tuple[int, bool]:
-    """(the daily digest cap for every subscriber, tightened?) for this
-    cycle. One number for both channels: the same daily cap for mail and
-    push is a fairness rule, not a coincidence, and it stays one rule under
-    pressure. It is MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY, dropping to
+    """(the daily digest cap for MAIL subscribers, tightened?) for this
+    cycle. It is MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY, dropping to
     MAIL_CAP_UNDER_PRESSURE while the free provider pool's rolling-24h usage
-    is at MAIL_POOL_PRESSURE_PCT or above, so the pool thins everyone's day a
-    little before it defers anyone's entirely. Push has no pool of its own
-    and still gets no more than mail: a tighter day for mail alone made the
-    app the way to more notifications. 0 for the ordinary cap means no cap
-    at all, pressure or not: an operator who turned the cap off must not
-    find a hidden one; 0 for the pressure cap means never tighten."""
+    is at MAIL_POOL_PRESSURE_PCT or above, so the pool thins every mail
+    subscriber's day a little before it defers anyone's entirely. App (push)
+    subscribers always keep the ordinary cap (`cap_for`): push uses no mail
+    quota, and a tighter day for mail is the reason to prefer the app. 0 for
+    the ordinary cap means no cap at all, pressure or not: an operator who
+    turned the cap off must not find a hidden one; 0 for the pressure cap
+    means never tighten."""
     from app.mail import pool_usage
     cap = getattr(cfg, "max_digests_per_subscriber_per_day", 0) or 0
     tight = getattr(cfg, "mail_cap_under_pressure", 0) or 0
@@ -212,6 +211,13 @@ def subscriber_cap(conn: sqlite3.Connection, cfg) -> tuple[int, bool]:
     if pool and used * 100 >= pool * pct:
         return tight, True
     return cap, False
+
+
+def cap_for(sub, mail_cap: int, cfg) -> int:
+    """This subscriber's daily cap: push is exempt from the pressure cap."""
+    if sub.device_id is not None:
+        return getattr(cfg, "max_digests_per_subscriber_per_day", 0) or 0
+    return mail_cap
 
 
 def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
@@ -364,8 +370,8 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
     soonest_by_plan = {k: sorted(v, key=_soonest) for k, v in slots_by_plan.items()}
     cap, tightened = subscriber_cap(conn, cfg)
     if tightened:
-        print(f"cycle {cycle_id}: mail pool under pressure, every subscriber "
-              f"(mail and app) capped at {cap}/day this cycle", flush=True)
+        print(f"cycle {cycle_id}: mail pool under pressure, mail "
+              f"subscribers capped at {cap}/day this cycle (app unaffected)", flush=True)
     for sub in sorted(subs, key=lambda s: s.last_notified_at or datetime.min):
         # Each subscriber's floor is their own: scarce filters keep the base
         # interval, filters swimming in slots wait longer. Cheap to evaluate
@@ -435,7 +441,8 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
         # recorded as seen and last_notified_at is not stamped: the first
         # cycle after the rolling window frees re-evaluates the live slots
         # and sends whatever is still open — never a queued, stale digest.
-        if cap and digests_in_window(conn, sub.id) >= cap:
+        sub_cap = cap_for(sub, cap, cfg)
+        if sub_cap and digests_in_window(conn, sub.id) >= sub_cap:
             record_cap_hold(conn, sub.id)
             continue
         # No per-slot deep links: Smart-CJM bookings are session-bound (the

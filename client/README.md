@@ -419,6 +419,8 @@ token. Every review here assumes scripted, unlimited verified Android devices.
         50-slot horizon, a push budget per cycle, the same tightened cap for mail and app under
         mail pressure, and one queue for both, where push waits behind mail only for an hourly
         quota wall.
+        Update: #160 (2026-11-03) exempts app subscriptions from the pressure cap; the hourly
+        mail wall is unchanged.
       - #108: the device secret in Keychain/Keystore and out of backups, the widget with that
         credential and without Art. 9 alerts, a push-URL allowlist.
       - #111, #112: the privacy page for the app, the network identifier, Apple and Google, the
