@@ -71,17 +71,23 @@ def build_confirmation(sub_id: int, email: str, lang: str, city: str,
 def confirmation_room(conn: sqlite3.Connection, cfg) -> int | None:
     """How many confirmations may still go out before the mail pool's
     rolling-24h usage reaches MAIL_POOL_PRESSURE_PCT of its summed daily caps;
-    None when no such line is set. Sign-ups never spend the pool past it, so a
-    flood of them, real or scripted, leaves the rest to the slot digests
-    instead of deferring every digest for a day. A held sign-up stays pending
-    and goes out once the window frees, within its 7-day retry window."""
+    None when no such line is set. Past it, sign-ups get only a reserve of
+    CONFIRMATION_RESERVE_PER_DAY a day (an unconfirmed sign-up is usually lost
+    for good, a held digest only goes out later), so a flood of them, real or
+    scripted, still leaves the rest to the slot digests. The provider caps
+    apply on top, in send_batch. A held sign-up stays pending and goes out once
+    the window frees, within its 7-day retry window."""
     pct = getattr(cfg, "mail_pool_pressure_pct", 0) or 0
     if not pct:
         return None
     used, pool = pool_usage(conn, cfg)
     if not pool:
         return None
-    return max(0, pool * pct // 100 - used)
+    reserve = getattr(cfg, "confirmation_reserve_per_day", 0) or 0
+    sent = conn.execute("SELECT COUNT(*) FROM subscriptions WHERE "
+                        "confirmation_sent_at > datetime('now','-1 day')"
+                        ).fetchone()[0]
+    return max(0, pool * pct // 100 - used, reserve - sent)
 
 
 def _queue(conn: sqlite3.Connection, cfg, max_age_days: int = 7) -> list:
