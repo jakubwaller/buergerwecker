@@ -162,6 +162,7 @@ def render_digest_text(sub: Subscription, slots: list[Slot], *,
     else:
         lines.append(t(lang, "digest.book_instructions",
                        services=services, locations=locations))
+    lines.append(t(lang, "digest.no_booking_note"))
     lines.append(t(lang, "digest.no_deeplink_note"))
     lines.append("")
 

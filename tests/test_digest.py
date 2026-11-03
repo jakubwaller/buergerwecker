@@ -359,3 +359,9 @@ def test_digest_asks_android_users_to_test():
     assert url not in _render(_sub("de"), slots, catalog=replace(_cat(), website_only=True))
     assert url not in _render(_sub("de"), slots,
                               catalog=replace(_cat(), sensitive_services=frozenset({"svc-A"})))
+
+
+def test_digest_says_replying_does_not_book():
+    slots = [Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")]
+    assert "Bürgerwecker bucht nicht – eine Antwort auf diese Mail reserviert nichts." in _render(_sub("de"), slots)
+    assert "Bürgerwecker does not book – replying to this email reserves nothing." in _render(_sub("en"), slots)
