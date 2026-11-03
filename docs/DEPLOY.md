@@ -257,17 +257,21 @@ failing:
   deferred digest never stamps that column — so whoever was passed over leads
   the next cycle.
 - **Sign-ups are never lost to quota, and barely spend the digests' share.**
-  The sign-up request only saves the row; the poller sends the confirmation
-  after the cycle's digests, and only while the pool's rolling-24h usage is
-  below `MAIL_POOL_PRESSURE_PCT`, plus a reserve of
-  `CONFIRMATION_RESERVE_PER_DAY` (default 150, `0` = none; a busy day like 2026-11-03, with 67 sign-ups, would already use up 50 below the line) confirmations per
-  rolling 24h past the line, still bound by the provider caps (on 2026-11-03
-  the pool hit 587/600 and 19 sign-ups waited 10+ hours without it). A held
-  sign-up stays pending and is sent on
-  a later cycle (within 7 days); the user is told it may arrive later. A
-  scripted flood of sign-ups can therefore push the pool to that line plus the
-  reserve, never past 90% of the pool (and every mail subscriber to `MAIL_CAP_UNDER_PRESSURE`) but no further; keeping
-  strangers from being mailed at all would need a challenge on the form.
+  The sign-up request only saves the row; the poller sends the confirmations
+  at the start of each cycle, before the digests, so they take pool room first
+  and the digests get what is left (a digest that misses out is deferred, not
+  dropped). They go while the pool's rolling-24h usage is below
+  `MAIL_POOL_PRESSURE_PCT`, plus a reserve of `CONFIRMATION_RESERVE_PER_DAY`
+  (default 150, `0` = none) confirmations per rolling 24h past the line, still
+  bound by the provider caps. On 2026-11-02 and 2026-11-03 the digests took the
+  pool past the old 90% ceiling for confirmations and 37 and 46 sign-ups waited
+  for hours; with confirmations first there is no ceiling, and the reserve is
+  the flood bound. A held sign-up stays pending and is sent on a later cycle
+  (within 7 days); the form warns beforehand and the banner after, both
+  pointing to the app. A scripted flood of sign-ups can therefore take the
+  reserve out of the digests' share a day (and push every mail subscriber to
+  `MAIL_CAP_UNDER_PRESSURE`) but no more; keeping strangers from being mailed
+  at all would need a challenge on the form.
 - **Low-quota alert.** When the **combined** rolling-24h usage across every
   provider that can actually send crosses `QUOTA_ALERT_THRESHOLD_PCT` of the
   summed daily caps, or when notifications are deferred for lack of quota,

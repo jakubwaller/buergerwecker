@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_fields.html" import max_days_select, special_consent %}
-{% from "_parts.html" import city_grid, faq, banners with context %}
+{% from "_parts.html" import city_grid, faq, banners, app_links with context %}
 {% block content %}
   {{ banners(confirmed, error, lang) }}
 
@@ -101,6 +101,19 @@
       Leave this field empty.
       <input type="text" name="website" autocomplete="off" tabindex="-1">
     </label>
+
+    {% if confirmation_held %}
+      <div class="notice" role="status">
+        {% if lang == 'en' %}
+          Lots of sign-ups right now – the confirmation email may be delayed,
+          possibly until tomorrow. The app works without email, right away:
+        {% else %}
+          Gerade sind viele Anmeldungen da – die Bestätigungs-E-Mail kann sich
+          verzögern, eventuell bis morgen. Mit der App geht's ohne E-Mail sofort:
+        {% endif %}
+        {{ app_links(lang) }}
+      </div>
+    {% endif %}
 
     <button type="submit">
       {% if lang == 'en' %}Subscribe{% else %}Anmelden{% endif %}

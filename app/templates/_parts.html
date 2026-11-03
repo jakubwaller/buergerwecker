@@ -133,6 +133,17 @@
 
 {# Post-subscribe feedback. Lives here rather than in form.html because the
    /subscribe redirect can land on either page. #}
+{# The app as the way around a held confirmation mail. #}
+{% macro app_links(lang) %}
+  {% if lang == 'en' %}
+    <a href="https://apps.apple.com/app/id6819977614">iPhone: App Store</a> ·
+    <a href="https://groups.google.com/g/buergerwecker-beta">Android: join the test group</a>
+  {% else %}
+    <a href="https://apps.apple.com/app/id6819977614">iPhone: App Store</a> ·
+    <a href="https://groups.google.com/g/buergerwecker-beta">Android: Testgruppe beitreten</a>
+  {% endif %}
+{% endmacro %}
+
 {% macro banners(confirmed, error, lang) %}
   {% if confirmed == 'pending' %}
     <div class="notice notice-success" role="status">
@@ -167,6 +178,8 @@
         gespeichert und die E-Mail wird automatisch verschickt; du musst dich
         nicht erneut anmelden. (Schau bitte auch im Spam-Ordner nach.)
       {% endif %}
+      <br>{% if lang == 'en' %}Tip: in the Bürgerwecker app, notifications come by push, with no email limit.{% else %}Tipp: In der Bürgerwecker-App kommen Benachrichtigungen per Push, ohne E-Mail-Limit.{% endif %}
+      {{ app_links(lang) }}
     </div>
   {% endif %}
 

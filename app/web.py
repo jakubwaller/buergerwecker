@@ -845,6 +845,20 @@ def create_app() -> Flask:
                                confirmed=confirmed, error=error,
                                kofi_url=app.config["TERMINE_CONFIG"].kofi_url)
 
+    def _confirmation_held_now() -> bool:
+        """Whether a sign-up made now would wait for its confirmation mail.
+        A hint only: any failure renders the form without it."""
+        try:
+            from app.confirmations import confirmation_held
+            conn = connect(app.config["TERMINE_CONFIG"].db_path)
+            try:
+                return confirmation_held(conn, app.config["TERMINE_CONFIG"],
+                                         extra=1)
+            finally:
+                conn.close()
+        except Exception:
+            return False
+
     @app.route("/<city>")
     def city_page(city):
         """A tenant's sign-up form. Werkzeug ranks static rules above this one,
@@ -876,6 +890,7 @@ def create_app() -> Flask:
         return render_template("form.html",
                                lang=lang,
                                city=city,
+                               confirmation_held=_confirmation_held_now(),
                                **og,
                                confirmed=confirmed,
                                error=error,
@@ -974,7 +989,8 @@ def create_app() -> Flask:
             clear_delivery_block(conn, email)
         # The poller sends the confirmation on its next cycle (see
         # app.confirmations): this request never waits on a mail provider,
-        # and sign-ups never spend the mail pool past its pressure line.
+        # and sign-ups never spend the mail pool past its pressure line plus
+        # the daily reserve.
         # Held there, the sign-up stays pending and the banner says the mail
         # may come tomorrow. No soft-delete, no lockout.
         from app.confirmations import confirmation_held

@@ -105,3 +105,60 @@ def test_render_cap_still_marks_all_matched_slots_seen(db):
          patch("app.mail._call_brevo_batch", return_value=201):
         run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c2")
     mb2.assert_not_called()
+
+
+def test_confirmations_go_first_and_the_digest_gets_what_is_left(db):
+    """Pool near its cap (room for one mail): the poller sends the pending
+    confirmation before the cycle, so it takes that room, and the digest
+    behind it is deferred for quota (unrecorded, so a later cycle sends
+    it), not dropped."""
+    from app.config import load_config
+    from app.confirmations import send_pending_confirmations
+    from app.mail import deferrals_today
+    sub = insert_pending(db, email="digest@example.com", city="leipzig",
+                         language="de", filter_=_f(), ttl_days=90)
+    confirm(db, sub)
+    db.execute("UPDATE subscriptions SET confirmation_sent_at=datetime('now') "
+               "WHERE id=?", (sub,))
+    signup = insert_pending(db, email="signup@example.com", city="leipzig",
+                            language="en", filter_=_f(), ttl_days=90)
+    scraper = MagicMock()
+    scraper.poll.return_value = [Slot("2026-06-10", "10:30", "loc-1", "svc-A", "tok")]
+    with patch("app.cycle.get_scraper", return_value=scraper), \
+         patch("app.mail._call_brevo_batch", return_value=201) as rb:
+        send_pending_confirmations(db, load_config())
+        run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
+    assert [[o.to for o in c.args[0]] for c in rb.call_args_list] == [
+        ["signup@example.com"]]
+    assert db.execute("SELECT confirmation_sent_at FROM subscriptions WHERE id=?",
+                      (signup,)).fetchone()[0] is not None
+    assert not _has_seen(db, sub) and _last_notified(db, sub) is None
+    assert deferrals_today(db) >= 1
+
+
+def test_poller_sends_confirmations_before_the_cycle(monkeypatch):
+    """The order the first test relies on: in the poller loop, the
+    confirmations go out before run_cycle measures the pool for digests."""
+    from types import SimpleNamespace
+    from app import poller
+    calls = []
+
+    class Stop(Exception):
+        pass
+
+    def sleep(_s):
+        if calls:
+            raise Stop      # one loop iteration is enough
+    monkeypatch.setattr(poller.time_mod, "sleep", sleep)
+    monkeypatch.setattr(poller, "load_config", lambda: SimpleNamespace(
+        db_path=":memory:", max_plans_per_city=10, rate_limit_minutes=15))
+    for name in ("connect", "init_schema", "CountingSession",
+                 "_maybe_housekeeping", "_prune_rate_events",
+                 "_sweep_verifications", "_check_canary"):
+        monkeypatch.setattr(poller, name, lambda *a, **k: None)
+    monkeypatch.setattr(poller, "_send_confirmations",
+                        lambda *a: calls.append("confirmations"))
+    monkeypatch.setattr(poller, "run_cycle", lambda *a, **k: calls.append("cycle"))
+    with pytest.raises(Stop):
+        poller.main()
+    assert calls == ["confirmations", "cycle"]

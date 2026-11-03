@@ -118,11 +118,29 @@ def test_reserve_past_the_pressure_line(db):
     assert confirmation_room(db, cfg) == 2
 
 
-def test_reserve_never_pushes_the_pool_past_90_percent(db):
+def test_reserve_bounds_confirmations_at_150_a_rolling_day_with_no_90_percent_ceiling(db):
+    """Confirmations go before the digests now, so the old 90% ceiling is
+    gone: past the pressure line, even at 89% of the pool, the reserve alone
+    bounds them, at 150 per rolling 24h."""
     from app.confirmations import confirmation_room
     _spend_pool(db, 445)                       # 89% of 500
-    assert confirmation_room(db, _cfg(mail_pool_pressure_pct=80,
-                                      confirmation_reserve_per_day=150)) == 5
+    cfg = _cfg(mail_pool_pressure_pct=80, confirmation_reserve_per_day=150)
+    assert confirmation_room(db, cfg) == 150
+    for i in range(149):
+        _sub(db, f"r{i}@example.com")
+    db.execute("UPDATE subscriptions SET confirmation_sent_at=datetime('now')")
+    assert confirmation_room(db, cfg) == 1
+    _sub(db, "last@example.com")
+    db.execute("UPDATE subscriptions SET confirmation_sent_at=datetime('now')")
+    assert confirmation_room(db, cfg) == 0     # 150 in 24h: the flood bound
+
+
+def test_held_before_signup_counts_the_signup_about_to_be_made(db):
+    from app.confirmations import confirmation_held
+    _spend_pool(db, 420)                       # past the line, no reserve
+    cfg = _cfg(mail_pool_pressure_pct=80)
+    assert not confirmation_held(db, cfg)      # nobody waiting yet
+    assert confirmation_held(db, cfg, extra=1) # but the next sign-up would
 
 
 def test_below_the_line_room_is_the_larger_of_the_two(db):
