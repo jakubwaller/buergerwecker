@@ -725,7 +725,10 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
             scalar("SELECT COUNT(*) FROM subscriptions WHERE device_id IS NULL "
                    "AND deleted_at IS NULL "
                    "AND created_at > datetime('now','-7 days') "
-                   "AND created_at <= datetime('now','-1 day')"),
+                   "AND created_at <= datetime('now','-1 day') "
+                   "AND (confirmed_at IS NOT NULL OR lower(email) NOT IN "
+                   "(SELECT lower(email) FROM subscriptions WHERE device_id IS NULL "
+                   "AND deleted_at IS NULL AND confirmed_at IS NOT NULL))"),
         "confirm_rate_confirmed":
             scalar("SELECT COUNT(*) FROM subscriptions WHERE device_id IS NULL "
                    "AND deleted_at IS NULL AND confirmed_at IS NOT NULL "

@@ -766,5 +766,6 @@ def test_stats_confirmation_funnel(tmp_path):
     assert s["confirm_held"] == 2
     assert s["confirm_held_stale"] == 1
     assert s["confirm_mailed_unconfirmed"] == 1
-    # Denominator: created 24h-7d ago = mailed, repeat x2, ok; rows < 24h excluded.
-    assert (s["confirm_rate_confirmed"], s["confirm_rate_total"]) == (2, 4)
+    # Denominator: created 24h-7d ago = mailed, repeat (confirmed), ok; the unconfirmed
+    # repeat and rows < 24h are excluded.
+    assert (s["confirm_rate_confirmed"], s["confirm_rate_total"]) == (2, 3)
