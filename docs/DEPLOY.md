@@ -258,14 +258,14 @@ failing:
   the next cycle.
 - **Sign-ups are never lost to quota, and barely spend the digests' share.**
   The sign-up request only saves the row; the poller sends the confirmations
-  at the start of each cycle, before the digests, so they take pool room first
-  and the digests get what is left (a digest that misses out is deferred, not
-  dropped). They go while the pool's rolling-24h usage is below
+  after each cycle (a slow provider must not delay the polls); the digests'
+  headroom below keeps pool room free for them (a digest that misses out is
+  deferred, not dropped). They go while the pool's rolling-24h usage is below
   `MAIL_POOL_PRESSURE_PCT`, plus a reserve of `CONFIRMATION_RESERVE_PER_DAY`
   (default 150, `0` = none) confirmations per rolling 24h past the line, still
   bound by the provider caps. On 2026-11-02 and 2026-11-03 the digests took the
   pool past the old 90% ceiling for confirmations and 37 and 46 sign-ups waited
-  for hours; with confirmations first there is no ceiling, and the reserve is
+  for hours; with the headroom there is no ceiling, and the reserve is
   the flood bound. Digests also stop `CONFIRMATION_HEADROOM` (default 20,
   `0` = off) mails short of the pool's summed daily caps (580 of 600), so a
   sign-up after hours of digests and no sign-ups still finds room (the busiest

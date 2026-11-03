@@ -81,15 +81,15 @@ def _parse_ts(iso: str | None) -> datetime | None:
 def _walls_detail(walls: dict | None) -> str:
     """" (hourly 2, daily 1 — ...)" for a day's deferrals, or "" when the
     split is unknown. The daily wall is the one that costs appointments, so it
-    gets the sentence; an hourly deferral is cleared by the next cycle and an
+    and the headroom wall get the sentence; an hourly deferral is cleared by the next cycle and an
     outage by the next retry."""
     if not walls:
         return ""
     bits = [f"{w} {walls[w]}" for w in ("outage", "hourly", "headroom", "daily")
             if walls.get(w)]
     tail = ""
-    if walls.get("daily"):
-        tail = (" — the daily ones wait for the rolling 24h window, and the "
+    if walls.get("daily") or walls.get("headroom"):
+        tail = (" — the daily and headroom ones wait for the rolling 24h window, and the "
                 "slot may be gone by then")
     return f" ({', '.join(bits)}{tail})"
 
