@@ -343,9 +343,9 @@ def test_digest_app_hint_only_where_the_app_offers_the_service():
     from dataclasses import replace
     slots = [Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")]
     hint = "Bürgerwecker fürs iPhone"
-    assert "jeden Termin, auch wenn bei uns die E-Mails knapp werden" in _render(
+    assert "Benachrichtigungen auch dann weiter, wenn bei uns die E-Mails knapp werden" in _render(
         _sub("de"), slots, catalog=_cat())
-    assert "every appointment, even when we run short of email" in _render(
+    assert "notifications keep coming even when we run short of email" in _render(
         _sub("en"), slots, catalog=_cat())
     assert hint in _render(_sub("de"), slots, catalog=_cat())
     assert hint not in _render(_sub("de"), slots, catalog=replace(_cat(), website_only=True))
@@ -359,9 +359,9 @@ def test_digest_asks_android_users_to_test():
     url = "https://play.google.com/apps/testing/de.buergerwecker.app"
     for lang in ("de", "en"):
         assert url in _render(_sub(lang), slots, catalog=_cat())
-    assert "Auch dort bekommst du in der App jeden Termin per Push" in _render(
+    assert "Auch dort kommen Benachrichtigungen in der App weiter" in _render(
         _sub("de"), slots, catalog=_cat())
-    assert "gives you every appointment by push too" in _render(
+    assert "notifications keep coming in the app even when we run short" in _render(
         _sub("en"), slots, catalog=_cat())
     assert "/kontakt?projekt=buergerwecker&lang=en" in _render(_sub("en"), slots, catalog=_cat())
     assert url not in _render(_sub("de"), slots, catalog=replace(_cat(), website_only=True))

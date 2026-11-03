@@ -504,9 +504,9 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
     # when it was introduced).
     sub_cap = getattr(cfg, "max_digests_per_subscriber_per_day", 0) or 0
     # Whether the mail pool's pressure has tightened the cap right now, for
-    # mail subscriber (cycle.subscriber_cap): the same number the poller
-    # applies this cycle; app subscribers keep the ordinary cap. The keys keep their mail_ names: the mail pool is
-    # what trips it.
+    # mail subscribers (cycle.subscriber_cap): the same number the poller
+    # applies this cycle; app subscribers keep the ordinary cap. The keys
+    # keep their mail_ names: the mail pool is what trips it.
     from app.cycle import subscriber_cap
     mail_cap, mail_cap_tightened = subscriber_cap(conn, cfg)
     capped_now = scalar(
