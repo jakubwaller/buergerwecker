@@ -765,6 +765,13 @@ def test_stats_confirmation_funnel(tmp_path):
     s = stats(conn)
     assert s["confirm_held"] == 2
     assert s["confirm_held_stale"] == 1
+    # A dead address held for over 1h counts toward neither.
+    add("typo@example.com", "-3 hours", False)
+    assert stats(conn)["confirm_held_stale"] == 2
+    from app.repo import suppress_address
+    suppress_address(conn, "typo@example.com", reason="hard_bounce")
+    s = stats(conn)
+    assert (s["confirm_held"], s["confirm_held_stale"]) == (2, 1)
     assert s["confirm_mailed_unconfirmed"] == 1
     # Denominator: created 24h-7d ago = mailed, repeat (confirmed), ok; the unconfirmed
     # repeat and rows < 24h are excluded.

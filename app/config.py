@@ -86,6 +86,11 @@ class Config:
     # 0 for the tightened cap turns the rule off.
     mail_pool_pressure_pct: int = 80
     mail_cap_under_pressure: int = 1
+    # Confirmations a day that may go out past the pressure line: an unconfirmed
+    # sign-up is lost for good, a held digest only goes out later. 0 = no reserve.
+    # 150, not 50: on a busy day (67 sign-ups on 2026-11-03) ordinary sends
+    # below the line would already use up 50.
+    confirmation_reserve_per_day: int = 150
     # Live app subscriptions one city may hold, all devices together (see
     # api._share_refusal). Devices cost nothing to mint, so this is what
     # bounds the app's footprint in a city. 0 = no ceiling.
@@ -278,6 +283,8 @@ def load_config() -> Config:
         max_token_requests_per_ip_per_10_min=int(
             os.environ.get("MAX_TOKEN_REQUESTS_PER_IP_PER_10_MIN", "10")),
         mail_pool_pressure_pct=int(os.environ.get("MAIL_POOL_PRESSURE_PCT", "80")),
+        confirmation_reserve_per_day=int(
+            os.environ.get("CONFIRMATION_RESERVE_PER_DAY", "150")),
         mail_cap_under_pressure=int(
             os.environ.get("MAIL_CAP_UNDER_PRESSURE", "1")),
         max_app_subscriptions_per_city=_nonneg_int(

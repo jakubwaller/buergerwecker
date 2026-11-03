@@ -98,6 +98,44 @@ def test_confirmations_stop_at_the_pool_pressure_line(db):
     assert second in _pending_ids(db)
 
 
+def test_reserve_past_the_pressure_line(db):
+    from app.confirmations import confirmation_room
+    for i in range(3):
+        _sub(db, f"u{i}@x.com")
+    _spend_pool(db, 420)                       # 500 pool, line at 400: over it
+    cfg = _cfg(mail_pool_pressure_pct=80, confirmation_reserve_per_day=2)
+    assert confirmation_room(db, cfg) == 2
+    with patch("app.mail._call_mailjet_batch", return_value=200):
+        send_pending_confirmations(db, cfg)
+    assert len(_pending_ids(db)) == 1
+    assert confirmation_room(db, cfg) == 0     # exhausted after N sends
+    # reserve 0 is the old behaviour
+    assert confirmation_room(db, _cfg(mail_pool_pressure_pct=80,
+                                      confirmation_reserve_per_day=0)) == 0
+    # sends older than 24h no longer count
+    db.execute("UPDATE subscriptions SET confirmation_sent_at="
+               "datetime('now','-2 day') WHERE confirmation_sent_at IS NOT NULL")
+    assert confirmation_room(db, cfg) == 2
+
+
+def test_reserve_never_pushes_the_pool_past_90_percent(db):
+    from app.confirmations import confirmation_room
+    _spend_pool(db, 445)                       # 89% of 500
+    assert confirmation_room(db, _cfg(mail_pool_pressure_pct=80,
+                                      confirmation_reserve_per_day=150)) == 5
+
+
+def test_below_the_line_room_is_the_larger_of_the_two(db):
+    from app.confirmations import confirmation_room
+    _spend_pool(db, 300)                       # 100 below the line
+    assert confirmation_room(db, _cfg(mail_pool_pressure_pct=80,
+                                      confirmation_reserve_per_day=50)) == 100
+    assert confirmation_room(db, _cfg(mail_pool_pressure_pct=80,
+                                      confirmation_reserve_per_day=150)) == 150
+    assert confirmation_room(db, _cfg(mail_pool_pressure_pct=0,
+                                      confirmation_reserve_per_day=50)) is None
+
+
 def test_a_dead_address_does_not_hold_the_head_of_the_queue(db):
     """send_batch never mails a suppressed address, so its row stays
     pending: it must not take the one confirmation the line has room for."""
