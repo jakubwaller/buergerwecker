@@ -124,7 +124,8 @@ def test_reserve_bounds_confirmations_at_150_a_rolling_day_with_no_90_percent_ce
     bounds them, at 150 per rolling 24h."""
     from app.confirmations import confirmation_room
     _spend_pool(db, 445)                       # 89% of 500
-    cfg = _cfg(mail_pool_pressure_pct=80, confirmation_reserve_per_day=150)
+    cfg = _cfg(mail_pool_pressure_pct=80, confirmation_reserve_per_day=150,
+               mailjet_hourly_quota=1000)    # mailjet still has 200 to send
     assert confirmation_room(db, cfg) == 150
     for i in range(149):
         _sub(db, f"r{i}@example.com")
@@ -133,6 +134,20 @@ def test_reserve_bounds_confirmations_at_150_a_rolling_day_with_no_90_percent_ce
     _sub(db, "last@example.com")
     db.execute("UPDATE subscriptions SET confirmation_sent_at=datetime('now')")
     assert confirmation_room(db, cfg) == 0     # 150 in 24h: the flood bound
+
+
+def test_a_pool_the_digests_filled_holds_signups_despite_an_unused_reserve(db):
+    """Digests took the pool to its cap in cycles with no sign-ups: the
+    reserve is untouched, but the providers would defer any send, so a
+    sign-up is held and must be told so."""
+    from app.confirmations import confirmation_held, confirmation_room
+    _spend_pool(db, 500)                       # brevo at its cap
+    cfg = _cfg(mail_pool_pressure_pct=80, confirmation_reserve_per_day=150,
+               mailjet_hourly_quota=0)         # mailjet can send nothing either
+    assert confirmation_room(db, cfg) == 0
+    assert confirmation_held(db, cfg, extra=1)
+    _sub(db, "waiting@example.com")
+    assert confirmation_held(db, cfg)
 
 
 def test_held_before_signup_counts_the_signup_about_to_be_made(db):
@@ -147,9 +162,11 @@ def test_below_the_line_room_is_the_larger_of_the_two(db):
     from app.confirmations import confirmation_room
     _spend_pool(db, 300)                       # 100 below the line
     assert confirmation_room(db, _cfg(mail_pool_pressure_pct=80,
-                                      confirmation_reserve_per_day=50)) == 100
+                                      confirmation_reserve_per_day=50,
+                                      mailjet_hourly_quota=1000)) == 100
     assert confirmation_room(db, _cfg(mail_pool_pressure_pct=80,
-                                      confirmation_reserve_per_day=150)) == 150
+                                      confirmation_reserve_per_day=150,
+                                      mailjet_hourly_quota=1000)) == 150
     assert confirmation_room(db, _cfg(mail_pool_pressure_pct=0,
                                       confirmation_reserve_per_day=50)) is None
 

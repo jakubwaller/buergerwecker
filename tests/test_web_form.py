@@ -327,3 +327,12 @@ def test_queued_banner_points_to_the_app(client, lang, tip):
     banner = banner[:banner.index("</div>")]   # the footer has an App Store link too
     assert "https://apps.apple.com/app/id6819977614" in banner
     assert "https://groups.google.com/g/buergerwecker-beta" in banner
+
+
+def test_form_warns_when_the_providers_are_full_though_the_reserve_is_unused(client):
+    """The reserve allows 150 more, but the providers can take nothing
+    right now: the form must still warn."""
+    from unittest.mock import patch
+    with patch("app.confirmations.pool_room", return_value=0):
+        body = client.get("/leipzig").data.decode()
+    assert "Gerade sind viele Anmeldungen da" in body
