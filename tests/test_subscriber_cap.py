@@ -335,6 +335,7 @@ def test_tightening_is_off_with_zero_or_a_cap_no_lower_than_the_ordinary_one(db,
 
 def test_under_pressure_mail_is_capped_at_one_and_push_keeps_the_normal_cap(db, apns, monkeypatch):
     """Push uses no mail quota, so pressure on the mail pool leaves it alone."""
+    monkeypatch.setenv("CONFIRMATION_HEADROOM", "0")   # a 20-mail pool, all headroom
     monkeypatch.setenv("MAILJET_DAILY_QUOTA", "10")
     monkeypatch.setenv("BREVO_DAILY_QUOTA", "10")
     monkeypatch.setenv("MAIL_POOL_PRESSURE_PCT", "50")

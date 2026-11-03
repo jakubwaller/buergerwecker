@@ -20,6 +20,11 @@ def main() -> None:
         sleep_s = 60 - (now % 60)
         time_mod.sleep(sleep_s)
         cycle_id = datetime.utcnow().strftime("%Y%m%dT%H%M")
+        # Before run_cycle, so confirmations take pool room first and the
+        # digests (which measure pool room at flush) get what is left; outside
+        # its try: this is the only path a confirmation takes, so a failing
+        # poll must not hold up sign-ups.
+        _send_confirmations(conn, cfg)
         try:
             _maybe_housekeeping(conn)
             _prune_rate_events(conn)
@@ -37,10 +42,6 @@ def main() -> None:
                   flush=True)
             if consecutive_failures >= 3:
                 _maybe_alert(conn, cfg, str(exc))
-        # After run_cycle so time-sensitive slot notifications get quota
-        # first, and outside its try: this is the only path a confirmation
-        # takes, so a failing poll must not hold up sign-ups.
-        _send_confirmations(conn, cfg)
         # After the cycle: its slots go out before a slow mail provider stalls.
         _check_canary(conn, cfg)
 

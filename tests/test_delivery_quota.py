@@ -105,3 +105,119 @@ def test_render_cap_still_marks_all_matched_slots_seen(db):
          patch("app.mail._call_brevo_batch", return_value=201):
         run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c2")
     mb2.assert_not_called()
+
+
+def test_confirmations_go_first_and_the_digest_gets_what_is_left(db):
+    """Pool near its cap (room for one mail): the poller sends the pending
+    confirmation before the cycle, so it takes that room, and the digest
+    behind it is deferred for quota (unrecorded, so a later cycle sends
+    it), not dropped."""
+    from app.config import load_config
+    from app.confirmations import send_pending_confirmations
+    from app.mail import deferrals_today
+    sub = insert_pending(db, email="digest@example.com", city="leipzig",
+                         language="de", filter_=_f(), ttl_days=90)
+    confirm(db, sub)
+    db.execute("UPDATE subscriptions SET confirmation_sent_at=datetime('now') "
+               "WHERE id=?", (sub,))
+    signup = insert_pending(db, email="signup@example.com", city="leipzig",
+                            language="en", filter_=_f(), ttl_days=90)
+    scraper = MagicMock()
+    scraper.poll.return_value = [Slot("2026-06-10", "10:30", "loc-1", "svc-A", "tok")]
+    with patch("app.cycle.get_scraper", return_value=scraper), \
+         patch("app.mail._call_brevo_batch", return_value=201) as rb:
+        send_pending_confirmations(db, load_config())
+        run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
+    assert [[o.to for o in c.args[0]] for c in rb.call_args_list] == [
+        ["signup@example.com"]]
+    assert db.execute("SELECT confirmation_sent_at FROM subscriptions WHERE id=?",
+                      (signup,)).fetchone()[0] is not None
+    assert not _has_seen(db, sub) and _last_notified(db, sub) is None
+    assert deferrals_today(db) >= 1
+
+
+def test_poller_sends_confirmations_before_the_cycle(monkeypatch):
+    """The order the first test relies on: in the poller loop, the
+    confirmations go out before run_cycle measures the pool for digests."""
+    from types import SimpleNamespace
+    from app import poller
+    calls = []
+
+    class Stop(Exception):
+        pass
+
+    def sleep(_s):
+        if calls:
+            raise Stop      # one loop iteration is enough
+    monkeypatch.setattr(poller.time_mod, "sleep", sleep)
+    monkeypatch.setattr(poller, "load_config", lambda: SimpleNamespace(
+        db_path=":memory:", max_plans_per_city=10, rate_limit_minutes=15))
+    for name in ("connect", "init_schema", "CountingSession",
+                 "_maybe_housekeeping", "_prune_rate_events",
+                 "_sweep_verifications", "_check_canary"):
+        monkeypatch.setattr(poller, name, lambda *a, **k: None)
+    monkeypatch.setattr(poller, "_send_confirmations",
+                        lambda *a: calls.append("confirmations"))
+    monkeypatch.setattr(poller, "run_cycle", lambda *a, **k: calls.append("cycle"))
+    with pytest.raises(Stop):
+        poller.main()
+    assert calls == ["confirmations", "cycle"]
+
+
+def _pool_at_cap_minus_20(db, monkeypatch, headroom="20"):
+    """Pool 101 a day (mailjet 100 + brevo 1), 81 spent: 20 left, all of
+    it the confirmations' headroom. No hourly window binds."""
+    monkeypatch.setenv("MAILJET_DAILY_QUOTA", "100")
+    monkeypatch.setenv("MAILJET_HOURLY_QUOTA", "1000")
+    monkeypatch.setenv("CONFIRMATION_HEADROOM", headroom)
+    db.executemany("INSERT INTO sent_idempotency (idem_key, provider) VALUES (?, ?)",
+                   [(f"k{i}", "mailjet") for i in range(80)] + [("b0", "brevo")])
+    sub = insert_pending(db, email="digest@example.com", city="leipzig",
+                         language="de", filter_=_f(), ttl_days=90)
+    confirm(db, sub)
+    db.execute("UPDATE subscriptions SET confirmation_sent_at=datetime('now') "
+               "WHERE id=?", (sub,))
+    return sub
+
+
+def _cycle(db, cycle_id="c1"):
+    from app.config import load_config
+    from app.confirmations import send_pending_confirmations
+    scraper = MagicMock()
+    scraper.poll.return_value = [Slot("2026-06-10", "10:30", "loc-1", "svc-A", "tok")]
+    with patch("app.cycle.get_scraper", return_value=scraper), \
+         patch("app.mail._call_mailjet_batch", return_value=200) as mb, \
+         patch("app.mail._call_brevo_batch", return_value=201) as rb:
+        send_pending_confirmations(db, load_config())
+        run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15,
+                  cycle_id=cycle_id)
+    return [o.to for c in mb.call_args_list + rb.call_args_list for o in c.args[0]]
+
+
+def test_digests_leave_the_headroom_free_and_wait_for_it(db, monkeypatch):
+    sub = _pool_at_cap_minus_20(db, monkeypatch)
+    from app.mail import deferrals_today
+    from app.mail import deferral_walls_today, describe_deferral, last_deferral
+    assert _cycle(db) == []
+    assert deferrals_today(db) == 1
+    assert deferral_walls_today(db) == {"headroom": 1}
+    assert "free for confirmations" in describe_deferral(last_deferral(db))
+    # Deferred, not dropped: unrecorded, so a later cycle with room sends it.
+    assert not _has_seen(db, sub) and _last_notified(db, sub) is None
+    db.execute("DELETE FROM sent_idempotency WHERE idem_key='k0'")
+    assert _cycle(db, "c2") == ["digest@example.com"]
+    assert _has_seen(db, sub)
+
+
+def test_a_confirmation_may_use_the_headroom(db, monkeypatch):
+    sub = _pool_at_cap_minus_20(db, monkeypatch)
+    insert_pending(db, email="signup@example.com", city="leipzig",
+                   language="de", filter_=_f(), ttl_days=90)
+    assert _cycle(db) == ["signup@example.com"]
+    assert not _has_seen(db, sub)
+
+
+def test_headroom_zero_is_the_old_behaviour(db, monkeypatch):
+    sub = _pool_at_cap_minus_20(db, monkeypatch, headroom="0")
+    assert _cycle(db) == ["digest@example.com"]
+    assert _has_seen(db, sub)

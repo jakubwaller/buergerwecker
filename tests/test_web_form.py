@@ -290,3 +290,49 @@ def test_faq_tells_subscribers_about_the_daily_mail_cap(client, monkeypatch):
     from app.web import create_app
     off = create_app().test_client().get("/leipzig?lang=de").data.decode()
     assert "Wie viele Mails bekomme ich?" not in off
+
+
+@pytest.mark.parametrize("lang, text", [
+    ("de", "Gerade sind viele Anmeldungen da"),
+    ("en", "Lots of sign-ups right now"),
+])
+def test_form_warns_of_a_held_confirmation_only_when_held(client, lang, text):
+    from unittest.mock import patch
+    body = client.get(f"/leipzig?lang={lang}").data.decode()
+    assert text not in body
+    with patch("app.confirmations.confirmation_held", return_value=True):
+        body = client.get(f"/leipzig?lang={lang}").data.decode()
+    notice = body[body.index(text):body.index('<button type="submit"')]
+    assert "https://apps.apple.com/app/id6819977614" in notice
+    assert "https://groups.google.com/g/buergerwecker-beta" in notice
+    # the notice sits above the submit button
+    assert body.index(text) < body.index('<button type="submit"')
+
+
+def test_form_renders_without_the_notice_when_the_check_fails(client):
+    from unittest.mock import patch
+    with patch("app.confirmations.confirmation_held", side_effect=RuntimeError):
+        r = client.get("/leipzig")
+    assert r.status_code == 200
+    assert "Gerade sind viele Anmeldungen da" not in r.data.decode()
+
+
+@pytest.mark.parametrize("lang, tip", [
+    ("de", "Tipp: In der Bürgerwecker-App kommen Benachrichtigungen per Push"),
+    ("en", "Tip: in the Bürgerwecker app, notifications come by push"),
+])
+def test_queued_banner_points_to_the_app(client, lang, tip):
+    body = client.get(f"/leipzig?confirmed=queued&lang={lang}").data.decode()
+    banner = body[body.index(tip):]
+    banner = banner[:banner.index("</div>")]   # the footer has an App Store link too
+    assert "https://apps.apple.com/app/id6819977614" in banner
+    assert "https://groups.google.com/g/buergerwecker-beta" in banner
+
+
+def test_form_warns_when_the_providers_are_full_though_the_reserve_is_unused(client):
+    """The reserve allows 150 more, but the providers can take nothing
+    right now: the form must still warn."""
+    from unittest.mock import patch
+    with patch("app.confirmations.daily_room", return_value=0):
+        body = client.get("/leipzig").data.decode()
+    assert "Gerade sind viele Anmeldungen da" in body

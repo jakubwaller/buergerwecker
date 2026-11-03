@@ -92,6 +92,10 @@ class Config:
     # 150, not 50: on a busy day (67 sign-ups on 2026-11-03) ordinary sends
     # below the line would already use up 50.
     confirmation_reserve_per_day: int = 150
+    # Mails of the pool's summed daily caps digests leave free for
+    # confirmations: digests fill the pool in hours with no sign-ups, so later
+    # sign-ups would otherwise find nothing left. 0 = off.
+    confirmation_headroom: int = 20
     # Live app subscriptions one city may hold, all devices together (see
     # api._share_refusal). Devices cost nothing to mint, so this is what
     # bounds the app's footprint in a city. 0 = no ceiling.
@@ -284,8 +288,8 @@ def load_config() -> Config:
         max_token_requests_per_ip_per_10_min=int(
             os.environ.get("MAX_TOKEN_REQUESTS_PER_IP_PER_10_MIN", "10")),
         mail_pool_pressure_pct=int(os.environ.get("MAIL_POOL_PRESSURE_PCT", "80")),
-        confirmation_reserve_per_day=int(
-            os.environ.get("CONFIRMATION_RESERVE_PER_DAY", "150")),
+        confirmation_reserve_per_day=_nonneg_int("CONFIRMATION_RESERVE_PER_DAY", "150"),
+        confirmation_headroom=_nonneg_int("CONFIRMATION_HEADROOM", "20"),
         mail_cap_under_pressure=int(
             os.environ.get("MAIL_CAP_UNDER_PRESSURE", "1")),
         max_app_subscriptions_per_city=_nonneg_int(

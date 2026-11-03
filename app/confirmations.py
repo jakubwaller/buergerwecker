@@ -1,7 +1,8 @@
 """Confirmation-email delivery for pending sign-ups.
 
-Only the poller sends them, once a cycle after the digests, through the same
-quota-aware batch path. The sign-up request just saves the row: a web request
+Only the poller sends them, once a cycle before the digests, through the same
+quota-aware batch path, so they take pool room first and the digests get what
+is left. The sign-up request just saves the row: a web request
 never waits on a mail provider. When the quota is exhausted a sign-up is NOT
 lost: its pending row stays valid and a later cycle sends it (i.e. the next
 day once quota resets). `confirmation_sent_at` marks a sign-up as done so it
@@ -10,14 +11,10 @@ isn't re-sent.
 from __future__ import annotations
 import sqlite3
 from urllib.parse import urlsplit
-from app.mail import send_batch, pool_usage, Outgoing, _idem_key, _dead_addresses
+from app.mail import send_batch, pool_usage, pool_room, daily_room, Outgoing, _idem_key, _dead_addresses
 from app.repo import set_confirmation_sent, pending_confirmations
 from app.tokens import sign
 
-
-# Confirmations alone never take the pool past this share: the last 10% stays
-# for digests even during a sign-up flood.
-_CONFIRMATION_CEILING_PCT = 90
 
 _TEXT = {
     "de": {
@@ -77,10 +74,10 @@ def confirmation_room(conn: sqlite3.Connection, cfg) -> int | None:
     rolling-24h usage reaches MAIL_POOL_PRESSURE_PCT of its summed daily caps;
     None when no such line is set. Past it, sign-ups get only a reserve of
     CONFIRMATION_RESERVE_PER_DAY a day (an unconfirmed sign-up is usually lost
-    for good, a held digest only goes out later), and never past 90% of the
-    pool, so a flood of them, real or scripted, still leaves the last 10% to
-    the slot digests. The provider caps
-    apply on top, in send_batch. A held sign-up stays pending and goes out once
+    for good, a held digest only goes out later). The reserve is the flood
+    bound: a burst of sign-ups, real or scripted, takes at most that much of
+    the digests' share a day. Capped by `mail.daily_room` (`pool_room` when a
+    provider has no daily window), so a pool the digests filled reads as held. A held sign-up stays pending and goes out once
     the window frees, within its 7-day retry window."""
     pct = getattr(cfg, "mail_pool_pressure_pct", 0) or 0
     if not pct:
@@ -92,8 +89,13 @@ def confirmation_room(conn: sqlite3.Connection, cfg) -> int | None:
     sent = conn.execute("SELECT COUNT(*) FROM subscriptions WHERE "
                         "confirmation_sent_at > datetime('now','-1 day')"
                         ).fetchone()[0]
-    return max(0, pool * pct // 100 - used,
-               min(reserve - sent, pool * _CONFIRMATION_CEILING_PCT // 100 - used))
+    # Never more than the providers can take right now: digests may have
+    # filled the pool, and a room send_batch would defer is a held sign-up.
+    # Daily windows only: an hourly throttle clears within the hour, so it
+    # must not read as "possibly tomorrow"; send_batch still honours it.
+    day = daily_room(conn, cfg)
+    return min(pool_room(conn, cfg) if day is None else day,
+               max(0, pool * pct // 100 - used, reserve - sent))
 
 
 def _queue(conn: sqlite3.Connection, cfg, max_age_days: int = 7) -> list:
@@ -105,11 +107,12 @@ def _queue(conn: sqlite3.Connection, cfg, max_age_days: int = 7) -> list:
             if p[1] not in dead]
 
 
-def confirmation_held(conn: sqlite3.Connection, cfg) -> bool:
+def confirmation_held(conn: sqlite3.Connection, cfg, *, extra: int = 0) -> bool:
     """Whether the newest sign-up waits past the next cycle: the pressure
-    line leaves less room than the queue ahead of it and itself."""
+    line leaves less room than the queue ahead of it and itself. `extra`
+    counts sign-ups not saved yet (the form asks for one about to be made)."""
     room = confirmation_room(conn, cfg)
-    return room is not None and len(_queue(conn, cfg)) > room
+    return room is not None and len(_queue(conn, cfg)) + extra > room
 
 
 def send_pending_confirmations(conn: sqlite3.Connection, cfg, *,

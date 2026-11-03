@@ -118,20 +118,69 @@ def test_reserve_past_the_pressure_line(db):
     assert confirmation_room(db, cfg) == 2
 
 
-def test_reserve_never_pushes_the_pool_past_90_percent(db):
+def test_reserve_bounds_confirmations_at_150_a_rolling_day_with_no_90_percent_ceiling(db):
+    """Confirmations go before the digests now, so the old 90% ceiling is
+    gone: past the pressure line, even at 89% of the pool, the reserve alone
+    bounds them, at 150 per rolling 24h."""
     from app.confirmations import confirmation_room
     _spend_pool(db, 445)                       # 89% of 500
-    assert confirmation_room(db, _cfg(mail_pool_pressure_pct=80,
-                                      confirmation_reserve_per_day=150)) == 5
+    cfg = _cfg(mail_pool_pressure_pct=80, confirmation_reserve_per_day=150,
+               mailjet_hourly_quota=1000)    # mailjet still has 200 to send
+    assert confirmation_room(db, cfg) == 150
+    for i in range(149):
+        _sub(db, f"r{i}@example.com")
+    db.execute("UPDATE subscriptions SET confirmation_sent_at=datetime('now')")
+    assert confirmation_room(db, cfg) == 1
+    _sub(db, "last@example.com")
+    db.execute("UPDATE subscriptions SET confirmation_sent_at=datetime('now')")
+    assert confirmation_room(db, cfg) == 0     # 150 in 24h: the flood bound
+
+
+def test_a_pool_the_digests_filled_holds_signups_despite_an_unused_reserve(db):
+    """Digests took the pool to its cap in cycles with no sign-ups: the
+    reserve is untouched, but the providers would defer any send, so a
+    sign-up is held and must be told so."""
+    from app.confirmations import confirmation_held, confirmation_room
+    _spend_pool(db, 300)                       # brevo at its daily cap
+    db.executemany("INSERT INTO sent_idempotency (idem_key, provider) "
+                   "VALUES (?, 'mailjet')", [(f"m{i}",) for i in range(200)])
+    cfg = _cfg(mail_pool_pressure_pct=80, confirmation_reserve_per_day=150,
+               mailjet_hourly_quota=1000)      # mailjet at its daily cap too
+    assert confirmation_room(db, cfg) == 0
+    assert confirmation_held(db, cfg, extra=1)
+    _sub(db, "waiting@example.com")
+    assert confirmation_held(db, cfg)
+
+
+def test_an_hourly_throttle_does_not_read_as_held(db):
+    """Mailjet's hourly cap clears within the hour: with daily room left,
+    the sign-up is not told "possibly tomorrow" (send_batch still holds the
+    hourly line on the actual send)."""
+    from app.confirmations import confirmation_held, confirmation_room
+    _spend_pool(db, 300)                       # brevo full, mailjet's day free
+    cfg = _cfg(mail_pool_pressure_pct=80, confirmation_reserve_per_day=150,
+               mailjet_hourly_quota=0)
+    assert confirmation_room(db, cfg) == 150
+    assert not confirmation_held(db, cfg, extra=1)
+
+
+def test_held_before_signup_counts_the_signup_about_to_be_made(db):
+    from app.confirmations import confirmation_held
+    _spend_pool(db, 420)                       # past the line, no reserve
+    cfg = _cfg(mail_pool_pressure_pct=80)
+    assert not confirmation_held(db, cfg)      # nobody waiting yet
+    assert confirmation_held(db, cfg, extra=1) # but the next sign-up would
 
 
 def test_below_the_line_room_is_the_larger_of_the_two(db):
     from app.confirmations import confirmation_room
     _spend_pool(db, 300)                       # 100 below the line
     assert confirmation_room(db, _cfg(mail_pool_pressure_pct=80,
-                                      confirmation_reserve_per_day=50)) == 100
+                                      confirmation_reserve_per_day=50,
+                                      mailjet_hourly_quota=1000)) == 100
     assert confirmation_room(db, _cfg(mail_pool_pressure_pct=80,
-                                      confirmation_reserve_per_day=150)) == 150
+                                      confirmation_reserve_per_day=150,
+                                      mailjet_hourly_quota=1000)) == 150
     assert confirmation_room(db, _cfg(mail_pool_pressure_pct=0,
                                       confirmation_reserve_per_day=50)) is None
 

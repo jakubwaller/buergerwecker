@@ -365,6 +365,36 @@ def _behind_the_mail_wall(conn: sqlite3.Connection, sink: list, cfg) -> set[str]
     return held
 
 
+def _past_the_confirmation_headroom(conn: sqlite3.Connection, sink: list,
+                                    cfg) -> set[str]:
+    """The idem_keys of the mail digests that would eat into the last
+    CONFIRMATION_HEADROOM mails of the providers' daily windows. They wait
+    like a quota deferral: unrecorded, they lead the next cycle. Daily
+    windows only (the hourly ones are send_batch's as before), mail only,
+    and confirmations (sent by the poller before the cycle) may use it."""
+    from app.mail import WALL_HEADROOM, _dead_addresses, _record_deferrals, daily_room
+    headroom = getattr(cfg, "confirmation_headroom", 0) or 0
+    if not headroom:
+        return set()
+    day = daily_room(conn, cfg)
+    if day is None:         # a provider without a daily window: no daily wall
+        return set()
+    room = max(0, day - headroom)
+    dead = _dead_addresses(conn, cfg)
+    held: set[str] = set()
+    for q in sink:
+        if isinstance(q.item, Outgoing) and q.item.to not in dead:
+            if room > 0:
+                room -= 1
+            else:
+                held.add(q.item.idem_key)
+    if held:
+        _record_deferrals(conn, len(held), WALL_HEADROOM)
+        print(f"mail: {len(held)} digest(s) wait, the last {headroom} of the "
+              f"pool stay free for confirmations", flush=True)
+    return held
+
+
 def _push_budget(cfg) -> dict:
     """The digest flush's push budget, see push.send_push_batch."""
     return {"max_items": getattr(cfg, "push_budget_per_cycle", 0) or 0,
@@ -459,7 +489,9 @@ def flush_digests(conn: sqlite3.Connection, sink: list, cfg) -> None:
                           set_last_notified)
     sink = sorted(sink, key=lambda q: str(q.subscription.last_notified_at or ""))
     held = _behind_the_mail_wall(conn, sink, cfg)
-    mail_items = [q.item for q in sink if isinstance(q.item, Outgoing)]
+    headroom_held = _past_the_confirmation_headroom(conn, sink, cfg)
+    mail_items = [q.item for q in sink if isinstance(q.item, Outgoing)
+                  and q.item.idem_key not in headroom_held]
     push_items = [q.item for q in sink if not isinstance(q.item, Outgoing)
                   and q.item.idem_key not in held]
     result, push_delivered, mail_error = _send_both(conn, mail_items,
@@ -481,4 +513,4 @@ def flush_digests(conn: sqlite3.Connection, sink: list, cfg) -> None:
             record_digest_delivery(conn, q.subscription.id)
     if mail_error is not None:
         raise mail_error
-    maybe_quota_alert(conn, cfg, deferred=result.deferred)
+    maybe_quota_alert(conn, cfg, deferred=result.deferred + len(headroom_held))
