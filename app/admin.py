@@ -483,7 +483,11 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
     # Mail sign-ups the poller can still reach: _queue leaves out dead addresses,
     # which would otherwise keep the held warning amber for their whole 7 days.
     from app.confirmations import _queue
-    queued = {p[0] for p in _queue(conn, cfg)}
+    try:
+        queued = {p[0] for p in _queue(conn, cfg)}
+    except sqlite3.OperationalError:    # db predating the suppression tables
+        from app.repo import pending_confirmations
+        queued = {p[0] for p in pending_confirmations(conn)}
     held_rows = [(r[0], r[1]) for r in conn.execute(
         "SELECT id, created_at < datetime('now','-1 hour') FROM subscriptions "
         "WHERE device_id IS NULL AND deleted_at IS NULL AND confirmed_at IS NULL "
