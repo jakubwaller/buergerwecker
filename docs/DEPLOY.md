@@ -266,7 +266,13 @@ failing:
   bound by the provider caps. On 2026-11-02 and 2026-11-03 the digests took the
   pool past the old 90% ceiling for confirmations and 37 and 46 sign-ups waited
   for hours; with confirmations first there is no ceiling, and the reserve is
-  the flood bound. A held sign-up stays pending and is sent on a later cycle
+  the flood bound. Digests also stop `CONFIRMATION_HEADROOM` (default 20,
+  `0` = off) mails short of the pool's summed daily caps (580 of 600), so a
+  sign-up after hours of digests and no sign-ups still finds room (the busiest
+  hour so far had 17 confirmations). Only the daily windows and only mail
+  digests; a digest held by it is deferred like a quota deferral, counted in
+  the deferrals, and leads the next cycle. Usage figures on /admin and in the
+  quota alert stay the real ones. A held sign-up stays pending and is sent on a later cycle
   (within 7 days); the form warns beforehand and the banner after, both
   pointing to the app. A scripted flood of sign-ups can therefore take the
   reserve out of the digests' share a day (and push every mail subscriber to

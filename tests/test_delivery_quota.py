@@ -162,3 +162,59 @@ def test_poller_sends_confirmations_before_the_cycle(monkeypatch):
     with pytest.raises(Stop):
         poller.main()
     assert calls == ["confirmations", "cycle"]
+
+
+def _pool_at_cap_minus_20(db, monkeypatch, headroom="20"):
+    """Pool 101 a day (mailjet 100 + brevo 1), 81 spent: 20 left, all of
+    it the confirmations' headroom. No hourly window binds."""
+    monkeypatch.setenv("MAILJET_DAILY_QUOTA", "100")
+    monkeypatch.setenv("MAILJET_HOURLY_QUOTA", "1000")
+    monkeypatch.setenv("CONFIRMATION_HEADROOM", headroom)
+    db.executemany("INSERT INTO sent_idempotency (idem_key, provider) VALUES (?, ?)",
+                   [(f"k{i}", "mailjet") for i in range(80)] + [("b0", "brevo")])
+    sub = insert_pending(db, email="digest@example.com", city="leipzig",
+                         language="de", filter_=_f(), ttl_days=90)
+    confirm(db, sub)
+    db.execute("UPDATE subscriptions SET confirmation_sent_at=datetime('now') "
+               "WHERE id=?", (sub,))
+    return sub
+
+
+def _cycle(db, cycle_id="c1"):
+    from app.config import load_config
+    from app.confirmations import send_pending_confirmations
+    scraper = MagicMock()
+    scraper.poll.return_value = [Slot("2026-06-10", "10:30", "loc-1", "svc-A", "tok")]
+    with patch("app.cycle.get_scraper", return_value=scraper), \
+         patch("app.mail._call_mailjet_batch", return_value=200) as mb, \
+         patch("app.mail._call_brevo_batch", return_value=201) as rb:
+        send_pending_confirmations(db, load_config())
+        run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15,
+                  cycle_id=cycle_id)
+    return [o.to for c in mb.call_args_list + rb.call_args_list for o in c.args[0]]
+
+
+def test_digests_leave_the_headroom_free_and_wait_for_it(db, monkeypatch):
+    sub = _pool_at_cap_minus_20(db, monkeypatch)
+    from app.mail import deferrals_today
+    assert _cycle(db) == []
+    assert deferrals_today(db) == 1
+    # Deferred, not dropped: unrecorded, so a later cycle with room sends it.
+    assert not _has_seen(db, sub) and _last_notified(db, sub) is None
+    db.execute("DELETE FROM sent_idempotency WHERE idem_key='k0'")
+    assert _cycle(db, "c2") == ["digest@example.com"]
+    assert _has_seen(db, sub)
+
+
+def test_a_confirmation_may_use_the_headroom(db, monkeypatch):
+    sub = _pool_at_cap_minus_20(db, monkeypatch)
+    insert_pending(db, email="signup@example.com", city="leipzig",
+                   language="de", filter_=_f(), ttl_days=90)
+    assert _cycle(db) == ["signup@example.com"]
+    assert not _has_seen(db, sub)
+
+
+def test_headroom_zero_is_the_old_behaviour(db, monkeypatch):
+    sub = _pool_at_cap_minus_20(db, monkeypatch, headroom="0")
+    assert _cycle(db) == ["digest@example.com"]
+    assert _has_seen(db, sub)
