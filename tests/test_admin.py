@@ -230,7 +230,6 @@ def _summary_stats(**over):
         "active_subscriptions_by_city": {"leipzig": 42},
         "current_plan_count_by_city": {"leipzig": 6},
         "parser_zero_match_since_by_city": {},
-        "pending_confirmation": 3,
         "signups_last_24h": 5,
         "signups_last_7d": 19,
         "emails_sent_last_7d": 88,
@@ -736,3 +735,37 @@ def test_admin_renders_ratings_with_null_stores(client, monkeypatch, tmp_path):
         "days": {}, "ratings": {"total": 0, "stores": None}}}}))
     monkeypatch.setenv("APP_STATS_PATH", str(p))
     assert client.get("/admin?token=admin-tok").status_code == 200
+
+
+def test_stats_confirmation_funnel(tmp_path):
+    from datetime import time
+    from app.models import Filter
+    from app.repo import insert_pending, confirm
+    conn = connect(str(tmp_path / "f.db")); init_schema(conn)
+    f = Filter(appointment_types=["A"], locations="all", weekdays=[1, 2, 3, 4, 5, 6, 7],
+               time_window_start=time(0, 0), time_window_end=time(23, 59))
+
+    def add(email, age, mailed, confirmed=False):
+        sid = insert_pending(conn, email=email, city="leipzig", language="de",
+                             filter_=f, ttl_days=90)
+        conn.execute("UPDATE subscriptions SET created_at=datetime('now',?), "
+                     "confirmation_sent_at=CASE WHEN ? THEN datetime('now',?) END WHERE id=?",
+                     (age, mailed, age, sid))
+        if confirmed:
+            confirm(conn, sid)
+        return sid
+
+    add("held@example.com", "-3 hours", False)            # held > 1h: warning
+    add("fresh@example.com", "-5 minutes", False)         # held, not stale
+    add("ancient@example.com", "-9 days", False)          # outside 7d: excluded
+    add("mailed@example.com", "-2 days", True)            # mailed, unconfirmed
+    add("repeat@example.com", "-2 days", True)            # repeat sign-up ...
+    add("repeat@example.com", "-3 days", True, confirmed=True)  # ... already confirmed
+    add("ok@example.com", "-4 days", True, confirmed=True)
+    s = stats(conn)
+    assert s["confirm_held"] == 2
+    assert s["confirm_held_stale"] == 1
+    assert s["confirm_mailed_unconfirmed"] == 1
+    # Denominator: created 24h-7d ago = mailed, repeat (confirmed), ok; the unconfirmed
+    # repeat and rows < 24h are excluded.
+    assert (s["confirm_rate_confirmed"], s["confirm_rate_total"]) == (2, 3)

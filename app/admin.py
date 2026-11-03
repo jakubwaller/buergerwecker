@@ -700,9 +700,40 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         "cities": cities,
         "current_plan_count_by_city": by_city_plans,
         "parser_zero_match_since_by_city": canary,
-        "pending_confirmation":
-            scalar("SELECT COUNT(*) FROM subscriptions WHERE confirmed_at IS NULL "
-                   "AND deleted_at IS NULL"),
+        # Mail sign-ups only. "Held" = no confirmation mail sent yet.
+        "confirm_held":
+            scalar("SELECT COUNT(*) FROM subscriptions WHERE device_id IS NULL "
+                   "AND deleted_at IS NULL AND confirmed_at IS NULL "
+                   "AND confirmation_sent_at IS NULL "
+                   "AND created_at > datetime('now','-7 days')"),
+        "confirm_held_stale":
+            scalar("SELECT COUNT(*) FROM subscriptions WHERE device_id IS NULL "
+                   "AND deleted_at IS NULL AND confirmed_at IS NULL "
+                   "AND confirmation_sent_at IS NULL "
+                   "AND created_at > datetime('now','-7 days') "
+                   "AND created_at < datetime('now','-1 hour')"),
+        "confirm_mailed_unconfirmed":
+            scalar("SELECT COUNT(*) FROM subscriptions WHERE device_id IS NULL "
+                   "AND deleted_at IS NULL AND confirmed_at IS NULL "
+                   "AND confirmation_sent_at IS NOT NULL "
+                   "AND created_at > datetime('now','-7 days') "
+                   "AND lower(email) NOT IN (SELECT lower(email) FROM subscriptions "
+                   "WHERE device_id IS NULL AND deleted_at IS NULL "
+                   "AND confirmed_at IS NOT NULL)"),
+        # Sign-ups old enough (>24h) to have had a fair chance to confirm.
+        "confirm_rate_total":
+            scalar("SELECT COUNT(*) FROM subscriptions WHERE device_id IS NULL "
+                   "AND deleted_at IS NULL "
+                   "AND created_at > datetime('now','-7 days') "
+                   "AND created_at <= datetime('now','-1 day') "
+                   "AND (confirmed_at IS NOT NULL OR lower(email) NOT IN "
+                   "(SELECT lower(email) FROM subscriptions WHERE device_id IS NULL "
+                   "AND deleted_at IS NULL AND confirmed_at IS NOT NULL))"),
+        "confirm_rate_confirmed":
+            scalar("SELECT COUNT(*) FROM subscriptions WHERE device_id IS NULL "
+                   "AND deleted_at IS NULL AND confirmed_at IS NOT NULL "
+                   "AND created_at > datetime('now','-7 days') "
+                   "AND created_at <= datetime('now','-1 day')"),
         "signups_last_24h":
             scalar("SELECT COUNT(*) FROM subscriptions "
                    "WHERE created_at > datetime('now','-1 day')"),
