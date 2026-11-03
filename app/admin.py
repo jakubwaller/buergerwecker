@@ -480,6 +480,16 @@ def _older_than(stamp: str, hours: int) -> bool:
 def stats(conn: sqlite3.Connection, cfg=None) -> dict:
     from app.mail import deferral_walls_today, last_deferral
 
+    # Mail sign-ups the poller can still reach: _queue leaves out dead addresses,
+    # which would otherwise keep the held warning amber for their whole 7 days.
+    from app.confirmations import _queue
+    queued = {p[0] for p in _queue(conn, cfg)}
+    held_rows = [(r[0], r[1]) for r in conn.execute(
+        "SELECT id, created_at < datetime('now','-1 hour') FROM subscriptions "
+        "WHERE device_id IS NULL AND deleted_at IS NULL AND confirmed_at IS NULL "
+        "AND confirmation_sent_at IS NULL "
+        "AND created_at > datetime('now','-7 days')") if r[0] in queued]
+
     def scalar(q, *args):
         row = conn.execute(q, args).fetchone()
         return row[0] if row else 0
@@ -701,17 +711,8 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         "current_plan_count_by_city": by_city_plans,
         "parser_zero_match_since_by_city": canary,
         # Mail sign-ups only. "Held" = no confirmation mail sent yet.
-        "confirm_held":
-            scalar("SELECT COUNT(*) FROM subscriptions WHERE device_id IS NULL "
-                   "AND deleted_at IS NULL AND confirmed_at IS NULL "
-                   "AND confirmation_sent_at IS NULL "
-                   "AND created_at > datetime('now','-7 days')"),
-        "confirm_held_stale":
-            scalar("SELECT COUNT(*) FROM subscriptions WHERE device_id IS NULL "
-                   "AND deleted_at IS NULL AND confirmed_at IS NULL "
-                   "AND confirmation_sent_at IS NULL "
-                   "AND created_at > datetime('now','-7 days') "
-                   "AND created_at < datetime('now','-1 hour')"),
+        "confirm_held": len(held_rows),
+        "confirm_held_stale": sum(1 for r in held_rows if r[1]),
         "confirm_mailed_unconfirmed":
             scalar("SELECT COUNT(*) FROM subscriptions WHERE device_id IS NULL "
                    "AND deleted_at IS NULL AND confirmed_at IS NULL "
