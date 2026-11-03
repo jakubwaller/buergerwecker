@@ -107,38 +107,25 @@ def test_render_cap_still_marks_all_matched_slots_seen(db):
     mb2.assert_not_called()
 
 
-def test_confirmations_go_first_and_the_digest_gets_what_is_left(db):
-    """Pool near its cap (room for one mail): the poller sends the pending
-    confirmation before the cycle, so it takes that room, and the digest
-    behind it is deferred for quota (unrecorded, so a later cycle sends
-    it), not dropped."""
-    from app.config import load_config
-    from app.confirmations import send_pending_confirmations
+def test_digest_held_by_the_headroom_and_the_confirmation_goes_after_the_cycle(
+        db, monkeypatch):
+    """Pool at cap minus the headroom: the digest is held (deferred, not
+    dropped, so a later cycle sends it) and the confirmation, sent after the
+    cycle as the poller does, still finds room."""
     from app.mail import deferrals_today
-    sub = insert_pending(db, email="digest@example.com", city="leipzig",
-                         language="de", filter_=_f(), ttl_days=90)
-    confirm(db, sub)
-    db.execute("UPDATE subscriptions SET confirmation_sent_at=datetime('now') "
-               "WHERE id=?", (sub,))
+    sub = _pool_at_cap_minus_20(db, monkeypatch)
     signup = insert_pending(db, email="signup@example.com", city="leipzig",
                             language="en", filter_=_f(), ttl_days=90)
-    scraper = MagicMock()
-    scraper.poll.return_value = [Slot("2026-06-10", "10:30", "loc-1", "svc-A", "tok")]
-    with patch("app.cycle.get_scraper", return_value=scraper), \
-         patch("app.mail._call_brevo_batch", return_value=201) as rb:
-        send_pending_confirmations(db, load_config())
-        run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15, cycle_id="c1")
-    assert [[o.to for o in c.args[0]] for c in rb.call_args_list] == [
-        ["signup@example.com"]]
+    assert _cycle(db) == ["signup@example.com"]
     assert db.execute("SELECT confirmation_sent_at FROM subscriptions WHERE id=?",
                       (signup,)).fetchone()[0] is not None
     assert not _has_seen(db, sub) and _last_notified(db, sub) is None
     assert deferrals_today(db) >= 1
 
 
-def test_poller_sends_confirmations_before_the_cycle(monkeypatch):
-    """The order the first test relies on: in the poller loop, the
-    confirmations go out before run_cycle measures the pool for digests."""
+def test_poller_sends_confirmations_after_the_cycle(monkeypatch):
+    """In the poller loop the confirmations go out after run_cycle, so a slow
+    provider cannot delay the polls; the digests' headroom keeps them room."""
     from types import SimpleNamespace
     from app import poller
     calls = []
@@ -161,7 +148,7 @@ def test_poller_sends_confirmations_before_the_cycle(monkeypatch):
     monkeypatch.setattr(poller, "run_cycle", lambda *a, **k: calls.append("cycle"))
     with pytest.raises(Stop):
         poller.main()
-    assert calls == ["confirmations", "cycle"]
+    assert calls == ["cycle", "confirmations"]
 
 
 def _pool_at_cap_minus_20(db, monkeypatch, headroom="20"):
@@ -188,9 +175,9 @@ def _cycle(db, cycle_id="c1"):
     with patch("app.cycle.get_scraper", return_value=scraper), \
          patch("app.mail._call_mailjet_batch", return_value=200) as mb, \
          patch("app.mail._call_brevo_batch", return_value=201) as rb:
-        send_pending_confirmations(db, load_config())
         run_cycle(db, max_plans_per_city=10, rate_limit_minutes=15,
                   cycle_id=cycle_id)
+        send_pending_confirmations(db, load_config())
     return [o.to for c in mb.call_args_list + rb.call_args_list for o in c.args[0]]
 
 

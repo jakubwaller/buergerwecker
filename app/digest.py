@@ -371,7 +371,7 @@ def _past_the_confirmation_headroom(conn: sqlite3.Connection, sink: list,
     CONFIRMATION_HEADROOM mails of the providers' daily windows. They wait
     like a quota deferral: unrecorded, they lead the next cycle. Daily
     windows only (the hourly ones are send_batch's as before), mail only,
-    and confirmations (sent by the poller before the cycle) may use it."""
+    and confirmations (sent by the poller after the cycle) may use it."""
     from app.mail import WALL_HEADROOM, _dead_addresses, _record_deferrals, daily_room
     headroom = getattr(cfg, "confirmation_headroom", 0) or 0
     if not headroom:
