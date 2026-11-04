@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_parts.html" import city_grid, faq, banners with context %}
+{% from "_parts.html" import city_grid, faq, banners, mail_pressure_notice with context %}
 {% block content %}
   {{ banners(confirmed, error, lang) }}
 
@@ -32,6 +32,8 @@
       selbst, auf der Seite der Stadt. Kostenlos, ohne Konto.
     {% endif %}
   </p>
+
+  {{ mail_pressure_notice(mail_pressure, lang) }}
 
   <h2 id="staedte">
     {% if lang == 'en' %}Pick your city ({{ cities|length }})
