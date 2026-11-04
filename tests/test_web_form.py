@@ -336,3 +336,56 @@ def test_form_warns_when_the_providers_are_full_though_the_reserve_is_unused(cli
     with patch("app.confirmations.daily_room", return_value=0):
         body = client.get("/leipzig").data.decode()
     assert "Gerade sind viele Anmeldungen da" in body
+
+
+@pytest.mark.parametrize("lang, text", [
+    ("de", "E-Mails sind gerade knapp"),
+    ("en", "Email is tight right now"),
+])
+@pytest.mark.parametrize("path", ["/", "/leipzig"])
+def test_pages_nudge_to_the_app_only_under_mail_pressure(client, lang, text, path):
+    from unittest.mock import patch
+    body = client.get(f"{path}?lang={lang}").data.decode()
+    assert text not in body
+    with patch("app.cycle.subscriber_cap", return_value=(1, True)):
+        body = client.get(f"{path}?lang={lang}").data.decode()
+    notice = body[body.index(text):]
+    notice = notice[:notice.index("</div>")]
+    assert "1 email alert a day" in notice or "1 Benachrichtigung am Tag" in notice
+    assert "https://apps.apple.com/app/id6819977614" in notice
+    assert "https://groups.google.com/g/buergerwecker-beta" in notice
+
+
+def test_main_page_notice_sits_above_the_city_grid(client):
+    from unittest.mock import patch
+    with patch("app.cycle.subscriber_cap", return_value=(1, True)):
+        body = client.get("/").data.decode()
+    assert body.index("E-Mails sind gerade knapp") < body.index('id="staedte"')
+
+
+def test_one_notice_carries_both_pressure_and_held(client):
+    from unittest.mock import patch
+    with patch("app.cycle.subscriber_cap", return_value=(1, True)), \
+         patch("app.confirmations.confirmation_held", return_value=True):
+        body = client.get("/leipzig").data.decode()
+    assert "E-Mails sind gerade knapp" in body
+    assert "Gerade sind viele Anmeldungen da" in body
+    assert body.count("Mit der App kommen Benachrichtigungen per Push") == 1
+
+
+def test_a_failing_pressure_check_leaves_the_held_notice(client):
+    from unittest.mock import patch
+    with patch("app.cycle.subscriber_cap", side_effect=RuntimeError), \
+         patch("app.confirmations.confirmation_held", return_value=True):
+        r = client.get("/leipzig")
+    body = r.data.decode()
+    assert r.status_code == 200
+    assert "E-Mails sind gerade knapp" not in body
+    assert "Gerade sind viele Anmeldungen da" in body
+
+
+def test_untightened_cap_shows_no_notice(client):
+    from unittest.mock import patch
+    with patch("app.cycle.subscriber_cap", return_value=(2, False)):
+        body = client.get("/").data.decode()
+    assert "E-Mails sind gerade knapp" not in body

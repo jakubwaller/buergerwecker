@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_fields.html" import max_days_select, special_consent %}
-{% from "_parts.html" import city_grid, faq, banners, app_links with context %}
+{% from "_parts.html" import city_grid, faq, banners, mail_pressure_notice with context %}
 {% block content %}
   {{ banners(confirmed, error, lang) }}
 
@@ -102,18 +102,7 @@
       <input type="text" name="website" autocomplete="off" tabindex="-1">
     </label>
 
-    {% if confirmation_held %}
-      <div class="notice" role="status">
-        {% if lang == 'en' %}
-          Lots of sign-ups right now – the confirmation email may be delayed,
-          possibly until tomorrow. With the app, notifications come by push, with no email limit:
-        {% else %}
-          Gerade sind viele Anmeldungen da – die Bestätigungs-E-Mail kann sich
-          verzögern, eventuell bis morgen. Mit der App kommen Benachrichtigungen per Push, ohne E-Mail-Limit:
-        {% endif %}
-        {{ app_links(lang) }}
-      </div>
-    {% endif %}
+    {{ mail_pressure_notice(mail_pressure, lang) }}
 
     <button type="submit">
       {% if lang == 'en' %}Subscribe{% else %}Anmelden{% endif %}

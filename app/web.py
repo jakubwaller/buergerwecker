@@ -843,21 +843,36 @@ def create_app() -> Flask:
         all_cities, _ = _tenant_switcher(None, lang)
         return render_template("cities.html", lang=lang, cities=all_cities,
                                confirmed=confirmed, error=error,
+                               mail_pressure=_mail_pressure_now(),
                                kofi_url=app.config["TERMINE_CONFIG"].kofi_url)
 
-    def _confirmation_held_now() -> bool:
-        """Whether a sign-up made now would wait for its confirmation mail.
-        A hint only: any failure renders the form without it."""
+    def _mail_pressure_now() -> dict:
+        """What the mail pool means for a sign-up made now: `cap`, the
+        tightened daily digest cap for mail subscribers while the pool is
+        under pressure (None otherwise), and `held`, whether its confirmation
+        mail would wait. Hints only: either check failing leaves it out, and
+        a failing database renders the page without both."""
+        cfg = app.config["TERMINE_CONFIG"]
+        out = {"cap": None, "held": False}
         try:
-            from app.confirmations import confirmation_held
-            conn = connect(app.config["TERMINE_CONFIG"].db_path)
-            try:
-                return confirmation_held(conn, app.config["TERMINE_CONFIG"],
-                                         extra=1)
-            finally:
-                conn.close()
+            conn = connect(cfg.db_path)
         except Exception:
-            return False
+            return out
+        try:
+            try:
+                from app.cycle import subscriber_cap
+                cap, tight = subscriber_cap(conn, cfg)
+                out["cap"] = cap if tight else None
+            except Exception:
+                pass
+            try:
+                from app.confirmations import confirmation_held
+                out["held"] = confirmation_held(conn, cfg, extra=1)
+            except Exception:
+                pass
+        finally:
+            conn.close()
+        return out
 
     @app.route("/<city>")
     def city_page(city):
@@ -890,7 +905,7 @@ def create_app() -> Flask:
         return render_template("form.html",
                                lang=lang,
                                city=city,
-                               confirmation_held=_confirmation_held_now(),
+                               mail_pressure=_mail_pressure_now(),
                                **og,
                                confirmed=confirmed,
                                error=error,
