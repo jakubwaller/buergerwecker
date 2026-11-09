@@ -212,11 +212,12 @@ def test_admin_stats_and_summary_carry_the_cap(db):
     assert s["capped_now"] == 1
     assert s["digests_per_sub_24h"] == {"subs": 1, "digests": 2, "mean": 2.0}
     text = render_summary_email(s, now=datetime.utcnow(), anomalies=[], base_url="https://x")
-    assert "Sub cap 2/24h  held today 1 · capped now 1 · 2 digests to 1 subscribers, 2.0/sub" in text
+    assert "Sub cap mail 2 · app 10 per 24h  held today 1 · capped now 1 · 2 digests to 1 subscribers, 2.0/sub" in text
 
 
 def test_summary_is_silent_when_the_cap_is_off(db, monkeypatch):
     monkeypatch.setenv("MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY", "0")
+    monkeypatch.setenv("MAX_PUSH_DIGESTS_PER_SUBSCRIBER_PER_DAY", "0")
     from app.config import load_config
     s = stats(db, load_config())
     assert s["subscriber_cap"] == 0 and s["capped_now"] == 0
@@ -377,3 +378,33 @@ def test_under_pressure_mail_is_capped_at_one_and_push_keeps_its_own_cap(db, apn
     assert ("Mail pool under pressure: mail subscribers capped at 1/24h "
             "(app unaffected)") in text
     assert s["capped_now"] == 1
+
+
+def _push_only_at_cap(db, monkeypatch, mail_cap):
+    monkeypatch.setenv("MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY", mail_cap)
+    monkeypatch.setenv("MAX_PUSH_DIGESTS_PER_SUBSCRIBER_PER_DAY", "3")
+    pid = _push_sub(db)
+    relay = _Relay()
+    for n in range(5):
+        _cycle_both(db, [_slot(n)], f"c{n}", relay)
+        _age_last_notified(db, pid, 16)
+    assert relay.calls == 3
+    from app.config import load_config
+    return stats(db, load_config())
+
+
+def test_admin_counts_a_push_subscriber_at_its_own_cap(db, apns, monkeypatch):
+    s = _push_only_at_cap(db, monkeypatch, "2")
+    assert s["capped_now"] == 1 and s["push_cap"] == 3
+
+
+def test_admin_shows_the_push_cap_when_the_mail_cap_is_off(db, apns, monkeypatch):
+    s = _push_only_at_cap(db, monkeypatch, "0")
+    assert s["capped_now"] == 1 and s["cap_holds_today"] == 1
+    text = render_summary_email(s, now=datetime.utcnow(), anomalies=[], base_url="https://x")
+    assert "Sub cap mail off · app 3 per 24h" in text
+    monkeypatch.setenv("ADMIN_TOKEN", "a" * 32)
+    monkeypatch.setenv("DB_PATH", db.execute("PRAGMA database_list").fetchone()[2])
+    from app.web import create_app
+    body = create_app().test_client().get("/admin?token=" + "a" * 32).data.decode()
+    assert "mail off · app 3 per rolling 24h" in body

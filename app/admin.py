@@ -281,12 +281,13 @@ def render_summary_email(s: dict, *, now: datetime, anomalies: list[str],
         lines.append(f"  Deferred      today {s.get('deferrals_today', 0)}"
                      f" · 7d {s.get('deferrals_7d', 0)}"
                      f"{_walls_detail(s.get('deferral_walls_today'))}")
-    if s.get("subscriber_cap"):
+    if s.get("subscriber_cap") or s.get("push_cap"):
         d = s.get("digests_per_sub_24h") or {}
         if s.get("mail_cap_tightened"):
             lines.append(f"  Mail pool under pressure: mail subscribers "
                          f"capped at {s.get('mail_cap')}/24h (app unaffected)")
-        lines.append(f"  Sub cap {s['subscriber_cap']}/24h  held today "
+        lines.append(f"  Sub cap mail {s['subscriber_cap'] or 'off'} · app "
+                     f"{s.get('push_cap') or 'off'} per 24h  held today "
                      f"{s.get('cap_holds_today', 0)} · capped now "
                      f"{s.get('capped_now', 0)} · {d.get('digests', 0)} digests "
                      f"to {d.get('subs', 0)} subscribers, {d.get('mean', 0)}/sub")
@@ -801,6 +802,7 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         "last_deferral": last_deferral(conn),
         "deferral_walls_today": deferral_walls_today(conn),
         "subscriber_cap": sub_cap,
+        "push_cap": push_cap,
         "mail_cap": mail_cap,
         "mail_cap_tightened": mail_cap_tightened,
         "cap_holds_today":
