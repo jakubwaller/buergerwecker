@@ -281,12 +281,13 @@ def render_summary_email(s: dict, *, now: datetime, anomalies: list[str],
         lines.append(f"  Deferred      today {s.get('deferrals_today', 0)}"
                      f" · 7d {s.get('deferrals_7d', 0)}"
                      f"{_walls_detail(s.get('deferral_walls_today'))}")
-    if s.get("subscriber_cap"):
+    if s.get("subscriber_cap") or s.get("push_cap"):
         d = s.get("digests_per_sub_24h") or {}
         if s.get("mail_cap_tightened"):
             lines.append(f"  Mail pool under pressure: mail subscribers "
                          f"capped at {s.get('mail_cap')}/24h (app unaffected)")
-        lines.append(f"  Sub cap {s['subscriber_cap']}/24h  held today "
+        lines.append(f"  Sub cap mail {s['subscriber_cap'] or 'off'} · app "
+                     f"{s.get('push_cap') or 'off'} per 24h  held today "
                      f"{s.get('cap_holds_today', 0)} · capped now "
                      f"{s.get('capped_now', 0)} · {d.get('digests', 0)} digests "
                      f"to {d.get('subs', 0)} subscribers, {d.get('mean', 0)}/sub")
@@ -504,9 +505,10 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
     # notified subscriber over the last 24h (was 4.6 with 57 of 103 at 5+
     # when it was introduced).
     sub_cap = getattr(cfg, "max_digests_per_subscriber_per_day", 0) or 0
+    push_cap = getattr(cfg, "max_push_digests_per_subscriber_per_day", 0) or 0
     # Whether the mail pool's pressure has tightened the cap right now, for
     # mail subscribers (cycle.subscriber_cap): the same number the poller
-    # applies this cycle; app subscribers keep the ordinary cap. The keys
+    # applies this cycle; app subscribers have their own cap. The keys
     # keep their mail_ names: the mail pool is what trips it.
     from app.cycle import subscriber_cap
     mail_cap, mail_cap_tightened = subscriber_cap(conn, cfg)
@@ -516,7 +518,7 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         "WHERE d.sent_at > datetime('now','-24 hours') "
         "GROUP BY d.subscription_id, s.device_id "
         "HAVING COUNT(*) >= CASE WHEN s.device_id IS NULL THEN ? ELSE ? END)",
-        mail_cap, sub_cap) if sub_cap else 0
+        mail_cap or 10**9, push_cap or 10**9) if (sub_cap or push_cap) else 0
     row = conn.execute(
         "SELECT COUNT(DISTINCT subscription_id) AS subs, COUNT(*) AS digests "
         "FROM digest_deliveries WHERE sent_at > datetime('now','-24 hours')"
@@ -800,6 +802,7 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         "last_deferral": last_deferral(conn),
         "deferral_walls_today": deferral_walls_today(conn),
         "subscriber_cap": sub_cap,
+        "push_cap": push_cap,
         "mail_cap": mail_cap,
         "mail_cap_tightened": mail_cap_tightened,
         "cap_holds_today":

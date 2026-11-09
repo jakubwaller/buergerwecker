@@ -212,11 +212,12 @@ def test_admin_stats_and_summary_carry_the_cap(db):
     assert s["capped_now"] == 1
     assert s["digests_per_sub_24h"] == {"subs": 1, "digests": 2, "mean": 2.0}
     text = render_summary_email(s, now=datetime.utcnow(), anomalies=[], base_url="https://x")
-    assert "Sub cap 2/24h  held today 1 · capped now 1 · 2 digests to 1 subscribers, 2.0/sub" in text
+    assert "Sub cap mail 2 · app 10 per 24h  held today 1 · capped now 1 · 2 digests to 1 subscribers, 2.0/sub" in text
 
 
 def test_summary_is_silent_when_the_cap_is_off(db, monkeypatch):
     monkeypatch.setenv("MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY", "0")
+    monkeypatch.setenv("MAX_PUSH_DIGESTS_PER_SUBSCRIBER_PER_DAY", "0")
     from app.config import load_config
     s = stats(db, load_config())
     assert s["subscriber_cap"] == 0 and s["capped_now"] == 0
@@ -224,7 +225,7 @@ def test_summary_is_silent_when_the_cap_is_off(db, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# The same cap on both channels, and the mail cap under pool pressure
+# The push cap, and the mail cap under pool pressure
 
 def _ec_pem():
     from cryptography.hazmat.primitives import serialization
@@ -278,19 +279,31 @@ def _cycle_both(db, slots, cycle_id, relay):
     return mb.call_count
 
 
-def test_a_push_subscriber_is_capped_exactly_like_a_mail_subscriber(db, apns):
-    """Push is not a fast lane: the daily cap is the same on both channels."""
+def test_a_push_subscriber_has_its_own_cap_of_ten(db, apns):
+    """Push has no provider quota: the mail cap of 2 does not apply to it."""
     pid = _push_sub(db)
     relay = _Relay()
-    _cycle_both(db, [_slot(1)], "c1", relay)
-    _age_last_notified(db, pid, 16)
-    _cycle_both(db, [_slot(2)], "c2", relay)
-    assert relay.calls == 2 and digests_in_window(db, pid) == 2
-    _age_last_notified(db, pid, 16)
-    _cycle_both(db, [_slot(3)], "c3", relay)
-    assert relay.calls == 2                 # held
-    assert _seen(db, pid) == 2
+    for n in range(10):
+        _cycle_both(db, [_slot(n)], f"c{n}", relay)
+        _age_last_notified(db, pid, 16)
+    assert relay.calls == 10 and digests_in_window(db, pid) == 10
+    _cycle_both(db, [_slot(11)], "c11", relay)
+    assert relay.calls == 10                # held at 10, not at 2
     assert [h[1] for h in _holds(db)] == [pid]
+
+
+def test_zero_disables_the_push_cap_and_leaves_mail_capped(db, apns, monkeypatch):
+    monkeypatch.setenv("MAX_PUSH_DIGESTS_PER_SUBSCRIBER_PER_DAY", "0")
+    sid, pid = _sub(db), _push_sub(db)
+    relay = _Relay()
+    for n in range(12):
+        _cycle_both(db, [_slot(n)], f"c{n}", relay)
+        for s in (sid, pid):
+            _age_last_notified(db, s, 16)
+    assert digests_in_window(db, pid) == 12
+    assert digests_in_window(db, sid) == 2
+    assert [h[1] for h in _holds(db)] == [sid]
+
 
 
 def test_the_mail_cap_tightens_once_the_pool_is_under_pressure(db, monkeypatch):
@@ -333,7 +346,7 @@ def test_tightening_is_off_with_zero_or_a_cap_no_lower_than_the_ordinary_one(db,
     assert subscriber_cap(db, load_config()) == (0, False)
 
 
-def test_under_pressure_mail_is_capped_at_one_and_push_keeps_the_normal_cap(db, apns, monkeypatch):
+def test_under_pressure_mail_is_capped_at_one_and_push_keeps_its_own_cap(db, apns, monkeypatch):
     """Push uses no mail quota, so pressure on the mail pool leaves it alone."""
     monkeypatch.setenv("CONFIRMATION_HEADROOM", "0")   # a 20-mail pool, all headroom
     monkeypatch.setenv("MAILJET_DAILY_QUOTA", "10")
@@ -350,18 +363,48 @@ def test_under_pressure_mail_is_capped_at_one_and_push_keeps_the_normal_cap(db, 
         _age_last_notified(db, s, 16)
     _cycle_both(db, [_slot(2)], "c2", relay)
     assert digests_in_window(db, sid) == 1          # mail: held at the tightened cap
-    assert digests_in_window(db, pid) == 2          # push: normal cap of 2
+    assert digests_in_window(db, pid) == 2          # push: own cap of 10
     assert relay.calls == 2
     assert [h[1] for h in _holds(db)] == [sid]
     for s in (sid, pid):
         _age_last_notified(db, s, 16)
     _cycle_both(db, [_slot(3)], "c3", relay)
-    assert digests_in_window(db, pid) == 2          # push stops at the normal cap
-    assert sorted(h[1] for h in _holds(db)) == sorted([sid, pid])
+    assert digests_in_window(db, pid) == 3          # push: still under its cap of 10
+    assert [h[1] for h in _holds(db)] == [sid]
     from app.config import load_config
     s = stats(db, load_config())
     assert s["mail_cap_tightened"] is True and s["mail_cap"] == 1
     text = render_summary_email(s, now=datetime.utcnow(), anomalies=[], base_url="https://x")
     assert ("Mail pool under pressure: mail subscribers capped at 1/24h "
             "(app unaffected)") in text
-    assert s["capped_now"] == 2
+    assert s["capped_now"] == 1
+
+
+def _push_only_at_cap(db, monkeypatch, mail_cap):
+    monkeypatch.setenv("MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY", mail_cap)
+    monkeypatch.setenv("MAX_PUSH_DIGESTS_PER_SUBSCRIBER_PER_DAY", "3")
+    pid = _push_sub(db)
+    relay = _Relay()
+    for n in range(5):
+        _cycle_both(db, [_slot(n)], f"c{n}", relay)
+        _age_last_notified(db, pid, 16)
+    assert relay.calls == 3
+    from app.config import load_config
+    return stats(db, load_config())
+
+
+def test_admin_counts_a_push_subscriber_at_its_own_cap(db, apns, monkeypatch):
+    s = _push_only_at_cap(db, monkeypatch, "2")
+    assert s["capped_now"] == 1 and s["push_cap"] == 3
+
+
+def test_admin_shows_the_push_cap_when_the_mail_cap_is_off(db, apns, monkeypatch):
+    s = _push_only_at_cap(db, monkeypatch, "0")
+    assert s["capped_now"] == 1 and s["cap_holds_today"] == 1
+    text = render_summary_email(s, now=datetime.utcnow(), anomalies=[], base_url="https://x")
+    assert "Sub cap mail off · app 3 per 24h" in text
+    monkeypatch.setenv("ADMIN_TOKEN", "a" * 32)
+    monkeypatch.setenv("DB_PATH", db.execute("PRAGMA database_list").fetchone()[2])
+    from app.web import create_app
+    body = create_app().test_client().get("/admin?token=" + "a" * 32).data.decode()
+    assert "mail off · app 3 per rolling 24h" in body

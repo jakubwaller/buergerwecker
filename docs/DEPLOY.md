@@ -204,7 +204,7 @@ failing:
   "3 deferred" against the hourly wall is noise, against the daily wall it is
   the case for a tighter per-subscriber daily cap.
 - **Each subscriber gets at most `MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY` digests
-  per rolling 24h** (default 2, `0` disables — env only, no redeploy). The
+  per rolling 24h** (mail subscribers; default 2, `0` disables — env only, no redeploy). The
   adaptive cadence only stretches the interval and disengages on the
   earliest-slot-only tenants that generate most of the volume, so before the
   cap the mean was 4.6 digests per notified subscriber per day with more than
@@ -216,6 +216,11 @@ failing:
   the cap exists to move; the ops summary carries the same line. Deliveries
   are counted in `digest_deliveries` (7-day prune), seeded once at migration
   from `seen_slots` so the cap binds from the first cycle.
+- **App (push) subscribers have their own cap**,
+  `MAX_PUSH_DIGESTS_PER_SUBSCRIBER_PER_DAY` (default 10, `0` disables, env
+  only). Push has no provider quota, so the mail cap above only throttled the
+  channel that is not the bottleneck; in a race market each extra alert is
+  another chance to book. The adaptive cadence applies to both channels.
 - **Under pressure the cap tightens for mail subscribers before anyone is
   deferred** (`MAIL_POOL_PRESSURE_PCT`, default 80, and
   `MAIL_CAP_UNDER_PRESSURE`, default 1; `0` turns it off, and so does
@@ -225,7 +230,7 @@ failing:
   subscriber's daily cap drops to the tightened value for as long as the
   pressure lasts. A thinner day for mail is the fair degradation; a deferral
   is one person not told at all. App (push) subscribers use no mail quota
-  and keep the ordinary cap (the digest mail says so, to move people to the
+  and are not tightened (the digest mail says so, to move people to the
   app). The poller logs
   `mail pool under pressure, mail subscribers capped` on each
   cycle it applies, and `/admin` and the ops summary show the tightened cap

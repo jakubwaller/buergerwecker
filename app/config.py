@@ -82,8 +82,8 @@ class Config:
     # rolling-24h usage reaches `mail_pool_pressure_pct` of the summed caps,
     # every mail subscriber's daily cap drops to `mail_cap_under_pressure`
     # for as long as the pressure lasts, so the pool degrades a little
-    # before it defers anyone entirely. App (push) subscribers keep the
-    # ordinary cap: push uses no mail quota.
+    # before it defers anyone entirely. App (push) subscribers have their
+    # own cap: push uses no mail quota.
     # 0 for the tightened cap turns the rule off.
     mail_pool_pressure_pct: int = 80
     mail_cap_under_pressure: int = 1
@@ -100,6 +100,9 @@ class Config:
     # api._share_refusal). Devices cost nothing to mint, so this is what
     # bounds the app's footprint in a city. 0 = no ceiling.
     max_app_subscriptions_per_city: int = 100
+    # Daily digest cap for app (push) subscribers. Push has no provider quota,
+    # so it is far looser than the mail cap. 0 = no cap.
+    max_push_digests_per_subscriber_per_day: int = 10
     # Push digests the poller attempts per cycle, and seconds after which it
     # starts no more (push.send_push_batch); the rest wait for the next
     # cycle, longest-waiting first. 0 = no bound.
@@ -294,6 +297,8 @@ def load_config() -> Config:
             os.environ.get("MAIL_CAP_UNDER_PRESSURE", "1")),
         max_app_subscriptions_per_city=_nonneg_int(
             "MAX_APP_SUBSCRIPTIONS_PER_CITY", "100"),
+        max_push_digests_per_subscriber_per_day=_nonneg_int(
+            "MAX_PUSH_DIGESTS_PER_SUBSCRIBER_PER_DAY", "10"),
         push_budget_per_cycle=_nonneg_int("PUSH_BUDGET_PER_CYCLE", "200"),
         push_budget_seconds=_nonneg_int("PUSH_BUDGET_SECONDS", "20"),
     )
