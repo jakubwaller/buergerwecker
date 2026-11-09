@@ -158,6 +158,11 @@ def test_the_app_ceiling_and_the_push_budget_are_optional(monkeypatch):
     cfg = load_config()
     assert (cfg.max_app_subscriptions_per_city, cfg.push_budget_per_cycle,
             cfg.push_budget_seconds) == (100, 200, 20)
+    monkeypatch.delenv("MAX_PUSH_DIGESTS_PER_SUBSCRIBER_PER_DAY", raising=False)
+    assert load_config().max_push_digests_per_subscriber_per_day == 10
+    monkeypatch.setenv("MAX_PUSH_DIGESTS_PER_SUBSCRIBER_PER_DAY", "0")
+    assert load_config().max_push_digests_per_subscriber_per_day == 0
+    monkeypatch.delenv("MAX_PUSH_DIGESTS_PER_SUBSCRIBER_PER_DAY")
     _minimal_env(monkeypatch, MAX_APP_SUBSCRIPTIONS_PER_CITY="0",
                  PUSH_BUDGET_PER_CYCLE="50", PUSH_BUDGET_SECONDS="5")
     cfg = load_config()

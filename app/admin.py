@@ -504,9 +504,10 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
     # notified subscriber over the last 24h (was 4.6 with 57 of 103 at 5+
     # when it was introduced).
     sub_cap = getattr(cfg, "max_digests_per_subscriber_per_day", 0) or 0
+    push_cap = getattr(cfg, "max_push_digests_per_subscriber_per_day", 0) or 0
     # Whether the mail pool's pressure has tightened the cap right now, for
     # mail subscribers (cycle.subscriber_cap): the same number the poller
-    # applies this cycle; app subscribers keep the ordinary cap. The keys
+    # applies this cycle; app subscribers have their own cap. The keys
     # keep their mail_ names: the mail pool is what trips it.
     from app.cycle import subscriber_cap
     mail_cap, mail_cap_tightened = subscriber_cap(conn, cfg)
@@ -516,7 +517,7 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         "WHERE d.sent_at > datetime('now','-24 hours') "
         "GROUP BY d.subscription_id, s.device_id "
         "HAVING COUNT(*) >= CASE WHEN s.device_id IS NULL THEN ? ELSE ? END)",
-        mail_cap, sub_cap) if sub_cap else 0
+        mail_cap or 10**9, push_cap or 10**9) if (sub_cap or push_cap) else 0
     row = conn.execute(
         "SELECT COUNT(DISTINCT subscription_id) AS subs, COUNT(*) AS digests "
         "FROM digest_deliveries WHERE sent_at > datetime('now','-24 hours')"

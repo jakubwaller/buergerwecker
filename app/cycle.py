@@ -196,7 +196,7 @@ def subscriber_cap(conn: sqlite3.Connection, cfg) -> tuple[int, bool]:
     MAIL_CAP_UNDER_PRESSURE while the free provider pool's rolling-24h usage
     is at MAIL_POOL_PRESSURE_PCT or above, so the pool thins every mail
     subscriber's day a little before it defers anyone's entirely. App (push)
-    subscribers always keep the ordinary cap (`cap_for`): push uses no mail
+    subscribers have their own, looser cap (`cap_for`): push uses no mail
     quota, and a tighter day for mail is the reason to prefer the app. 0 for
     the ordinary cap means no cap at all, pressure or not: an operator who
     turned the cap off must not find a hidden one; 0 for the pressure cap
@@ -214,9 +214,9 @@ def subscriber_cap(conn: sqlite3.Connection, cfg) -> tuple[int, bool]:
 
 
 def cap_for(sub, mail_cap: int, cfg) -> int:
-    """This subscriber's daily cap: push is exempt from the pressure cap."""
+    """This subscriber's daily cap: push has its own, exempt from pressure."""
     if sub.device_id is not None:
-        return getattr(cfg, "max_digests_per_subscriber_per_day", 0) or 0
+        return getattr(cfg, "max_push_digests_per_subscriber_per_day", 0) or 0
     return mail_cap
 
 
