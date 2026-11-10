@@ -168,15 +168,17 @@
   {% endif %}
 {% endmacro %}
 
-{# How many wait for this city: a plain city total, never per type or office.
-   `n` is None below the threshold. #}
-{% macro queue_notice(n, city_name, lang) %}
+{# How many wait for this tenant (one Amt of a city, not per type or office
+   choice); `office` names the Amt when the tenant has one. `n` is None below
+   the threshold. #}
+{% macro queue_notice(n, city_name, office, lang) %}
   {% if n %}
+    {% set where = city_name ~ (' (' ~ office ~ ')' if office else '') %}
     <p class="notice notice-warn" role="status">
       {% if lang == 'en' %}
-        {{ n }} people are waiting for an appointment in {{ city_name }} right now. So expect to wait.
+        {{ n }} people are waiting for an appointment in {{ where }} right now. So expect to wait.
       {% else %}
-        Für {{ city_name }} warten gerade {{ n }} Personen auf einen Termin. Rechne also mit Wartezeit.
+        Für {{ where }} warten gerade {{ n }} Personen auf einen Termin. Rechne also mit Wartezeit.
       {% endif %}
     </p>
   {% endif %}

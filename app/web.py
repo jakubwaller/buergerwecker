@@ -937,6 +937,7 @@ def create_app() -> Flask:
                                error=error,
                                heading=catalog.display_text("heading", lang),
                                city_name=city_name,
+                               office=catalog.display_text("office", lang),
                                note=catalog.display_text("note", lang),
                                other_cities=other_cities,
                                sibling_offices=sibling_offices,
