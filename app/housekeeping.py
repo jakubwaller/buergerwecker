@@ -1,5 +1,7 @@
 from __future__ import annotations
 import sqlite3
+import time
+import requests
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -44,6 +46,7 @@ def run_once(conn: sqlite3.Connection) -> None:
     step(_prune_email_failures, conn)
     step(_prune_suppressions, conn, cfg)
     step(_prune_push_devices, conn)
+    step(_prune_mailjet_contacts, cfg)
     step(_prune_rate_records, conn)
     step(_prune_availability, conn)
     step(_prune_slot_snapshots, conn)
@@ -731,3 +734,43 @@ def _send_summary_email(conn, cfg, failed=()):
         )
     except Exception:
         pass
+
+
+def _prune_mailjet_contacts(cfg) -> None:
+    """Delete Mailjet contacts older than MAILJET_CONTACT_MAX_AGE_DAYS.
+
+    Every Send API recipient becomes a contact, and the free plan stops sending
+    above 1000. Three days is enough: bounce and complaint webhooks for a send
+    arrive within that window and the app keeps its own suppressions, so
+    nothing reads Mailjet-side contact state. The next send re-creates a
+    deleted contact. Logs counts only, never an address."""
+    days = cfg.mailjet_contact_max_age_days
+    if days <= 0:
+        return
+    auth = (cfg.mailjet_api_key, cfg.mailjet_api_secret)
+    cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    old: list[int] = []
+    try:
+        offset = 0
+        while len(old) < 1000:
+            r = requests.get("https://api.mailjet.com/v3/REST/contact",
+                             params={"Limit": 1000, "Offset": offset}, auth=auth, timeout=30)
+            if r.status_code != 200:
+                print(f"mailjet contact prune: list returned {r.status_code}", flush=True)
+                return
+            rows = r.json().get("Data", [])
+            old += [c["ID"] for c in rows if c["CreatedAt"] < cutoff]
+            if len(rows) < 1000:
+                break
+            offset += 1000
+        deleted = 0
+        for cid in old[:1000]:
+            d = requests.delete(f"https://api.mailjet.com/v4/contacts/{cid}", auth=auth, timeout=30)
+            if d.status_code != 200:
+                print(f"mailjet contact prune: delete returned {d.status_code}", flush=True)
+                break
+            deleted += 1
+            time.sleep(0.05)
+        print(f"mailjet contact prune: deleted {deleted} of {len(old)} old contacts", flush=True)
+    except (requests.RequestException, ValueError, KeyError) as exc:
+        print(f"mailjet contact prune failed: {type(exc).__name__}", flush=True)
