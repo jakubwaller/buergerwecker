@@ -261,7 +261,7 @@ def test_any_error_in_the_change_log_is_contained(db, day, monkeypatch):
 def test_prune_drops_change_rows_older_than_90_days(db):
     for age, loc in ((91, "old"), (89, "new")):
         db.execute("INSERT INTO earliest_slot_changes VALUES "
-                   f"(datetime('now','-{age} days'), 'muenster-kfz', 's', ?, NULL, NULL)",
+                   f"(datetime('now','-{age} days'), 'muenster-kfz', 's', ?, NULL, NULL, 0)",
                    (loc,))
     from app.housekeeping import _prune_earliest_changes
     _prune_earliest_changes(db)
