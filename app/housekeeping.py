@@ -46,7 +46,7 @@ def run_once(conn: sqlite3.Connection) -> None:
     step(_prune_email_failures, conn)
     step(_prune_suppressions, conn, cfg)
     step(_prune_push_devices, conn)
-    step(_prune_mailjet_contacts, cfg)
+    step(_start_mailjet_prune, conn, cfg)
     step(_prune_rate_records, conn)
     step(_prune_availability, conn)
     step(_prune_slot_snapshots, conn)
@@ -736,41 +736,78 @@ def _send_summary_email(conn, cfg, failed=()):
         pass
 
 
-def _prune_mailjet_contacts(cfg) -> None:
-    """Delete Mailjet contacts older than MAILJET_CONTACT_MAX_AGE_DAYS.
+_mailjet_thread: threading.Thread | None = None
 
-    Every Send API recipient becomes a contact, and the free plan stops sending
-    above 1000. Three days is enough: bounce and complaint webhooks for a send
-    arrive within that window and the app keeps its own suppressions, so
-    nothing reads Mailjet-side contact state. The next send re-creates a
-    deleted contact. Logs counts only, never an address."""
-    days = cfg.mailjet_contact_max_age_days
-    if days <= 0:
+def _start_mailjet_prune(conn, cfg) -> None:
+    """Prune Mailjet contacts on a daemon thread (up to 1000 HTTP calls must
+    not stall the poller, as with _start_catalog_sync). The live-address set is
+    read here; the thread never touches the DB. Never two runs at once."""
+    global _mailjet_thread
+    if cfg.mailjet_max_contacts <= 0:
+        return
+    if _mailjet_thread is not None and _mailjet_thread.is_alive():
+        print("mailjet contact prune: previous run still in progress, skipping", flush=True)
+        return
+    live = {r[0] for r in conn.execute(
+        "SELECT lower(email) FROM subscriptions "
+        "WHERE deleted_at IS NULL AND expires_at > CURRENT_TIMESTAMP")}
+    _mailjet_thread = threading.Thread(target=_prune_mailjet_contacts, args=(cfg, live),
+                                       name="mailjet-prune", daemon=True)
+    _mailjet_thread.start()
+
+def wait_for_mailjet_prune(timeout: float | None = None) -> None:
+    """Block until the background prune (if any) is done. For tests."""
+    if _mailjet_thread is not None:
+        _mailjet_thread.join(timeout)
+
+def _prune_mailjet_contacts(cfg, live: set[str]) -> None:
+    """Delete Mailjet contacts: first every address without a live subscription,
+    then, if more than MAILJET_MAX_CONTACTS remain, the oldest by CreatedAt.
+
+    People who left should not stay at the processor, and the free plan stops
+    sending above 1000 contacts. Contacts of live subscribers are only touched
+    when the ceiling forces it, because a deleted contact may no longer deliver
+    a late complaint webhook. Logs counts and status codes only, never an
+    address. Failures are logged, not raised (like the catalog sync)."""
+    ceiling = cfg.mailjet_max_contacts
+    if ceiling <= 0:
         return
     auth = (cfg.mailjet_api_key, cfg.mailjet_api_secret)
-    cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    old: list[int] = []
+    contacts: list[tuple[str, int, str]] = []
     try:
         offset = 0
-        while len(old) < 1000:
+        while True:
             r = requests.get("https://api.mailjet.com/v3/REST/contact",
                              params={"Limit": 1000, "Offset": offset}, auth=auth, timeout=30)
             if r.status_code != 200:
                 print(f"mailjet contact prune: list returned {r.status_code}", flush=True)
                 return
             rows = r.json().get("Data", [])
-            old += [c["ID"] for c in rows if c["CreatedAt"] < cutoff]
+            contacts += [(c["CreatedAt"], c["ID"], c["Email"].lower()) for c in rows]
             if len(rows) < 1000:
                 break
             offset += 1000
-        deleted = 0
-        for cid in old[:1000]:
-            d = requests.delete(f"https://api.mailjet.com/v4/contacts/{cid}", auth=auth, timeout=30)
-            if d.status_code != 200:
-                print(f"mailjet contact prune: delete returned {d.status_code}", flush=True)
-                break
-            deleted += 1
+        gone = [c for c in contacts if c[2] not in live]
+        kept = sorted(c for c in contacts if c[2] in live)
+        gone += kept[:max(0, len(kept) - ceiling)]
+        deleted = failed = 0
+        codes: set[str] = set()
+        for _, cid, _ in gone[:1000]:
+            try:
+                d = requests.delete(f"https://api.mailjet.com/v4/contacts/{cid}",
+                                    auth=auth, timeout=30)
+                code = str(d.status_code)
+            except requests.RequestException as exc:
+                code = type(exc).__name__
+            if code == "200":
+                deleted += 1
+            else:
+                failed += 1
+                codes.add(code)
+                if failed >= 10:
+                    break
             time.sleep(0.05)
-        print(f"mailjet contact prune: deleted {deleted} of {len(old)} old contacts", flush=True)
-    except (requests.RequestException, ValueError, KeyError) as exc:
+        print(f"mailjet contact prune: {len(contacts)} contacts, deleted {deleted}, "
+              f"failed {failed} {sorted(codes)}", flush=True)
+    except Exception as exc:
         print(f"mailjet contact prune failed: {type(exc).__name__}", flush=True)

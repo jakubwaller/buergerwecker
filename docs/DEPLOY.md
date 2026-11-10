@@ -127,6 +127,8 @@ reports success and reloads the old config).
    - The Mailjet API key + secret (required — Mailjet is the primary sender).
      `BREVO_API_KEY` and `SWEEGO_API_KEY` are optional: leave a key blank to
      disable that provider.
+   - `MAILJET_MAX_CONTACTS` drives the daily contact prune. It is account-wide, so the Mailjet
+     account must be used by this app only.
    - Review the email-delivery settings (`EMAIL_PROVIDER_ORDER`,
      `BREVO_DAILY_QUOTA`, `SWEEGO_DAILY_QUOTA`,
      `MAILJET_HOURLY_QUOTA`, `MAILJET_DAILY_QUOTA`,
