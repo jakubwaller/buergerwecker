@@ -237,6 +237,9 @@ failing:
   `mail pool under pressure, mail subscribers capped` on each
   cycle it applies, and `/admin` and the ops summary show the tightened cap
   while it is on.
+- **At most `MAIL_RECIPIENTS_PER_SLOT` mail subscribers hear of one slot per poll**
+  (default 30, `0` off, app exempt), longest-waiting first; the rest hear of it next
+  poll if it is still free, so one slot cannot use up everyone's daily mail.
 - **When mail is out of quota, push waits behind it: one queue, one wall**
   (`digest._behind_the_mail_wall`). Every digest of a cycle, mail and push,
   stands in one queue, longest-waiting first. Before either batch starts,
