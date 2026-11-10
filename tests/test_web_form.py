@@ -411,10 +411,20 @@ def _queue_sub(conn, n, city="leipzig", *, confirmed="datetime('now')",
 def test_queue_line_shows_waiting_from_50(client):
     _queue_sub(_queue_db(client), 50)
     de = client.get("/leipzig").data.decode()
-    assert "Für Leipzig warten gerade 50 Personen auf einen Termin. Rechne also mit Wartezeit." in de
+    assert "Für Leipzig (Bürgerbüro) warten gerade 50 Personen auf einen Termin. Rechne also mit Wartezeit." in de
     assert 'class="notice notice-warn" role="status"' in de
     en = client.get("/leipzig?lang=en").data.decode()
-    assert "50 people are waiting for an appointment in Leipzig right now. So expect to wait." in en
+    assert "50 people are waiting for an appointment in Leipzig (Citizens&#39; office) right now. So expect to wait." in en
+
+
+def test_queue_line_names_the_office_of_the_tenant(client):
+    _queue_sub(_queue_db(client), 50, city="muenster-kfz")
+    de = client.get("/muenster-kfz").data.decode()
+    assert "Für Münster (KFZ-Zulassungsstelle) warten gerade 50 Personen" in de
+    en = client.get("/muenster-kfz?lang=en").data.decode()
+    assert "in Münster (Vehicle registration office) right now" in en
+    _queue_sub(_queue_db(client), 50, city="augsburg")      # no `office` in display.json
+    assert "Für Augsburg warten gerade 50" in client.get("/augsburg").data.decode()
 
 
 def test_queue_line_hidden_below_50(client):
