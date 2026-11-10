@@ -149,7 +149,7 @@
    Push uses no mail quota, so the app is the way around both. #}
 {% macro mail_pressure_notice(p, lang) %}
   {% if p and (p.cap or p.held) %}
-    <div class="notice" role="status">
+    <div class="notice notice-warn" role="status">
       {% if lang == 'en' %}
         {% if p.cap %}Email is tight right now: for the time being we send at
           most {{ p.cap }} email alert{% if p.cap != 1 %}s{% endif %} a day.{% endif %}
@@ -172,7 +172,7 @@
    totals, never per type or office. `q` is None below the threshold. #}
 {% macro queue_notice(q, city_name, lang) %}
   {% if q %}
-    <p class="notice" role="status">
+    <p class="notice notice-warn" role="status">
       {% if lang == 'en' %}
         {{ q.n }} people are waiting for an appointment in {{ city_name }} right now.
         {% if q.x %}Over the last 7 days we reported a free slot about {{ q.x }} time{% if q.x != 1 %}s{% endif %} a day on average. So expect to wait.{% endif %}
