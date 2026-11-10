@@ -414,3 +414,43 @@ def test_a_one_off_send_records_the_tenants_own_key(db):
     assert has_seen_slot(db, sid, slot.hash()) is False
     # …with the time, so a later cancellation on that day is still news.
     assert has_seen_slot(db, sid, slot.day_hash(), at="08:00") is False
+
+
+# --- read_times: the free times of the earliest day (muenster-kfz) ---------
+
+# One poll per cycle: the earliest slot, then the day's other free times the
+# suggestion list adds. A booking, a cancellation, then the day is gone.
+_POLLS = [("2026-06-10", ["09:00", "09:20", "10:30"]),
+          ("2026-06-10", ["09:20", "10:30"]),
+          ("2026-06-10", ["08:30", "09:20", "10:30"]),
+          ("2026-06-11", ["08:00", "10:40"])]
+
+
+@pytest.mark.parametrize("read_times", [False, True])
+def test_reading_the_days_times_sends_what_the_earliest_slot_alone_sent(db, read_times, monkeypatch):
+    """An all-day subscriber gets the same digests either way: the day key
+    is unchanged. A subscriber whose window misses the earliest time hears
+    about the later ones, which is the point. Several times on one day are
+    one key to the cadence, as the single earliest slot was."""
+    monkeypatch.setenv("MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY", "0")
+    def sub(email, start, end):
+        f = Filter(appointment_types=["2408"], locations="all",
+                   weekdays=[1, 2, 3, 4, 5, 6, 7],
+                   time_window_start=start, time_window_end=end)
+        sid = insert_pending(db, email=email, city="muenster-kfz",
+                             language="de", filter_=f, ttl_days=90)
+        confirm(db, sid)
+        return sid
+    all_day = sub("all@example.com", time(0, 0), time(23, 59))
+    sub("late@example.com", time(10, 0), time(12, 0))
+    sent = []
+    for n, (day, times) in enumerate(_POLLS):
+        _make_due_again(db)
+        _run(db, [Slot(day, t, "243", "2408", f"{day}T{t}@243")
+                  for t in (times if read_times else times[:1])],
+             cycle_id=f"c{n}", sent=sent)
+    told = [it.to for it in sent]
+    assert told.count("all@example.com") == 3
+    assert told.count("late@example.com") == (2 if read_times else 0)
+    assert db.execute("SELECT last_match_count FROM subscriptions WHERE id=?",
+                      (all_day,)).fetchone()[0] == 1

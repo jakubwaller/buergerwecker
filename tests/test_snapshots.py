@@ -199,6 +199,15 @@ def test_later_earlier_vanished_and_new_office_each_write_one_row(db, day):
     ]
 
 
+def test_several_times_per_office_log_only_the_earliest(db, day):
+    """read_times: a later time coming or going is no change of the earliest."""
+    _poll(db, [_slot(loc="a", t="11:00"), _slot(loc="a"), _slot(loc="a", t="12:00")])
+    _poll(db, [_slot(loc="a"), _slot(loc="a", t="12:00")], n=1)
+    _poll(db, [_slot(loc="a", t="11:00"), _slot(loc="a", t="12:00")], n=2)
+    assert [r[1:] for r in _changes(db)] == [("a", "2026-06-10", "10:30", 1),
+                                             ("a", "2026-06-10", "11:00", 0)]
+
+
 def test_a_missing_snapshot_writes_a_new_baseline_row(db, day):
     _poll(db, [_slot(loc="a")])
     db.execute("DELETE FROM slot_snapshots")      # pruned after a gap

@@ -741,8 +741,10 @@ are missing or wrong on the VPS: check `docker compose logs poller | grep
   `Cache-Control: private, no-store`.
   Read from `slot_snapshots`, one row per (city, service) that the poller
   rewrites after every cycle in which all of the service's plans succeeded
-  (`app/snapshots.py`), so the overview adds no upstream request: the one
-  GET per watched Anliegen per cycle stays what the cities see. A service
+  (`app/snapshots.py`), so the overview adds no upstream request: the
+  poll's own requests per poll plan per cycle (one GET on TEVIS,
+  three on a `read_times` tenant, a service watched by two plans read twice, see `app/scrapers/tevis.py`) stay what the
+  cities see. A service
   nobody watches has no entry; a failed poll keeps the previous row with its
   older `polled_at`. Rows are pruned after a day.
 - `GET/POST /api/v1/subscriptions`, `GET/PUT/DELETE
@@ -963,6 +965,11 @@ can be overridden per tenant in `scraper_config.json`:
   not a property any tenant could differ on: the slot that appears the moment
   somebody books is the same inventory a minute later, while the earliest slot
   only ever moves *back* when somebody cancels — exactly the news worth sending.
+  A `read_times` tenant (`muenster-kfz`, see `app/scrapers/tevis.py`) reports
+  every free time its suggestion list shows on that earliest day, still one
+  office's earliest day only, so it stays `day`: one key per day as before, and
+  the extra times only let a subscriber's time window match a later one. The
+  cadence counts matched keys, not slots, so they do not slow it down either.
 
 History, for anyone tempted to narrow this again: the first version of `day`
 was a plain date key that suppressed cancellations along with bookings, so it
@@ -970,7 +977,10 @@ ran on `muenster-kfz` alone from 2026-08-25. The key learnt the time on
 2026-08-26 (schema 11) and the vendor default followed the same day. If a
 vendor ever needs checking, `SELECT city, MAX(n_slots) FROM availability_samples
 WHERE location_uuid <> '' GROUP BY city` reads exactly 1 for earliest-slot-only
-tenants and hundreds or thousands for real inventory.
+tenants and hundreds or thousands for real inventory. A `read_times` tenant
+reads up to the length of its suggestion list (a handful): its availability
+series counts free times on the earliest day from the deploy that enabled it,
+so it is not comparable with the samples before.
 
 Rows written under `day` before `seen_slots.best_time` existed (schema 11)
 carry no time and keep suppressing the whole day, as they always did, until
@@ -1042,7 +1052,8 @@ code wrote cover everything inside the new horizon.
 
 `earliest_slot_changes` is purely observational data (no personal data) for
 the `day` tenants, which expose only the earliest free slot per office and
-service. `record_snapshots` appends a row whenever that earliest slot of an
+service (a `read_times` tenant also shows the other free times of that day;
+only the earliest is logged). `record_snapshots` appends a row whenever that earliest slot of an
 office changes (a baseline row on the first poll; `slot_date`/`slot_time` NULL
 = nothing free any more). Tenants that list real inventory write nothing; their
 counts are in `availability_samples`. Rows are pruned after 90 days.

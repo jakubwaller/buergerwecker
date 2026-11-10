@@ -411,6 +411,7 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
         candidate_keys: list[SeenKey] = []
         seen_in_cycle: set[str] = set()
         matched_total = 0
+        matched_keys: set[str] = set()
         if sub.city not in seen_key_fns:
             seen_key_fns[sub.city] = _seen_key_fn(sub.city)
         seen_key = seen_key_fns[sub.city]
@@ -437,6 +438,11 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
             # reported, which only a cancellation can produce. See
             # Catalog.seen_key and models.SeenKey.
             key = seen_key(slot)
+            # The abundance is counted in keys: a read_times tenant's free
+            # times on one day are one day key, as its single earliest slot
+            # was, so they must not stretch the cadence. Elsewhere one slot
+            # is one key and this equals matched_total.
+            matched_keys.add(key.key)
             if not has_seen_slot(conn, sub.id, key.key, at=key.best_time):
                 candidates.append(slot)
                 candidate_keys.append(key)
@@ -483,7 +489,7 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
                 mailed[(sub.city, k)] = mailed.get((sub.city, k), 0) + 1
         send_digest(conn=conn, subscription=sub, matched_slots=candidates,
                     cycle_id=cycle_id, cfg=cfg, sink=outbox,
-                    match_count=matched_total,
+                    match_count=len(matched_keys),
                     seen_keys=candidate_keys)
     if held_back:
         print(f"cycle {cycle_id}: {held_back} mail subscriber(s) held back by "

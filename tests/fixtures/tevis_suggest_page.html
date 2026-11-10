@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<!-- Synthetic, minimal: shaped like a TEVIS "Terminvorschläge" page (wizard
+     step 4, GET /suggest) as Münster served it on 2026-11-10. Free times are
+     forms, taken ones disabled buttons; the list runs into a second day. -->
+<html lang="de">
+<body>
+<h1> Schritt 4<span class='visuallyhidden'> von 6</span>: Terminvorschläge - Auswahl der Zeit </h1>
+<form action="" method="get" id="suggest_filter_form">
+  <input type="hidden" name="loc" value="243" />
+  <input type="hidden" name="mdt" value="0" />
+  <input type="hidden" name="cnc-2407" value="1" />
+  <input type="text" name="filter_date_from" id="filter_date_from" class="suggest_date" value="01.12.2026" />
+  <input title="Filtern" type="submit" value="Filtern" name="suggest_filter" />
+</form>
+<div id="sugg_accordion">
+  <h3 title="Dienstag, 01.12.2026">Dienstag, 01.12.2026</h3>
+  <div id="panel_1">
+  <table class="sugg_table ">
+  <tr>
+    <th scope="row"><span aria-hidden="true">08:00 - 09:00</span></th>
+    <td><button type="button" class="suggest_btn btn btn-primary " disabled>08:00</button></td>
+    <td><form method="post" class="suggestion_form" style="margin-bottom: 0px;">
+      <input type="hidden" name="start" value="490" />
+      <input type="hidden" name="date" value="20261201" />
+      <input type="hidden" name="checksum" value="synthetic-1" />
+      <button type="submit" class="suggest_btn btn btn-primary " title="08:10">08:10</button >
+    </form></td>
+    <td><button type="button" class="suggest_btn btn btn-primary " disabled>08:20</button></td>
+  </tr>
+  <tr>
+    <th scope="row"><span aria-hidden="true">09:00 - 10:00</span></th>
+    <td><button type="button" class="suggest_btn btn btn-primary " disabled>09:20</button></td>
+    <td><form method="post" class="suggestion_form" style="margin-bottom: 0px;">
+      <input type="hidden" name="start" value="570" />
+      <input type="hidden" name="date" value="20261201" />
+      <input type="hidden" name="checksum" value="synthetic-2" />
+      <button type="submit" class="suggest_btn btn btn-primary " title="9:30">9:30</button >
+    </form></td>
+  </tr>
+  </table>
+  </div>
+  <h3 title="Mittwoch, 02.12.2026">Mittwoch, 02.12.2026</h3>
+  <div id="panel_2">
+  <table class="sugg_table ">
+  <tr>
+    <th scope="row"><span aria-hidden="true">07:00 - 08:00</span></th>
+    <td><form method="post" class="suggestion_form" style="margin-bottom: 0px;">
+      <input type="hidden" name="start" value="470" />
+      <input type="hidden" name="date" value="20261202" />
+      <input type="hidden" name="checksum" value="synthetic-3" />
+      <button type="submit" class="suggest_btn btn btn-primary " title="07:50">07:50</button >
+    </form></td>
+  </tr>
+  </table>
+  </div>
+</div>
+</body>
+</html>
