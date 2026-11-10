@@ -233,6 +233,23 @@ def test_a_failing_change_log_still_lets_the_snapshot_through(db, day):
     assert db.execute("SELECT n_total FROM slot_snapshots").fetchone()[0] == 1
 
 
+@pytest.mark.parametrize("raw", ["not json", "[1, 2]"])
+def test_a_malformed_previous_row_does_not_stop_the_snapshot(db, day, raw):
+    db.execute("INSERT INTO slot_snapshots VALUES ('leipzig', 'svc-A', ?, 1, "
+               "CURRENT_TIMESTAMP)", (raw,))
+    _poll(db, [_slot()])
+    assert db.execute("SELECT n_total FROM slot_snapshots").fetchone()[0] == 1
+
+
+def test_any_error_in_the_change_log_is_contained(db, day, monkeypatch):
+    import app.snapshots
+    monkeypatch.setattr(app.snapshots, "_earliest",
+                        MagicMock(side_effect=ValueError("bad tuple")))
+    _poll(db, [_slot()])      # _parse_slots swallows bad JSON, so force the failure
+    assert db.execute("SELECT n_total FROM slot_snapshots").fetchone()[0] == 1
+    assert _changes(db) == []
+
+
 def test_prune_drops_change_rows_older_than_90_days(db):
     for age, loc in ((91, "old"), (89, "new")):
         db.execute("INSERT INTO earliest_slot_changes VALUES "

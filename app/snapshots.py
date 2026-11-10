@@ -135,7 +135,7 @@ def _log_earliest_changes(conn: sqlite3.Connection, fulls: dict, now_ts: str) ->
                 "INSERT INTO earliest_slot_changes "
                 "(changed_at, city, service_uuid, location_uuid, slot_date, slot_time) "
                 "VALUES (?,?,?,?,?,?)", out)
-    except sqlite3.Error as exc:
+    except Exception as exc:
         print(f"snapshots: earliest-slot changes not recorded: {exc!r}", flush=True)
 
 
