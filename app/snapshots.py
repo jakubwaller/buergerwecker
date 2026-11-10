@@ -4,8 +4,8 @@ The poller already fetches every watched service's free slots each cycle and
 then forgets them: the digest path only needs what is new per subscriber.
 The app shows a live overview per city ("what is free right now") and a
 widget with the earliest slot, and both read from here rather than from the
-city's site, so the app adds no upstream request: one GET per watched
-Anliegen per cycle stays exactly that. A service nobody watches has no
+city's site, so the app adds no upstream request: the poll's own requests
+per watched Anliegen per cycle stay exactly that. A service nobody watches has no
 snapshot, and the overview says so instead of polling it.
 
 One row per (city, service), the union of every plan that covers the
@@ -106,7 +106,8 @@ def _log_earliest_changes(conn: sqlite3.Connection, fulls: dict, now_ts: str) ->
     """Append a row to earliest_slot_changes for every office whose earliest
     slot differs from the previous snapshot (all offices once, when there is
     none). Only for 'day' tenants, which expose just the earliest slot per
-    office, so the capped stored list still holds each office's earliest.
+    office (read_times: a handful of times on its day), so the capped stored
+    list still holds each office's earliest.
     Runs before the upsert replaces the old list. Never raises."""
     from app.catalog import load_catalog
     granularity: dict[str, bool] = {}

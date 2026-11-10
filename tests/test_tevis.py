@@ -2,7 +2,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 import pytest
 import requests
-from app.models import PollPlan
+from app.models import PollPlan, Slot
 from app.scrapers import tevis, get_scraper
 from app.catalog import load_catalog, booking_start_url
 
@@ -159,3 +159,85 @@ def test_a_relogin_rebootstraps_every_tenant_on_its_host():
         tevis.poll(plan, http=http)
     assert (base, "sibling") not in http._tevis_ready
     assert ("https://other.example.com", "1") in http._tevis_ready
+
+
+# --- read_times: the suggestion list (wizard step 4), muenster-kfz only -----
+
+SUGGEST = (Path(__file__).parent / "fixtures"
+           / "tevis_suggest_page.html").read_text(encoding="utf-8")
+
+# The office card as the /location page renders it (hidden fields + "Weiter").
+MUENSTER_LOCATION = """<html><body>
+<form method="post"><input type="hidden" name="loc" value="243" />
+<input type="hidden" name="gps_lat" value="51.9" />
+<input type="hidden" name="gps_long" value="7.6" />
+Name KFZ-Zulassungsstelle Nächster Termin ab 01.12.2026, 08:10 Uhr
+<input type="submit" name="select_location" value="Weiter" /></form>
+</body></html>"""
+
+
+def _earliest(service="2407"):
+    return Slot("2026-12-01", "08:10", "243", service, "2026-12-01T08:10@243")
+
+
+def _kfz(service="2407"):
+    return PollPlan(city="muenster-kfz", appointment_type=service, locations="all")
+
+
+def test_parse_times_keeps_the_free_times_of_the_first_day_only():
+    """Taken times are disabled buttons, not forms. 02.12 07:50 is free but on
+    a later day: a new day key, i.e. a mail the earliest-slot reading never
+    sent, so it is dropped."""
+    slots = tevis.parse_times(SUGGEST, _earliest())
+    assert [(s.date, s.time_str) for s in slots] == [("2026-12-01", "08:10"),
+                                                     ("2026-12-01", "09:30")]
+    assert {(s.location_uuid, s.service_uuid) for s in slots} == {("243", "2407")}
+    assert slots[1].booking_token == "2026-12-01T09:30@243"
+
+
+@pytest.mark.parametrize("earliest", [_earliest(service="2408"),
+                                      Slot("2026-12-01", "08:10", "244", "2407", "t")])
+def test_parse_times_refuses_a_list_for_another_service_or_office(earliest):
+    assert tevis.parse_times(SUGGEST, earliest) == []
+
+
+def test_only_muenster_kfz_reads_times():
+    assert [c for c in sorted(p.parent.name for p in
+                              (Path(__file__).parents[1] / "catalog")
+                              .glob("*/scraper_config.json"))
+            if load_catalog(c).scraper_config.get("read_times")] == ["muenster-kfz"]
+
+
+def test_read_times_selects_the_office_reads_the_list_and_never_a_time():
+    http = _http(["anliegen", MUENSTER_LOCATION, SUGGEST])
+    slots = tevis.poll(_kfz(), http=http)
+    assert [s.time_str for s in slots] == ["08:10", "09:30"]
+    # The one POST is the office's "Weiter", to /location, nothing of a time.
+    (args, kw), = [c[:2] for c in http.post.call_args_list]
+    assert args[0].endswith("/location")
+    assert kw["params"]["cnc-2407"] == "1"
+    assert kw["data"] == {"loc": "243", "gps_lat": "51.9", "gps_long": "7.6",
+                          "select_location": "Weiter"}
+    assert kw["allow_redirects"] is False
+    assert [c[0][0].rsplit("/", 1)[1] for c in http.get.call_args_list] == [
+        "select2", "location", "suggest"]
+
+
+@pytest.mark.parametrize("post, suggest", [
+    (requests.Timeout("slow"), SUGGEST),         # the step times out
+    (None, "<html>Sitzung abgelaufen</html>"),   # the list parses to nothing
+    (None, SUGGEST.replace("cnc-2407", "cnc-2408")),  # another plan's list
+])
+def test_read_times_falls_back_to_the_earliest_slot(post, suggest):
+    http = _http(["anliegen", MUENSTER_LOCATION, suggest])
+    http.post.side_effect = post
+    slots = tevis.poll(_kfz(), http=http)
+    assert [(s.date, s.time_str, s.booking_token) for s in slots] == [
+        ("2026-12-01", "08:10", "2026-12-01T08:10@243")]
+
+
+def test_a_tenant_without_the_flag_makes_no_extra_request():
+    http = _http(["anliegen", FIXTURE])
+    tevis.poll(_plan(), http=http)
+    assert http.get.call_count == 2
+    http.post.assert_not_called()
