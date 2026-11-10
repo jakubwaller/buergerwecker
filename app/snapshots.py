@@ -57,6 +57,7 @@ def record_snapshots(conn: sqlite3.Connection, plans: list, polled_cities: set,
             incomplete.add(svc)
     now_ts = sql_ts(now or datetime.utcnow())
     rows = []
+    fulls: dict[tuple[str, str], list[tuple[str, str, str]]] = {}
     kept: dict[str, int] = {}
     for (city, service), slots in by_service.items():
         if (city, service) in incomplete:
@@ -70,6 +71,7 @@ def record_snapshots(conn: sqlite3.Connection, plans: list, polled_cities: set,
                 continue
             seen.add(key)
             compact.append(key)
+        fulls[(city, service)] = compact
         rows.append((city, service, json.dumps(compact[:MAX_SNAPSHOT_SLOTS]),
                      len(compact), now_ts))
     for city, n in sorted(kept.items()):
@@ -77,6 +79,7 @@ def record_snapshots(conn: sqlite3.Connection, plans: list, polled_cities: set,
               f"service(s) with a failed plan", flush=True)
     if not rows:
         return
+    _log_earliest_changes(conn, fulls, now_ts)
     try:
         conn.executemany(
             "INSERT INTO slot_snapshots "
@@ -89,6 +92,51 @@ def record_snapshots(conn: sqlite3.Connection, plans: list, polled_cities: set,
         )
     except sqlite3.Error as exc:
         print(f"snapshots: not recorded: {exc!r}", flush=True)
+
+
+def _earliest(slots) -> dict[str, tuple[str, str]]:
+    out: dict[str, tuple[str, str]] = {}
+    for d, t, loc in slots:
+        if loc not in out or (d, t) < out[loc]:
+            out[loc] = (d, t)
+    return out
+
+
+def _log_earliest_changes(conn: sqlite3.Connection, fulls: dict, now_ts: str) -> None:
+    """Append a row to earliest_slot_changes for every office whose earliest
+    slot differs from the previous snapshot (all offices once, when there is
+    none). Only for 'day' tenants, which expose just the earliest slot per
+    office, so the capped stored list still holds each office's earliest.
+    Runs before the upsert replaces the old list. Never raises."""
+    from app.catalog import load_catalog
+    granularity: dict[str, bool] = {}
+    out = []
+    try:
+        for (city, service), new_slots in fulls.items():
+            if city not in granularity:
+                try:
+                    granularity[city] = load_catalog(city).notify_granularity == "day"
+                except Exception:
+                    granularity[city] = False
+            if not granularity[city]:
+                continue
+            prev = conn.execute(
+                "SELECT slots_json FROM slot_snapshots WHERE city=? AND service_uuid=?",
+                (city, service)).fetchone()
+            new = _earliest(new_slots)
+            old = _earliest(_parse_slots(prev["slots_json"])) if prev else {}
+            for loc in sorted(set(new) | set(old)):
+                if prev is not None and new.get(loc) == old.get(loc):
+                    continue
+                d, t = new.get(loc, (None, None))
+                out.append((now_ts, city, service, loc, d, t))
+        if out:
+            conn.executemany(
+                "INSERT INTO earliest_slot_changes "
+                "(changed_at, city, service_uuid, location_uuid, slot_date, slot_time) "
+                "VALUES (?,?,?,?,?,?)", out)
+    except sqlite3.Error as exc:
+        print(f"snapshots: earliest-slot changes not recorded: {exc!r}", flush=True)
 
 
 def prune_snapshots(conn: sqlite3.Connection) -> None:

@@ -336,6 +336,22 @@ CREATE TABLE IF NOT EXISTS availability_samples (
 );
 CREATE INDEX IF NOT EXISTS idx_avail_city_at
   ON availability_samples(city, sampled_at);
+
+-- Every change of the earliest free slot per office and service, for tenants
+-- whose vendor only exposes that earliest slot (notify_granularity 'day').
+-- Written by app.snapshots.record_snapshots, pruned by housekeeping. Purely
+-- observational and holds no personal data; slot_date/slot_time NULL means
+-- nothing was free at that office for that service from then on.
+CREATE TABLE IF NOT EXISTS earliest_slot_changes (
+  changed_at    TIMESTAMP NOT NULL,
+  city          TEXT NOT NULL,
+  service_uuid  TEXT NOT NULL,
+  location_uuid TEXT NOT NULL,
+  slot_date     TEXT,
+  slot_time     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_earliest_changes_city_at
+  ON earliest_slot_changes(city, changed_at);
 """
 
 def connect(db_path: str) -> sqlite3.Connection:

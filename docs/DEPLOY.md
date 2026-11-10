@@ -1038,6 +1038,40 @@ been the check/record mismatch CLAUDE.md warns about (a digest per interval
 about the same inventory). Deploying it re-notifies nobody: the rows the old
 code wrote cover everything inside the new horizon.
 
+## Earliest-slot change log
+
+`earliest_slot_changes` is purely observational data (no personal data) for
+the `day` tenants, which expose only the earliest free slot per office and
+service. `record_snapshots` appends a row whenever that earliest slot of an
+office changes (a baseline row on the first poll; `slot_date`/`slot_time` NULL
+= nothing free any more). Tenants that list real inventory write nothing; their
+counts are in `availability_samples`. Rows are pruned after 90 days.
+
+A later earliest time means at least one booking, so counting those is a lower
+bound: several bookings between two polls look like one, and bookings of later
+appointments are invisible. Changes per day and service for one city:
+
+```bash
+sqlite3 -header -column ~/buergerwecker/data/app.db "
+WITH c AS (
+  SELECT changed_at, service_uuid, slot_date || ' ' || slot_time AS cur,
+         LAG(slot_date || ' ' || slot_time) OVER w AS prev,
+         LAG(changed_at) OVER w AS prev_at
+  FROM earliest_slot_changes
+  WHERE city = 'muenster-kfz'
+  WINDOW w AS (PARTITION BY service_uuid, location_uuid ORDER BY changed_at)
+)
+SELECT date(changed_at) AS day, service_uuid,
+       SUM(prev IS NOT NULL AND cur > prev)    AS moved_later,
+       SUM(prev IS NOT NULL AND cur < prev)    AS moved_earlier,
+       SUM(prev_at IS NOT NULL AND prev IS NULL AND cur IS NOT NULL) AS appeared,
+       SUM(prev IS NOT NULL AND cur IS NULL)   AS vanished
+FROM c
+WHERE prev_at IS NOT NULL
+GROUP BY day, service_uuid ORDER BY day, service_uuid;
+"
+```
+
 ## A TEVIS tenant renumbered its ids
 
 A TEVIS tenant can renumber every service and office id at once (five did around 2026-10-10). A
