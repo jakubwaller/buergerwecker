@@ -414,7 +414,7 @@ def test_queue_line_shows_waiting_from_50(client):
     assert "Für Leipzig (Bürgerbüro) warten gerade 50 Personen auf einen Termin. Rechne also mit Wartezeit." in de
     assert 'class="notice notice-warn" role="status"' in de
     en = client.get("/leipzig?lang=en").data.decode()
-    assert "50 people are waiting for an appointment in Leipzig (Citizens' office) right now. So expect to wait." in en
+    assert "50 people are waiting for an appointment in Leipzig (Citizens&#39; office) right now. So expect to wait." in en
 
 
 def test_queue_line_names_the_office_of_the_tenant(client):
