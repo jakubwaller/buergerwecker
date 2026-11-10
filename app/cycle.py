@@ -372,10 +372,14 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
     if tightened:
         print(f"cycle {cycle_id}: mail pool under pressure, mail "
               f"subscribers capped at {cap}/day this cycle (app unaffected)", flush=True)
-    # Mail digests staged this cycle per (city, seen key), for the per-slot cap.
+    # Mail digests staged this cycle per (city, seen key), for the per-slot
+    # cap. A dead address is staged but never delivered or stamped, so it
+    # would lead every cycle and keep a place for good: it does not count.
+    from app.mail import _dead_addresses
     per_slot = getattr(cfg, "mail_recipients_per_slot", 0) or 0
+    dead = _dead_addresses(conn, cfg) if per_slot else set()
     mailed: dict[tuple[str, str], int] = {}
-    slot_capped = 0
+    held_back = 0
     for sub in sorted(subs, key=lambda s: s.last_notified_at or datetime.min):
         # Each subscriber's floor is their own: scarce filters keep the base
         # interval, filters swimming in slots wait longer. Cheap to evaluate
@@ -441,21 +445,20 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
         if not candidates:
             continue
         # One slot must not spend every mail subscriber's day: once
-        # MAIL_RECIPIENTS_PER_SLOT mail digests carry it this cycle, it is
-        # dropped from the rest, unrecorded, so they hear of it at the next
-        # poll. Before the daily cap, so it is no cap hold. App subscribers
-        # use no mail quota and are exempt (cap_for's test).
+        # MAIL_RECIPIENTS_PER_SLOT mail digests carry it this cycle, a mail
+        # subscriber with nothing else new is held back, unrecorded and not
+        # stamped, so they lead the queue at the next poll. A digest that
+        # goes out for another slot still lists it: never trimmed, since the
+        # mail costs the same and the dropped slot would wait a whole gap.
+        # Before the daily cap, so it is no cap hold. App subscribers use no
+        # mail quota and are exempt (cap_for's test).
         # shortcut: per polling cycle, not per slot lifetime (a slot still free reaches another batch every poll); a real hold time between batches needs per-slot state across cycles.
-        is_mail = sub.device_id is None
-        if per_slot and is_mail:
-            keep = [i for i, k in enumerate(candidate_keys)
-                    if mailed.get((sub.city, k.key), 0) < per_slot]
-            if len(keep) < len(candidates):
-                slot_capped += 1
-                candidates = [candidates[i] for i in keep]
-                candidate_keys = [candidate_keys[i] for i in keep]
-            if not candidates:
-                continue
+        per_slot_applies = (bool(per_slot) and sub.device_id is None
+                            and sub.email not in dead)
+        if per_slot_applies and all(mailed.get((sub.city, k.key), 0) >= per_slot
+                                    for k in candidate_keys):
+            held_back += 1
+            continue
         # The per-subscriber daily cap, checked only once there is something
         # to send so a hold always means a real digest was held. Nothing is
         # recorded as seen and last_notified_at is not stamped: the first
@@ -474,7 +477,7 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
         # Stage for batched delivery. seen_slots + last_notified are recorded
         # inside flush_digests, but only for digests that were actually sent —
         # quota-deferred ones stay unrecorded so a later cycle re-sends them.
-        if per_slot and is_mail:
+        if per_slot_applies:
             # Once per key: at day granularity several slots share one.
             for k in {k.key for k in candidate_keys}:
                 mailed[(sub.city, k)] = mailed.get((sub.city, k), 0) + 1
@@ -482,7 +485,7 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
                     cycle_id=cycle_id, cfg=cfg, sink=outbox,
                     match_count=matched_total,
                     seen_keys=candidate_keys)
-    if slot_capped:
-        print(f"cycle {cycle_id}: {slot_capped} mail subscriber(s) held back or "
-              f"trimmed by the per-slot cap of {per_slot} this cycle", flush=True)
+    if held_back:
+        print(f"cycle {cycle_id}: {held_back} mail subscriber(s) held back by "
+              f"the per-slot cap of {per_slot} this cycle", flush=True)
     flush_digests(conn, outbox, cfg)

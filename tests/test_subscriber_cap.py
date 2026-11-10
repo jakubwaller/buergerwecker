@@ -411,9 +411,9 @@ def test_admin_shows_the_push_cap_when_the_mail_cap_is_off(db, apns, monkeypatch
 
 
 # ---------------------------------------------------------------------------
-# The per-slot cap: one slot reaches at most MAIL_RECIPIENTS_PER_SLOT mail
-# subscribers per cycle, longest-waiting first. The rest have nothing
-# recorded, so they hear of it at the next poll if it is still free.
+# The per-slot cap: at most MAIL_RECIPIENTS_PER_SLOT mail subscribers per
+# cycle get a mail because of one slot, longest-waiting first. The rest have
+# nothing recorded and lead the queue at the next poll.
 
 def _subs_waiting(db, ages):
     """Mail subscribers whose last digest was ages[i] minutes ago."""
@@ -453,19 +453,33 @@ def test_app_subscribers_all_hear_of_the_slot_and_use_no_mail_budget(db, apns, m
     assert _told(db, mails) == mails[:2]
 
 
-def test_a_full_slot_is_trimmed_and_only_the_rest_is_recorded(db, monkeypatch):
-    from app import cycle
-    monkeypatch.setenv("MAIL_RECIPIENTS_PER_SLOT", "1")
-    one, two = _slot(1), _slot(2)           # 09:01 and 10:02
+def _narrow_sub(db, email, age):
+    """A mail subscriber whose 09:00-09:30 window matches _slot(1) only."""
     narrow = Filter(appointment_types=["svc-A"], locations="all",
                     weekdays=[1, 2, 3, 4, 5, 6, 7],
                     time_window_start=time(9, 0), time_window_end=time(9, 30))
-    a = insert_pending(db, email="a@example.com", city="leipzig", language="de",
-                       filter_=narrow, ttl_days=90)
-    confirm(db, a)
+    sid = insert_pending(db, email=email, city="leipzig", language="de",
+                         filter_=narrow, ttl_days=90)
+    confirm(db, sid)
+    _age_last_notified(db, sid, age)
+    return sid
+
+
+def _seen_hashes(db, sid):
+    return {r[0] for r in db.execute(
+        "SELECT slot_hash FROM seen_slots WHERE subscription_id=?", (sid,))}
+
+
+def test_a_full_slot_still_rides_along_in_a_mail_sent_for_another(db, monkeypatch):
+    """Never trimmed: the mail costs the same with it, and a slot dropped
+    from it would wait out the subscriber's whole gap."""
+    from app import cycle
+    monkeypatch.setenv("MAIL_RECIPIENTS_PER_SLOT", "1")
+    one, two = _slot(1), _slot(2)           # 09:01 and 10:02
+    a = _narrow_sub(db, "a@example.com", 300)
     b = _sub(db, "b@example.com")
-    _age_last_notified(db, a, 300)
     _age_last_notified(db, b, 200)
+    c = _narrow_sub(db, "c@example.com", 100)
     staged = {}
     real = cycle.send_digest
 
@@ -474,18 +488,35 @@ def test_a_full_slot_is_trimmed_and_only_the_rest_is_recorded(db, monkeypatch):
                                          [k.key for k in kw["seen_keys"]])
         return real(**kw)
     monkeypatch.setattr(cycle, "send_digest", spy)
-
-    def seen_hashes(sid):
-        return {r[0] for r in db.execute(
-            "SELECT slot_hash FROM seen_slots WHERE subscription_id=?", (sid,))}
     _cycle(db, [one, two], "c1")
-    assert staged == {a: ([one.hash()], [one.hash()]),
-                      b: ([two.hash()], [two.hash()])}
-    assert seen_hashes(b) == {two.hash()}
-    # `one` is still free: b hears of it at the next poll.
-    _age_last_notified(db, b, 16)
-    _cycle(db, [one, two], "c2")
-    assert seen_hashes(b) == {one.hash(), two.hash()}
+    both = [one.hash(), two.hash()]
+    assert staged == {a: ([one.hash()], [one.hash()]), b: (both, both)}
+    assert _seen_hashes(db, b) == set(both)
+    # `one` went out twice, past the limit, and c has nothing else new.
+    assert _told(db, [c]) == []
+
+
+def test_with_a_daily_cap_of_one_the_single_mail_carries_both_slots(db, monkeypatch):
+    monkeypatch.setenv("MAIL_RECIPIENTS_PER_SLOT", "1")
+    monkeypatch.setenv("MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY", "1")
+    one, two = _slot(1), _slot(2)
+    _narrow_sub(db, "a@example.com", 300)   # fills `one`
+    b = _sub(db, "b@example.com")
+    _age_last_notified(db, b, 200)
+    _cycle(db, [one, two], "c1")
+    assert digests_in_window(db, b) == 1
+    assert _seen_hashes(db, b) == {one.hash(), two.hash()}
+
+
+def test_a_dead_address_takes_no_place(db, monkeypatch):
+    """Staged every cycle but never delivered or stamped, it would lead
+    every queue and keep a place for the rest of its TTL."""
+    monkeypatch.setenv("MAIL_RECIPIENTS_PER_SLOT", "1")
+    dead, live = _subs_waiting(db, [300, 200])
+    db.execute("INSERT INTO email_failures (email, failures) "
+               "VALUES ('s0@example.com', 3)")
+    _cycle(db, [_slot(1)], "c1")
+    assert _told(db, [dead, live]) == [live]
 
 
 def test_zero_turns_the_per_slot_cap_off(db, monkeypatch):
