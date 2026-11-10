@@ -361,6 +361,7 @@ def test_main_page_notice_sits_above_the_city_grid(client):
     with patch("app.cycle.subscriber_cap", return_value=(1, True)):
         body = client.get("/").data.decode()
     assert body.index("E-Mails sind gerade knapp") < body.index('id="staedte"')
+    assert 'class="notice notice-warn" role="status"' in body
 
 
 def test_one_notice_carries_both_pressure_and_held(client):
@@ -423,6 +424,7 @@ def test_queue_line_shows_waiting_and_daily_slots_from_50(client):
     _queue_slots(conn, 4, [f"o{i}" for i in range(7)], when="datetime('now','-8 days')")
     de = client.get("/leipzig").data.decode()
     assert "Für Leipzig warten gerade 50 Personen auf einen Termin." in de
+    assert 'class="notice notice-warn" role="status"' in de
     assert "im Schnitt 2-mal am Tag einen freien Termin gemeldet. Rechne also mit Wartezeit." in de
     en = client.get("/leipzig?lang=en").data.decode()
     assert "50 people are waiting for an appointment in Leipzig right now." in en
