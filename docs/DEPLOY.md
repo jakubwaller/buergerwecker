@@ -970,6 +970,8 @@ can be overridden per tenant in `scraper_config.json`:
   office's earliest day only, so it stays `day`: one key per day as before, and
   the extra times only let a subscriber's time window match a later one. The
   cadence counts matched keys, not slots, so they do not slow it down either.
+  The admin page marks the availability series break (the day `read_times`
+  went live) through `availability_break` in that tenant's `scraper_config.json`.
 
 History, for anyone tempted to narrow this again: the first version of `day`
 was a plain date key that suppressed cancellations along with bookings, so it

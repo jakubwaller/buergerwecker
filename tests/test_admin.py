@@ -776,3 +776,44 @@ def test_stats_confirmation_funnel(tmp_path):
     # Denominator: created 24h-7d ago = mailed, repeat (confirmed), ok; the unconfirmed
     # repeat and rows < 24h are excluded.
     assert (s["confirm_rate_confirmed"], s["confirm_rate_total"]) == (2, 3)
+
+
+def _sample(conn, city, day):
+    conn.execute(
+        "INSERT INTO availability_samples (city, sampled_at, service_uuid, "
+        "location_uuid, n_slots) VALUES (?, ?, 'S1', 'L1', 3)",
+        (city, day + " 10:00:00"))
+
+
+def test_admin_marks_availability_break_only_inside_the_window(client, monkeypatch):
+    from datetime import timedelta
+    from app import catalog
+    from app.db import connect
+    conn = connect(os.environ["DB_PATH"])
+    today = datetime.utcnow().date()
+    recent = (today - timedelta(days=2)).isoformat()
+    old = (today - timedelta(days=30)).isoformat()
+    for city in ("muenster-kfz", "leipzig"):
+        conn.execute(
+            "INSERT INTO city_state (city, polls_today, polls_total, requests_today, "
+            "requests_total, counts_date, last_polled_at) "
+            "VALUES (?, 1, 1, 1, 1, ?, datetime('now'))", (city, today.isoformat()))
+        _sample(conn, city, recent)
+        _sample(conn, city, today.isoformat())
+    real = catalog.load_catalog
+
+    def fake(city):
+        cat = real(city)
+        if city == "muenster-kfz":
+            monkeypatch.setitem(cat.scraper_config, "availability_break", brk[0])
+        return cat
+
+    monkeypatch.setattr(catalog, "load_catalog", fake)
+    brk = [recent]
+    html = client.get("/admin?token=admin-tok").data.decode()
+    # Once in the sparkline label, once in the Availability summary; leipzig has none.
+    assert html.count(f"counting changed {recent}") == 2
+    assert "not comparable before" in html
+    brk[0] = old
+    html = client.get("/admin?token=admin-tok").data.decode()
+    assert "counting changed" not in html
