@@ -109,6 +109,12 @@ class Config:
     # cycle, longest-waiting first. 0 = no bound.
     push_budget_per_cycle: int = 200
     push_budget_seconds: int = 20
+    # Mail subscribers who get a mail because of one slot in one cycle,
+    # longest-waiting first, so one slot cannot spend everyone's mail for the
+    # day. The rest are not stamped and lead the queue at the next poll; a
+    # mail that goes out for another slot still lists it. App subscribers are
+    # exempt. 0 = no limit.
+    mail_recipients_per_slot: int = 30
 
 def _req(key: str) -> str:
     val = os.environ.get(key)
@@ -303,4 +309,5 @@ def load_config() -> Config:
         push_budget_per_cycle=_nonneg_int("PUSH_BUDGET_PER_CYCLE", "200"),
         push_budget_seconds=_nonneg_int("PUSH_BUDGET_SECONDS", "20"),
         mailjet_max_contacts=_nonneg_int("MAILJET_MAX_CONTACTS", "800"),
+        mail_recipients_per_slot=_nonneg_int("MAIL_RECIPIENTS_PER_SLOT", "30"),
     )

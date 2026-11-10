@@ -257,9 +257,9 @@ class _Relay:
         return httpx.Response(200, json={})
 
 
-def _push_sub(db):
+def _push_sub(db, token="tok-1"):
     from app.repo import insert_push_subscription, register_device
-    dev = register_device(db, platform="apns", token="tok-1", secret_hash="h" * 64,
+    dev = register_device(db, platform="apns", token=token, secret_hash="h" * 64,
                           language="de")
     db.execute("UPDATE push_devices SET verified_at=CURRENT_TIMESTAMP WHERE id=?",
                (dev,))
@@ -408,3 +408,152 @@ def test_admin_shows_the_push_cap_when_the_mail_cap_is_off(db, apns, monkeypatch
     from app.web import create_app
     body = create_app().test_client().get("/admin?token=" + "a" * 32).data.decode()
     assert "mail off · app 3 per rolling 24h" in body
+
+
+# ---------------------------------------------------------------------------
+# The per-slot cap: at most MAIL_RECIPIENTS_PER_SLOT mail subscribers per
+# cycle get a mail because of one slot, longest-waiting first. The rest have
+# nothing recorded and lead the queue at the next poll.
+
+def _subs_waiting(db, ages):
+    """Mail subscribers whose last digest was ages[i] minutes ago."""
+    sids = []
+    for i, age in enumerate(ages):
+        sid = _sub(db, f"s{i}@example.com")
+        _age_last_notified(db, sid, age)
+        sids.append(sid)
+    return sids
+
+
+def _told(db, sids):
+    return [sid for sid in sids if _seen(db, sid)]
+
+
+def test_one_slot_reaches_the_longest_waiting_mail_subscribers_first(db, monkeypatch):
+    monkeypatch.setenv("MAIL_RECIPIENTS_PER_SLOT", "2")
+    a, b, c, d, e = _subs_waiting(db, [60, 300, 120, 240, 180])
+    _cycle(db, [_slot(1)], "c1")
+    assert _told(db, [a, b, c, d, e]) == [b, d]
+    assert _holds(db) == []                 # not a daily-cap hold
+    # Still free at the next poll: the next two in line hear of it.
+    _cycle(db, [_slot(1)], "c2")
+    assert _told(db, [a, b, c, d, e]) == [b, c, d, e]
+    assert digests_in_window(db, b) == digests_in_window(db, d) == 1
+
+
+def test_app_subscribers_all_hear_of_the_slot_and_use_no_mail_budget(db, apns, monkeypatch):
+    monkeypatch.setenv("MAIL_RECIPIENTS_PER_SLOT", "2")
+    pushes = [_push_sub(db, f"tok-{i}") for i in range(3)]
+    for pid in pushes:
+        _age_last_notified(db, pid, 600)    # ahead of every mail subscriber
+    mails = _subs_waiting(db, [300, 240, 180])
+    relay = _Relay()
+    _cycle_both(db, [_slot(1)], "c1", relay)
+    assert relay.calls == 3 and _told(db, pushes) == pushes
+    assert _told(db, mails) == mails[:2]
+
+
+def _narrow_sub(db, email, age):
+    """A mail subscriber whose 09:00-09:30 window matches _slot(1) only."""
+    narrow = Filter(appointment_types=["svc-A"], locations="all",
+                    weekdays=[1, 2, 3, 4, 5, 6, 7],
+                    time_window_start=time(9, 0), time_window_end=time(9, 30))
+    sid = insert_pending(db, email=email, city="leipzig", language="de",
+                         filter_=narrow, ttl_days=90)
+    confirm(db, sid)
+    _age_last_notified(db, sid, age)
+    return sid
+
+
+def _seen_hashes(db, sid):
+    return {r[0] for r in db.execute(
+        "SELECT slot_hash FROM seen_slots WHERE subscription_id=?", (sid,))}
+
+
+def test_a_full_slot_still_rides_along_in_a_mail_sent_for_another(db, monkeypatch):
+    """Never trimmed: the mail costs the same with it, and a slot dropped
+    from it would wait out the subscriber's whole gap."""
+    from app import cycle
+    monkeypatch.setenv("MAIL_RECIPIENTS_PER_SLOT", "1")
+    one, two = _slot(1), _slot(2)           # 09:01 and 10:02
+    a = _narrow_sub(db, "a@example.com", 300)
+    b = _sub(db, "b@example.com")
+    _age_last_notified(db, b, 200)
+    c = _narrow_sub(db, "c@example.com", 100)
+    staged = {}
+    real = cycle.send_digest
+
+    def spy(**kw):
+        staged[kw["subscription"].id] = ([s.hash() for s in kw["matched_slots"]],
+                                         [k.key for k in kw["seen_keys"]])
+        return real(**kw)
+    monkeypatch.setattr(cycle, "send_digest", spy)
+    _cycle(db, [one, two], "c1")
+    both = [one.hash(), two.hash()]
+    assert staged == {a: ([one.hash()], [one.hash()]), b: (both, both)}
+    assert _seen_hashes(db, b) == set(both)
+    # `one` went out twice, past the limit, and c has nothing else new.
+    assert _told(db, [c]) == []
+
+
+def test_with_a_daily_cap_of_one_the_single_mail_carries_both_slots(db, monkeypatch):
+    monkeypatch.setenv("MAIL_RECIPIENTS_PER_SLOT", "1")
+    monkeypatch.setenv("MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY", "1")
+    one, two = _slot(1), _slot(2)
+    _narrow_sub(db, "a@example.com", 300)   # fills `one`
+    b = _sub(db, "b@example.com")
+    _age_last_notified(db, b, 200)
+    _cycle(db, [one, two], "c1")
+    assert digests_in_window(db, b) == 1
+    assert _seen_hashes(db, b) == {one.hash(), two.hash()}
+
+
+def test_a_dead_address_takes_no_place(db, monkeypatch):
+    """Staged every cycle but never delivered or stamped, it would lead
+    every queue and keep a place for the rest of its TTL."""
+    monkeypatch.setenv("MAIL_RECIPIENTS_PER_SLOT", "1")
+    dead, live = _subs_waiting(db, [300, 200])
+    db.execute("INSERT INTO email_failures (email, failures) "
+               "VALUES ('s0@example.com', 3)")
+    _cycle(db, [_slot(1)], "c1")
+    assert _told(db, [dead, live]) == [live]
+
+
+def test_zero_turns_the_per_slot_cap_off(db, monkeypatch):
+    monkeypatch.setenv("MAIL_RECIPIENTS_PER_SLOT", "0")
+    sids = _subs_waiting(db, [60, 300, 120, 240, 180])
+    _cycle(db, [_slot(1)], "c1")
+    assert _told(db, sids) == sids
+
+
+def test_a_daily_cap_hold_uses_no_per_slot_budget(db, monkeypatch):
+    monkeypatch.setenv("MAIL_RECIPIENTS_PER_SLOT", "1")
+    capped, b = _subs_waiting(db, [300, 200])
+    db.executemany("INSERT INTO digest_deliveries (subscription_id) VALUES (?)",
+                   [(capped,), (capped,)])
+    _cycle(db, [_slot(1)], "c1")
+    assert _told(db, [capped, b]) == [b]
+    assert [h[1] for h in _holds(db)] == [capped]
+
+
+def test_a_day_tenant_counts_by_its_day_key(db, monkeypatch):
+    """Münster keys seen_slots on the day, so two times on one day are one
+    slot to the cap: one digest with both counts once, and subscribers who
+    each match a different time share the budget."""
+    monkeypatch.setenv("MAIL_RECIPIENTS_PER_SLOT", "2")
+
+    def sub(email, start, end, age):
+        f = Filter(appointment_types=["2408"], locations="all",
+                   weekdays=[1, 2, 3, 4, 5, 6, 7],
+                   time_window_start=start, time_window_end=end)
+        sid = insert_pending(db, email=email, city="muenster-kfz", language="de",
+                             filter_=f, ttl_days=90)
+        confirm(db, sid)
+        _age_last_notified(db, sid, age)
+        return sid
+    both = sub("a@example.com", time(0, 0), time(23, 59), 300)
+    early_only = sub("b@example.com", time(8, 0), time(10, 0), 200)
+    late_only = sub("c@example.com", time(10, 0), time(12, 0), 100)
+    _cycle(db, [Slot("2026-12-01", "09:00", "243", "2408", "t1"),
+                Slot("2026-12-01", "11:00", "243", "2408", "t2")], "c1")
+    assert _told(db, [both, early_only, late_only]) == [both, early_only]
