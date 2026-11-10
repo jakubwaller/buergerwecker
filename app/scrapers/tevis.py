@@ -18,7 +18,8 @@ free slot: it selects the office as a browser does (POST /location, answered
 with a redirect) and reads the suggestion list (GET /suggest), so the poll
 yields every free time the list shows on that office's earliest free day and
 the time window can match any of them. That is 1 + 2 × offices requests per
-appointment type instead of 1 (3 for muenster-kfz's one office). It stops at
+poll plan instead of 1 (3 for muenster-kfz's one office; a service watched by
+two plans is read twice). It stops at
 the list: a time is chosen by POSTing one of the list's own forms, which
 nothing here does. If the step fails or parses to nothing, the office falls
 back to its earliest slot. Only the earliest day is kept, so seen_slots stays
@@ -131,6 +132,10 @@ def parse_times(html: str, earliest: Slot) -> list[Slot]:
     button outside any form, so it never matches. The list is capped by TEVIS
     and can run into later days; only the first is kept, since a later day
     would be a new day key and a mail the earliest-slot reading never sent.
+    That day must not be later than `earliest.date`: a list starting later
+    than the office page's earliest slot does not show the earliest day, so
+    [] (the caller falls back to `earliest`); an earlier first day is kept (a
+    cancellation appeared between the two requests).
     [] unless the page's filter form names exactly this office and service, so
     a list left over from another plan can never be read as this one's.
     """
@@ -156,6 +161,8 @@ def parse_times(html: str, earliest: Slot) -> list[Slot]:
     if not found:
         return []
     day = min(found)[0]
+    if day > earliest.date:
+        return []
     loc = earliest.location_uuid
     return [replace(earliest, date=d, time_str=t, booking_token=f"{d}T{t}@{loc}")
             for d, t in sorted(found) if d == day]
@@ -188,7 +195,7 @@ def _read_times(http: requests.Session, base: str, scfg: dict, plan: PollPlan,
         times = parse_times(r.text, earliest)
         if times:
             return times
-        reason = "no free time parsed"
+        reason = "no free time for the earliest day"
     except Exception as exc:
         reason = repr(exc)
     print(f"tevis {plan.city}/{plan.appointment_type}: times list not read "

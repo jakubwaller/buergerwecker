@@ -195,6 +195,13 @@ def test_parse_times_keeps_the_free_times_of_the_first_day_only():
     assert slots[1].booking_token == "2026-12-01T09:30@243"
 
 
+def test_parse_times_needs_the_list_to_start_on_the_earliest_day_or_before():
+    later = Slot("2026-11-30", "08:10", "243", "2407", "t")  # list starts 12-01
+    assert tevis.parse_times(SUGGEST, later) == []
+    earlier = Slot("2026-12-05", "08:10", "243", "2407", "t")  # cancellation
+    assert {s.date for s in tevis.parse_times(SUGGEST, earlier)} == {"2026-12-01"}
+
+
 @pytest.mark.parametrize("earliest", [_earliest(service="2408"),
                                       Slot("2026-12-01", "08:10", "244", "2407", "t")])
 def test_parse_times_refuses_a_list_for_another_service_or_office(earliest):

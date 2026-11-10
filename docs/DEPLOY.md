@@ -742,8 +742,8 @@ are missing or wrong on the VPS: check `docker compose logs poller | grep
   Read from `slot_snapshots`, one row per (city, service) that the poller
   rewrites after every cycle in which all of the service's plans succeeded
   (`app/snapshots.py`), so the overview adds no upstream request: the
-  poll's own requests per watched Anliegen per cycle (one GET on TEVIS,
-  three on a `read_times` tenant, see `app/scrapers/tevis.py`) stay what the
+  poll's own requests per poll plan per cycle (one GET on TEVIS,
+  three on a `read_times` tenant, a service watched by two plans read twice, see `app/scrapers/tevis.py`) stay what the
   cities see. A service
   nobody watches has no entry; a failed poll keeps the previous row with its
   older `polled_at`. Rows are pruned after a day.
