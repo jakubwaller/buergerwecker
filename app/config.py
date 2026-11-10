@@ -57,6 +57,7 @@ class Config:
     play_integrity_service_account_json: str = ""
     play_integrity_required: bool = True
     push_ttl_seconds: int = 1800
+    mailjet_max_contacts: int = 800   # ceiling for the contact prune; 0 = prune off
     # The app's JSON API under /api/v1. Off until the app is released: an open
     # registration endpoint lets anyone create subscriptions without a
     # confirmation step.
@@ -301,4 +302,5 @@ def load_config() -> Config:
             "MAX_PUSH_DIGESTS_PER_SUBSCRIBER_PER_DAY", "10"),
         push_budget_per_cycle=_nonneg_int("PUSH_BUDGET_PER_CYCLE", "200"),
         push_budget_seconds=_nonneg_int("PUSH_BUDGET_SECONDS", "20"),
+        mailjet_max_contacts=_nonneg_int("MAILJET_MAX_CONTACTS", "800"),
     )

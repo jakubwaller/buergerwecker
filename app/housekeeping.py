@@ -1,5 +1,7 @@
 from __future__ import annotations
 import sqlite3
+import time
+import requests
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -44,6 +46,7 @@ def run_once(conn: sqlite3.Connection) -> None:
     step(_prune_email_failures, conn)
     step(_prune_suppressions, conn, cfg)
     step(_prune_push_devices, conn)
+    step(_start_mailjet_prune, conn, cfg)
     step(_prune_rate_records, conn)
     step(_prune_availability, conn)
     step(_prune_slot_snapshots, conn)
@@ -731,3 +734,82 @@ def _send_summary_email(conn, cfg, failed=()):
         )
     except Exception:
         pass
+
+
+_mailjet_thread: threading.Thread | None = None
+
+def _start_mailjet_prune(conn, cfg) -> None:
+    """Prune Mailjet contacts on a daemon thread (up to 1000 HTTP calls must
+    not stall the poller, as with _start_catalog_sync). The live-address set is
+    read here; the thread never touches the DB. Never two runs at once."""
+    global _mailjet_thread
+    if cfg.mailjet_max_contacts <= 0:
+        return
+    if _mailjet_thread is not None and _mailjet_thread.is_alive():
+        print("mailjet contact prune: previous run still in progress, skipping", flush=True)
+        return
+    live = {r[0] for r in conn.execute(
+        "SELECT lower(email) FROM subscriptions "
+        "WHERE deleted_at IS NULL AND expires_at > CURRENT_TIMESTAMP")}
+    _mailjet_thread = threading.Thread(target=_prune_mailjet_contacts, args=(cfg, live),
+                                       name="mailjet-prune", daemon=True)
+    _mailjet_thread.start()
+
+def wait_for_mailjet_prune(timeout: float | None = None) -> None:
+    """Block until the background prune (if any) is done. For tests."""
+    if _mailjet_thread is not None:
+        _mailjet_thread.join(timeout)
+
+def _prune_mailjet_contacts(cfg, live: set[str]) -> None:
+    """Delete Mailjet contacts: first every address without a live subscription,
+    then, if more than MAILJET_MAX_CONTACTS remain, the oldest by CreatedAt.
+
+    People who left should not stay at the processor, and the free plan stops
+    sending above 1000 contacts. Contacts of live subscribers are only touched
+    when the ceiling forces it, because a deleted contact may no longer deliver
+    a late complaint webhook. Logs counts and status codes only, never an
+    address. Failures are logged, not raised (like the catalog sync)."""
+    ceiling = cfg.mailjet_max_contacts
+    if ceiling <= 0:
+        return
+    auth = (cfg.mailjet_api_key, cfg.mailjet_api_secret)
+    contacts: list[tuple[str, int, str]] = []
+    try:
+        offset = 0
+        while True:
+            r = requests.get("https://api.mailjet.com/v3/REST/contact",
+                             params={"Limit": 1000, "Offset": offset}, auth=auth, timeout=30)
+            if r.status_code != 200:
+                print(f"mailjet contact prune: list returned {r.status_code}", flush=True)
+                return
+            rows = r.json().get("Data", [])
+            contacts += [(c["CreatedAt"], c["ID"], c["Email"].lower()) for c in rows]
+            if len(rows) < 1000:
+                break
+            offset += 1000
+        gone = [c for c in contacts if c[2] not in live]
+        kept = sorted(c for c in contacts if c[2] in live)
+        gone += kept[:max(0, len(kept) - ceiling)]
+        deleted = failed = 0
+        codes: set[str] = set()
+        for _, cid, _ in gone[:1000]:
+            try:
+                d = requests.delete(f"https://api.mailjet.com/v4/contacts/{cid}",
+                                    auth=auth, timeout=30)
+                code = str(d.status_code)
+            except requests.RequestException as exc:
+                code = type(exc).__name__
+            if code == "200":
+                deleted += 1
+            else:
+                failed += 1
+                codes.add(code)
+                # Systemic (auth, rate limit, server, network): retrying is pointless.
+                # Anything else, e.g. 404, concerns one contact: skip it.
+                if not code.isdigit() or code in ("401", "403", "429") or code[0] == "5":
+                    break
+            time.sleep(0.05)
+        print(f"mailjet contact prune: {len(contacts)} contacts, deleted {deleted}, "
+              f"failed {failed} {sorted(codes)}", flush=True)
+    except Exception as exc:
+        print(f"mailjet contact prune failed: {type(exc).__name__}", flush=True)
