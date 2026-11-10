@@ -419,13 +419,14 @@ def test_queue_line_shows_waiting_and_daily_slots_from_50(client):
     # 14 distinct slots, each told to three subscribers: counts once, 14/7 = 2 a day.
     for sid in (1, 2, 3):
         _queue_slots(conn, sid, [f"h{i}" for i in range(14)])
-    _queue_slots(conn, 4, ["old"], when="datetime('now','-8 days')")
+    # 7 more, older than a week: counted, they would make it 21/7 = 3.
+    _queue_slots(conn, 4, [f"o{i}" for i in range(7)], when="datetime('now','-8 days')")
     de = client.get("/leipzig").data.decode()
     assert "Für Leipzig warten gerade 50 Personen auf einen Termin." in de
-    assert "im Schnitt 2 freie Termine am Tag gemeldet. Rechne also mit Wartezeit." in de
+    assert "im Schnitt 2-mal am Tag einen freien Termin gemeldet. Rechne also mit Wartezeit." in de
     en = client.get("/leipzig?lang=en").data.decode()
     assert "50 people are waiting for an appointment in Leipzig right now." in en
-    assert "about 2 free slots a day on average. So expect to wait." in en
+    assert "we reported a free slot about 2 times a day on average. So expect to wait." in en
 
 
 def test_queue_line_hidden_below_50(client):
@@ -468,3 +469,25 @@ def test_queue_db_error_renders_form_without_the_line(client, monkeypatch):
     r = client.get("/leipzig")
     assert r.status_code == 200
     assert b"warten gerade" not in r.data
+
+
+def test_queue_counts_people_not_subscriptions(client):
+    conn = _queue_db(client)
+    _queue_sub(conn, 49)
+    for _ in range(3):      # one more person, three subscriptions
+        conn.execute("INSERT INTO subscriptions (email, city, filters_json, "
+                     "confirmed_at, expires_at) VALUES ('Multi@example.com', "
+                     "'leipzig', '{}', datetime('now'), datetime('now','+30 days'))")
+    assert "gerade 50 Personen" in client.get("/leipzig").data.decode()
+
+
+def test_queue_ignores_subscriptions_of_unverified_devices(client):
+    conn = _queue_db(client)
+    _queue_sub(conn, 49)
+    for i in range(3):
+        did = conn.execute("INSERT INTO push_devices (platform, token, secret_hash) "
+                           "VALUES ('ios', ?, 'h')", (f"t{i}",)).lastrowid
+        conn.execute("INSERT INTO subscriptions (email, city, filters_json, "
+                     "confirmed_at, expires_at, device_id) VALUES ('', 'leipzig', "
+                     "'{}', datetime('now'), datetime('now','+30 days'), ?)", (did,))
+    assert "warten gerade" not in client.get("/leipzig").data.decode()

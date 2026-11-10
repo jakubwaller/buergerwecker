@@ -880,8 +880,8 @@ def create_app() -> Flask:
     _queue_slots: dict[str, tuple[float, int]] = {}
 
     def _queue_now(city: str) -> dict | None:
-        """How crowded `city` is: `n` live subscriptions (mail and app) and
-        `x`, distinct slots reported per day over the last 7 days (the whole of
+        """How crowded `city` is: `n` people with a live subscription (mail and app) and
+        `x`, distinct slot reports per day over the last 7 days (the whole of
         what seen_slots keeps). City totals only, never per type or office.
         None below QUEUE_MIN_WAITING or on any failure: a hint, like the mail
         pressure notice."""
@@ -891,14 +891,16 @@ def create_app() -> Flask:
             return None
         try:
             n = conn.execute(
-                "SELECT COUNT(*) FROM subscriptions "
-                "WHERE city=? AND deleted_at IS NULL AND confirmed_at IS NOT NULL "
+                "SELECT COUNT(DISTINCT COALESCE('d'||device_id, lower(email))) "
+                "FROM subscriptions WHERE city=? AND deleted_at IS NULL AND confirmed_at IS NOT NULL "
                 "AND expires_at > CURRENT_TIMESTAMP "
                 "AND (device_id IS NULL OR device_id IN "
                 "(SELECT id FROM push_devices WHERE verified_at IS NOT NULL))",
                 (city,)).fetchone()[0]
             if n < QUEUE_MIN_WAITING:
                 return None
+            # Counts reports (a seen_slots key per office and service, and per
+            # day on day-granularity tenants), not single slots: true for both.
             # Scans every seen_slots row of the week (~30 ms at 200k rows), so
             # cache it per process for 10 minutes.
             hit = _queue_slots.get(city)
