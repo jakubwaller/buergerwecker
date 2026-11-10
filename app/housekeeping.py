@@ -804,7 +804,9 @@ def _prune_mailjet_contacts(cfg, live: set[str]) -> None:
             else:
                 failed += 1
                 codes.add(code)
-                if failed >= 10:
+                # Systemic (auth, rate limit, server, network): retrying is pointless.
+                # Anything else, e.g. 404, concerns one contact: skip it.
+                if not code.isdigit() or code in ("401", "403", "429") or code[0] == "5":
                     break
             time.sleep(0.05)
         print(f"mailjet contact prune: {len(contacts)} contacts, deleted {deleted}, "
