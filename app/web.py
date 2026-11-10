@@ -346,15 +346,15 @@ _DEFAULT_CITY = "leipzig"
 _PUBLIC_ENDPOINTS = frozenset(("index", "city_page", "impressum_route",
                                "datenschutz_route", "kontakt_route"))
 
+# Fewer waiting people than this and the form says nothing about the queue.
+QUEUE_MIN_WAITING = 50
+
 _OG_DEFAULT_TITLE = {
     "de": "Bürgerwecker – nie wieder freie Bürgerbüro-Termine verpassen",
     "en": "Bürgerwecker – never miss a free Amt appointment",
 }
 # City first: it is the word that distinguishes this page from the other 28,
 # and titles are truncated from the right in a result list.
-# Fewer waiting people than this and the form says nothing about the queue.
-QUEUE_MIN_WAITING = 50
-
 _OG_CITY_TITLE = {
     "de": "{city}: freie Termine beim Amt – Bürgerwecker",
     "en": "{city}: free appointment slots – Bürgerwecker",
