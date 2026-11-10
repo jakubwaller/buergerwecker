@@ -49,6 +49,7 @@ def run_once(conn: sqlite3.Connection) -> None:
     step(_start_mailjet_prune, conn, cfg)
     step(_prune_rate_records, conn)
     step(_prune_availability, conn)
+    step(_prune_earliest_changes, conn)
     step(_prune_slot_snapshots, conn)
     # The parser canary is not here: the poller runs it every cycle.
     step(_check_backup_health, conn, cfg)
@@ -462,6 +463,10 @@ def _prune_availability(conn):
     # Analytics history; the admin page only ever looks back a few weeks.
     from app.analytics import prune_availability
     prune_availability(conn)
+
+def _prune_earliest_changes(conn):
+    conn.execute("DELETE FROM earliest_slot_changes "
+                 "WHERE changed_at < datetime('now','-90 days')")
 
 def _check_parser_canary(conn, cfg):
     """Email developer when a scraper looks broken, during business hours.

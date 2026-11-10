@@ -153,6 +153,122 @@ def test_a_database_error_does_not_break_the_cycle(db):
 
 
 # ---------------------------------------------------------------------------
+# The earliest-slot change log (day-granularity tenants only)
+
+def _granularity(monkeypatch, value):
+    import app.catalog
+    monkeypatch.setattr(app.catalog, "load_catalog",
+                        lambda city: MagicMock(notify_granularity=value))
+
+
+def _changes(db):
+    return [tuple(r) for r in db.execute(
+        "SELECT changed_at, location_uuid, slot_date, slot_time, baseline "
+        "FROM earliest_slot_changes ORDER BY rowid")]
+
+
+def _poll(db, slots, n=0, **kw):
+    plan = _plan()
+    _record(db, [plan], {plan.key(): slots}, now=datetime(2026, 6, 8, 12, n), **kw)
+
+
+@pytest.fixture
+def day(monkeypatch):
+    _granularity(monkeypatch, "day")
+
+
+def test_first_poll_writes_a_baseline_and_an_unchanged_earliest_nothing(db, day):
+    _poll(db, [_slot(loc="a"), _slot(loc="b", t="11:00")])
+    assert _changes(db) == [("2026-06-08 12:00:00", "a", "2026-06-10", "10:30", 1),
+                            ("2026-06-08 12:00:00", "b", "2026-06-10", "11:00", 1)]
+    _poll(db, [_slot(loc="a"), _slot(loc="b", t="11:00")], n=1)
+    assert len(_changes(db)) == 2
+
+
+def test_later_earlier_vanished_and_new_office_each_write_one_row(db, day):
+    _poll(db, [_slot(loc="a"), _slot(loc="b", t="11:00"), _slot(loc="c", t="12:00")])
+    db.execute("DELETE FROM earliest_slot_changes")
+    _poll(db, [_slot(loc="a", t="10:45"),        # later
+               _slot(loc="b", t="10:00"),        # earlier
+               _slot(loc="d", t="09:00")], n=1)  # c vanished, d is new
+    assert _changes(db) == [
+        ("2026-06-08 12:01:00", "a", "2026-06-10", "10:45", 0),
+        ("2026-06-08 12:01:00", "b", "2026-06-10", "10:00", 0),
+        ("2026-06-08 12:01:00", "c", None, None, 0),
+        ("2026-06-08 12:01:00", "d", "2026-06-10", "09:00", 0),
+    ]
+
+
+def test_a_missing_snapshot_writes_a_new_baseline_row(db, day):
+    _poll(db, [_slot(loc="a")])
+    db.execute("DELETE FROM slot_snapshots")      # pruned after a gap
+    _poll(db, [_slot(loc="a", t="14:00")], n=5)
+    assert [r[2:] for r in _changes(db)] == [("2026-06-10", "10:30", 1),
+                                             ("2026-06-10", "14:00", 1)]
+
+
+def test_an_empty_poll_marks_every_office_vanished_once(db, day):
+    _poll(db, [_slot(loc="a")])
+    _poll(db, [], n=1)
+    _poll(db, [], n=2)
+    assert _changes(db)[1:] == [("2026-06-08 12:01:00", "a", None, None, 0)]
+
+
+def test_a_failed_plan_writes_nothing_and_keeps_the_snapshot(db, day):
+    _poll(db, [_slot(loc="a")])
+    plan = _plan()
+    _record(db, [plan], {plan.key(): []}, ok=[], now=datetime(2026, 6, 8, 12, 1))
+    assert len(_changes(db)) == 1
+    assert db.execute("SELECT n_total FROM slot_snapshots").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("value", ["slot", None])
+def test_a_tenant_that_is_not_day_granularity_writes_nothing(db, monkeypatch, value):
+    if value is None:       # unreadable catalog
+        import app.catalog
+        monkeypatch.setattr(app.catalog, "load_catalog",
+                            MagicMock(side_effect=RuntimeError("no catalog")))
+    else:
+        _granularity(monkeypatch, value)
+    _poll(db, [_slot()])
+    assert _changes(db) == []
+    assert db.execute("SELECT COUNT(*) FROM slot_snapshots").fetchone()[0] == 1
+
+
+def test_a_failing_change_log_still_lets_the_snapshot_through(db, day):
+    db.execute("DROP TABLE earliest_slot_changes")
+    _poll(db, [_slot()])
+    assert db.execute("SELECT n_total FROM slot_snapshots").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("raw", ["not json", "[1, 2]"])
+def test_a_malformed_previous_row_does_not_stop_the_snapshot(db, day, raw):
+    db.execute("INSERT INTO slot_snapshots VALUES ('leipzig', 'svc-A', ?, 1, "
+               "CURRENT_TIMESTAMP)", (raw,))
+    _poll(db, [_slot()])
+    assert db.execute("SELECT n_total FROM slot_snapshots").fetchone()[0] == 1
+
+
+def test_any_error_in_the_change_log_is_contained(db, day, monkeypatch):
+    import app.snapshots
+    monkeypatch.setattr(app.snapshots, "_earliest",
+                        MagicMock(side_effect=ValueError("bad tuple")))
+    _poll(db, [_slot()])      # _parse_slots swallows bad JSON, so force the failure
+    assert db.execute("SELECT n_total FROM slot_snapshots").fetchone()[0] == 1
+    assert _changes(db) == []
+
+
+def test_prune_drops_change_rows_older_than_90_days(db):
+    for age, loc in ((91, "old"), (89, "new")):
+        db.execute("INSERT INTO earliest_slot_changes VALUES "
+                   f"(datetime('now','-{age} days'), 'muenster-kfz', 's', ?, NULL, NULL, 0)",
+                   (loc,))
+    from app.housekeeping import _prune_earliest_changes
+    _prune_earliest_changes(db)
+    assert [r[0] for r in db.execute("SELECT location_uuid FROM earliest_slot_changes")] == ["new"]
+
+
+# ---------------------------------------------------------------------------
 # The cycle feeds it
 
 _ENV = {
