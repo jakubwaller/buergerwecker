@@ -408,41 +408,18 @@ def _queue_sub(conn, n, city="leipzig", *, confirmed="datetime('now')",
             f"{expires}, {deleted})", (f"q{i}@example.com", city))
 
 
-def _queue_slots(conn, sub_id, hashes, when="datetime('now','-1 days')"):
-    for h in hashes:
-        conn.execute("INSERT INTO seen_slots (subscription_id, slot_hash, sent_at) "
-                     f"VALUES (?, ?, {when})", (sub_id, h))
-
-
-def test_queue_line_shows_waiting_and_daily_slots_from_50(client):
-    conn = _queue_db(client)
-    _queue_sub(conn, 50)
-    # 14 distinct slots, each told to three subscribers: counts once, 14/7 = 2 a day.
-    for sid in (1, 2, 3):
-        _queue_slots(conn, sid, [f"h{i}" for i in range(14)])
-    # 7 more, older than a week: counted, they would make it 21/7 = 3.
-    _queue_slots(conn, 4, [f"o{i}" for i in range(7)], when="datetime('now','-8 days')")
+def test_queue_line_shows_waiting_from_50(client):
+    _queue_sub(_queue_db(client), 50)
     de = client.get("/leipzig").data.decode()
-    assert "Für Leipzig warten gerade 50 Personen auf einen Termin." in de
+    assert "Für Leipzig warten gerade 50 Personen auf einen Termin. Rechne also mit Wartezeit." in de
     assert 'class="notice notice-warn" role="status"' in de
-    assert "im Schnitt 2-mal am Tag einen freien Termin gemeldet. Rechne also mit Wartezeit." in de
     en = client.get("/leipzig?lang=en").data.decode()
-    assert "50 people are waiting for an appointment in Leipzig right now." in en
-    assert "we reported a free slot about 2 times a day on average. So expect to wait." in en
+    assert "50 people are waiting for an appointment in Leipzig right now. So expect to wait." in en
 
 
 def test_queue_line_hidden_below_50(client):
     _queue_sub(_queue_db(client), 49)
     assert "warten gerade" not in client.get("/leipzig").data.decode()
-
-
-def test_queue_line_drops_slot_sentences_when_nothing_was_reported(client):
-    conn = _queue_db(client)
-    _queue_sub(conn, 50)
-    _queue_slots(conn, 1, ["a"])       # 1 slot in 7 days rounds to 0 a day
-    body = client.get("/leipzig").data.decode()
-    assert "50 Personen" in body
-    assert "Rechne also mit Wartezeit" not in body
 
 
 def test_queue_counts_only_live_subscriptions_of_this_city(client):
