@@ -129,12 +129,12 @@ def _log_earliest_changes(conn: sqlite3.Connection, fulls: dict, now_ts: str) ->
                 if prev is not None and new.get(loc) == old.get(loc):
                     continue
                 d, t = new.get(loc, (None, None))
-                out.append((now_ts, city, service, loc, d, t))
+                out.append((now_ts, city, service, loc, d, t, int(prev is None)))
         if out:
             conn.executemany(
                 "INSERT INTO earliest_slot_changes "
-                "(changed_at, city, service_uuid, location_uuid, slot_date, slot_time) "
-                "VALUES (?,?,?,?,?,?)", out)
+                "(changed_at, city, service_uuid, location_uuid, slot_date, slot_time, "
+                "baseline) VALUES (?,?,?,?,?,?,?)", out)
     except Exception as exc:
         print(f"snapshots: earliest-slot changes not recorded: {exc!r}", flush=True)
 

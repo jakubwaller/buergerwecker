@@ -163,7 +163,7 @@ def _granularity(monkeypatch, value):
 
 def _changes(db):
     return [tuple(r) for r in db.execute(
-        "SELECT changed_at, location_uuid, slot_date, slot_time "
+        "SELECT changed_at, location_uuid, slot_date, slot_time, baseline "
         "FROM earliest_slot_changes ORDER BY rowid")]
 
 
@@ -179,8 +179,8 @@ def day(monkeypatch):
 
 def test_first_poll_writes_a_baseline_and_an_unchanged_earliest_nothing(db, day):
     _poll(db, [_slot(loc="a"), _slot(loc="b", t="11:00")])
-    assert _changes(db) == [("2026-06-08 12:00:00", "a", "2026-06-10", "10:30"),
-                            ("2026-06-08 12:00:00", "b", "2026-06-10", "11:00")]
+    assert _changes(db) == [("2026-06-08 12:00:00", "a", "2026-06-10", "10:30", 1),
+                            ("2026-06-08 12:00:00", "b", "2026-06-10", "11:00", 1)]
     _poll(db, [_slot(loc="a"), _slot(loc="b", t="11:00")], n=1)
     assert len(_changes(db)) == 2
 
@@ -192,18 +192,26 @@ def test_later_earlier_vanished_and_new_office_each_write_one_row(db, day):
                _slot(loc="b", t="10:00"),        # earlier
                _slot(loc="d", t="09:00")], n=1)  # c vanished, d is new
     assert _changes(db) == [
-        ("2026-06-08 12:01:00", "a", "2026-06-10", "10:45"),
-        ("2026-06-08 12:01:00", "b", "2026-06-10", "10:00"),
-        ("2026-06-08 12:01:00", "c", None, None),
-        ("2026-06-08 12:01:00", "d", "2026-06-10", "09:00"),
+        ("2026-06-08 12:01:00", "a", "2026-06-10", "10:45", 0),
+        ("2026-06-08 12:01:00", "b", "2026-06-10", "10:00", 0),
+        ("2026-06-08 12:01:00", "c", None, None, 0),
+        ("2026-06-08 12:01:00", "d", "2026-06-10", "09:00", 0),
     ]
+
+
+def test_a_missing_snapshot_writes_a_new_baseline_row(db, day):
+    _poll(db, [_slot(loc="a")])
+    db.execute("DELETE FROM slot_snapshots")      # pruned after a gap
+    _poll(db, [_slot(loc="a", t="14:00")], n=5)
+    assert [r[2:] for r in _changes(db)] == [("2026-06-10", "10:30", 1),
+                                             ("2026-06-10", "14:00", 1)]
 
 
 def test_an_empty_poll_marks_every_office_vanished_once(db, day):
     _poll(db, [_slot(loc="a")])
     _poll(db, [], n=1)
     _poll(db, [], n=2)
-    assert _changes(db)[1:] == [("2026-06-08 12:01:00", "a", None, None)]
+    assert _changes(db)[1:] == [("2026-06-08 12:01:00", "a", None, None, 0)]
 
 
 def test_a_failed_plan_writes_nothing_and_keeps_the_snapshot(db, day):

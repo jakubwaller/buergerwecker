@@ -348,7 +348,8 @@ CREATE TABLE IF NOT EXISTS earliest_slot_changes (
   service_uuid  TEXT NOT NULL,
   location_uuid TEXT NOT NULL,
   slot_date     TEXT,
-  slot_time     TEXT
+  slot_time     TEXT,
+  baseline      INTEGER NOT NULL DEFAULT 0  -- 1: written as there was no previous snapshot
 );
 CREATE INDEX IF NOT EXISTS idx_earliest_changes_city_at
   ON earliest_slot_changes(city, changed_at);
