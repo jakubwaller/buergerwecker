@@ -352,6 +352,9 @@ _OG_DEFAULT_TITLE = {
 }
 # City first: it is the word that distinguishes this page from the other 28,
 # and titles are truncated from the right in a result list.
+# Fewer waiting people than this and the form says nothing about the queue.
+QUEUE_MIN_WAITING = 50
+
 _OG_CITY_TITLE = {
     "de": "{city}: freie Termine beim Amt – Bürgerwecker",
     "en": "{city}: free appointment slots – Bürgerwecker",
@@ -874,6 +877,44 @@ def create_app() -> Flask:
             conn.close()
         return out
 
+    _queue_slots: dict[str, tuple[float, int]] = {}
+
+    def _queue_now(city: str) -> dict | None:
+        """How crowded `city` is: `n` live subscriptions (mail and app) and
+        `x`, distinct slots reported per day over the last 7 days (the whole of
+        what seen_slots keeps). City totals only, never per type or office.
+        None below QUEUE_MIN_WAITING or on any failure: a hint, like the mail
+        pressure notice."""
+        try:
+            conn = connect(app.config["TERMINE_CONFIG"].db_path)
+        except Exception:
+            return None
+        try:
+            n = conn.execute(
+                "SELECT COUNT(*) FROM subscriptions "
+                "WHERE city=? AND deleted_at IS NULL AND confirmed_at IS NOT NULL "
+                "AND expires_at > CURRENT_TIMESTAMP "
+                "AND (device_id IS NULL OR device_id IN "
+                "(SELECT id FROM push_devices WHERE verified_at IS NOT NULL))",
+                (city,)).fetchone()[0]
+            if n < QUEUE_MIN_WAITING:
+                return None
+            # Scans every seen_slots row of the week (~30 ms at 200k rows), so
+            # cache it per process for 10 minutes.
+            hit = _queue_slots.get(city)
+            if hit is None or time_mod.monotonic() - hit[0] > 600:
+                slots = conn.execute(
+                    "SELECT COUNT(DISTINCT s.slot_hash) FROM seen_slots s "
+                    "JOIN subscriptions u ON u.id = s.subscription_id "
+                    "WHERE u.city=? AND s.sent_at >= datetime('now','-7 days')",
+                    (city,)).fetchone()[0]
+                hit = _queue_slots[city] = (time_mod.monotonic(), round(slots / 7))
+            return {"n": n, "x": hit[1]}
+        except Exception:
+            return None
+        finally:
+            conn.close()
+
     @app.route("/<city>")
     def city_page(city):
         """A tenant's sign-up form. Werkzeug ranks static rules above this one,
@@ -906,6 +947,7 @@ def create_app() -> Flask:
                                lang=lang,
                                city=city,
                                mail_pressure=_mail_pressure_now(),
+                               queue=_queue_now(city),
                                **og,
                                confirmed=confirmed,
                                error=error,

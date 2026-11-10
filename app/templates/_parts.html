@@ -168,6 +168,22 @@
   {% endif %}
 {% endmacro %}
 
+{# How many wait for this city and how many slots we reported: plain city
+   totals, never per type or office. `q` is None below the threshold. #}
+{% macro queue_notice(q, city_name, lang) %}
+  {% if q %}
+    <p class="notice" role="status">
+      {% if lang == 'en' %}
+        {{ q.n }} people are waiting for an appointment in {{ city_name }} right now.
+        {% if q.x %}Over the last 7 days we reported about {{ q.x }} free slot{% if q.x != 1 %}s{% endif %} a day on average. So expect to wait.{% endif %}
+      {% else %}
+        Für {{ city_name }} warten gerade {{ q.n }} Personen auf einen Termin.
+        {% if q.x %}In den letzten 7 Tagen haben wir im Schnitt {{ q.x }} freie{% if q.x == 1 %}n{% endif %} Termin{% if q.x != 1 %}e{% endif %} am Tag gemeldet. Rechne also mit Wartezeit.{% endif %}
+      {% endif %}
+    </p>
+  {% endif %}
+{% endmacro %}
+
 {% macro banners(confirmed, error, lang) %}
   {% if confirmed == 'pending' %}
     <div class="notice notice-success" role="status">

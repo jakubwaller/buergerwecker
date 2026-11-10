@@ -389,3 +389,82 @@ def test_untightened_cap_shows_no_notice(client):
     with patch("app.cycle.subscriber_cap", return_value=(2, False)):
         body = client.get("/").data.decode()
     assert "E-Mails sind gerade knapp" not in body
+
+
+# --- how crowded a city is -------------------------------------------------
+
+def _queue_db(client):
+    from app.config import load_config
+    return connect(load_config().db_path)
+
+
+def _queue_sub(conn, n, city="leipzig", *, confirmed="datetime('now')",
+               expires="datetime('now','+30 days')", deleted="NULL"):
+    for i in range(n):
+        conn.execute(
+            "INSERT INTO subscriptions (email, city, filters_json, confirmed_at, "
+            f"expires_at, deleted_at) VALUES (?, ?, '{{}}', {confirmed}, "
+            f"{expires}, {deleted})", (f"q{i}@example.com", city))
+
+
+def _queue_slots(conn, sub_id, hashes, when="datetime('now','-1 days')"):
+    for h in hashes:
+        conn.execute("INSERT INTO seen_slots (subscription_id, slot_hash, sent_at) "
+                     f"VALUES (?, ?, {when})", (sub_id, h))
+
+
+def test_queue_line_shows_waiting_and_daily_slots_from_50(client):
+    conn = _queue_db(client)
+    _queue_sub(conn, 50)
+    # 14 distinct slots, each told to three subscribers: counts once, 14/7 = 2 a day.
+    for sid in (1, 2, 3):
+        _queue_slots(conn, sid, [f"h{i}" for i in range(14)])
+    _queue_slots(conn, 4, ["old"], when="datetime('now','-8 days')")
+    de = client.get("/leipzig").data.decode()
+    assert "Für Leipzig warten gerade 50 Personen auf einen Termin." in de
+    assert "im Schnitt 2 freie Termine am Tag gemeldet. Rechne also mit Wartezeit." in de
+    en = client.get("/leipzig?lang=en").data.decode()
+    assert "50 people are waiting for an appointment in Leipzig right now." in en
+    assert "about 2 free slots a day on average. So expect to wait." in en
+
+
+def test_queue_line_hidden_below_50(client):
+    _queue_sub(_queue_db(client), 49)
+    assert "warten gerade" not in client.get("/leipzig").data.decode()
+
+
+def test_queue_line_drops_slot_sentences_when_nothing_was_reported(client):
+    conn = _queue_db(client)
+    _queue_sub(conn, 50)
+    _queue_slots(conn, 1, ["a"])       # 1 slot in 7 days rounds to 0 a day
+    body = client.get("/leipzig").data.decode()
+    assert "50 Personen" in body
+    assert "Rechne also mit Wartezeit" not in body
+
+
+def test_queue_counts_only_live_subscriptions_of_this_city(client):
+    conn = _queue_db(client)
+    _queue_sub(conn, 50)
+    _queue_sub(conn, 5, deleted="datetime('now')")
+    _queue_sub(conn, 5, expires="datetime('now','-1 days')")
+    _queue_sub(conn, 5, confirmed="NULL")
+    _queue_sub(conn, 5, city="nuernberg")
+    assert "gerade 50 Personen" in client.get("/leipzig").data.decode()
+
+
+def test_queue_db_error_renders_form_without_the_line(client, monkeypatch):
+    import app.web as web
+    _queue_sub(_queue_db(client), 50)
+    real = web.connect
+    calls = []
+
+    def flaky(path):
+        conn = real(path)
+        calls.append(1)
+        if len(calls) > 1:          # the second connection is the queue's
+            conn.close()
+        return conn
+    monkeypatch.setattr(web, "connect", flaky)
+    r = client.get("/leipzig")
+    assert r.status_code == 200
+    assert b"warten gerade" not in r.data

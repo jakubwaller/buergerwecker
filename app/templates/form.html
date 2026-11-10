@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_fields.html" import max_days_select, special_consent %}
-{% from "_parts.html" import city_grid, faq, banners, mail_pressure_notice with context %}
+{% from "_parts.html" import city_grid, faq, banners, mail_pressure_notice, queue_notice with context %}
 {% block content %}
   {{ banners(confirmed, error, lang) }}
 
@@ -102,6 +102,7 @@
       <input type="text" name="website" autocomplete="off" tabindex="-1">
     </label>
 
+    {{ queue_notice(queue, city_name, lang) }}
     {{ mail_pressure_notice(mail_pressure, lang) }}
 
     <button type="submit">
