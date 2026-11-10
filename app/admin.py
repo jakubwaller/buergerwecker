@@ -596,6 +596,7 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
     city_labels: dict[str, str] = {}
     city_names: dict[str, str] = {}
     city_hosts: dict[str, str] = {}
+    city_breaks: dict[str, str] = {}
     for c in set(list(by_city_subs) + list(upstream_by_city)
                  + list(last_polled_at_by_city)):
         try:
@@ -608,6 +609,9 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
         name = cat.display_text("city_name", "en")
         if name:
             city_names[c] = name
+        brk = cat.scraper_config.get("availability_break")
+        if brk:
+            city_breaks[c] = brk
         host = urlsplit(cat.scraper_config.get("base_url", "")).netloc
         if host:
             city_hosts[c] = host
@@ -662,6 +666,10 @@ def stats(conn: sqlite3.Connection, cfg=None) -> dict:
             "requests_total": up.get("requests_total", 0),
             "last_polled_at": last_polled_at_by_city.get(c),
             "zero_match_since": canary.get(c),
+            "availability_break": city_breaks.get(c),
+            # ISO dates compare as strings; same 7-day window as availability_summary.
+            "break_in_7d": bool(city_breaks.get(c)) and city_breaks[c] >= (
+                datetime.utcnow() - timedelta(days=7)).date().isoformat(),
         })
     # Two tenants can share one geographic name (leipzig / leipzig-abh are both
     # "Leipzig") — give colliding rows the label's descriptor as a sub-line so

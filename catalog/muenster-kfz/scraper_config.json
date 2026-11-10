@@ -4,5 +4,6 @@
   "md": 19,
   "mdt": 214,
   "poll_interval_seconds": 120,
-  "read_times": true
+  "read_times": true,
+  "availability_break": "2026-11-10"
 }

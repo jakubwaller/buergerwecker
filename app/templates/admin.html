@@ -143,6 +143,7 @@
   .spark { display: flex; align-items: flex-end; gap: 1.5px; height: 34px; }
   .spark i { flex: 1 1 0; min-width: 0; min-height: 2px; background: color-mix(in srgb, var(--accent) 55%, transparent); border-radius: 2px 2px 0 0; }
   .spark i.last { background: var(--accent); }
+  .spark i.brk { box-shadow: -2px 0 0 #d97706; }
   .spark i.zero { background: var(--border); min-height: 2px; border-radius: 999px; }
   .spark-now { font-size: 0.85rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .spark-now strong { font-weight: 600; }
@@ -564,13 +565,14 @@
           {% set rows = s.availability_daily|selectattr('city', 'equalto', c.key)|list %}
           {% if rows %}
             {% set dmax = (rows|map(attribute='avg_per_service')|max) or 1 %}
+            {% set brk_shown = c.availability_break and rows|selectattr('day', 'equalto', c.availability_break)|list %}
             <div class="spark-row">
-              <div class="spark-city" title="{{ c.label }}">{{ c.name }}{% if c.sub %}<br><span class="adm-muted" style="font-size:0.72rem;font-weight:400;">{{ c.sub|truncate(24) }}</span>{% endif %}</div>
+              <div class="spark-city" title="{{ c.label }}">{{ c.name }}{% if c.sub %}<br><span class="adm-muted" style="font-size:0.72rem;font-weight:400;">{{ c.sub|truncate(24) }}</span>{% endif %}{% if brk_shown %}<br><span style="color:#d97706;font-size:0.72rem;font-weight:400;">counting changed {{ c.availability_break }}</span>{% endif %}</div>
               <div class="spark">
                 {% for r in rows %}
-                  <i class="{% if r.avg_per_service == 0 %}zero{% elif loop.last %}last{% endif %}"
+                  <i class="{% if r.avg_per_service == 0 %}zero{% elif loop.last %}last{% endif %}{% if r.day == c.availability_break %} brk{% endif %}"
                      style="height: {{ (100 * r.avg_per_service / dmax)|round(1) if r.avg_per_service else 0 }}%"
-                     title="{{ r.day }} · {{ r.avg_per_service }} free per polled service"></i>
+                     title="{{ r.day }} · {{ r.avg_per_service }} free per polled service{% if r.day == c.availability_break %} · counting changed this day{% endif %}"></i>
                 {% endfor %}
               </div>
               {% set latest = rows|last %}
@@ -604,6 +606,7 @@
               <span class="av-meta">{{ rows|length }} office/type row{{ 's' if rows|length != 1 }} · {{ c.subs }} sub{{ 's' if c.subs != 1 }} · Ø {{ rows|map(attribute='avg_slots')|sum|round|int }} free · polled {{ (rows|map(attribute='coverage')|sum / rows|length)|round|int }}%</span>
               {% if n_empty %}<span class="av-flag" style="color:#dc2626">{{ n_empty }} mostly empty</span>{% endif %}
               {% if n_scarce %}<span class="av-flag" style="color:#d97706">{{ n_scarce }} scarce</span>{% endif %}
+              {% if c.break_in_7d %}<span class="av-flag" style="color:#d97706">counting changed {{ c.availability_break }} · not comparable before</span>{% endif %}
             </summary>
             <div class="hbars">
               {% for r in rows %}
