@@ -288,6 +288,7 @@ def test_heartbeat_says_what_the_silence_means(db):
     assert call.subject == "Noch keine passenden Termine in Leipzig"
     body = call.body
     assert "In den letzten 30 Tagen war kein Termin frei" in body
+    assert body.startswith("Hallo,\n\nAutomatische Mail – Bürgerwecker ist nicht die Stadt.")
     assert "\n\nhttps://x/manage/" in body
     assert "Abmelden: https://x/unsubscribe/" in body
 

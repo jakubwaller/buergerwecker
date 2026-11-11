@@ -419,13 +419,13 @@ def _send_manage_link_email(conn, sub_id: int, cfg) -> None:
     suffix = f" ({city_name})" if city_name else ""
     end = _end_date(row["expires_at"], row["language"])
     # Arrives the second after the confirm click, when the reader expects
-    # "Anmeldung bestätigt" — so say that first, then the link, then the
-    # term. "Verwaltungs-Link" stays as a word: the FAQ calls it that.
+    # "Anmeldung bestätigt" — so the note comes first, then that, the link
+    # and the term. "Verwaltungs-Link" stays as a word: the FAQ calls it that.
     note = t("de" if row["language"] == "de" else "en", "digest.no_booking_note")
     if row["language"] == "de":
         where = f" in {city_name}" if city_name else ""
         body = (f"Hallo,\n\n{note}\n\n"
-                f"deine Anmeldung ist aktiv. Sobald ein passender Termin{where} "
+                f"Deine Anmeldung ist aktiv. Sobald ein passender Termin{where} "
                 f"frei wird, bekommst du eine Mail.\n\n"
                 f"Dein Verwaltungs-Link, mit dem du deine Einstellungen "
                 f"jederzeit ändern oder dich abmelden kannst:\n\n{url}\n")
@@ -438,7 +438,7 @@ def _send_manage_link_email(conn, sub_id: int, cfg) -> None:
     else:
         where = f" in {city_name}" if city_name else ""
         body = (f"Hello,\n\n{note}\n\n"
-                f"your sign-up is active. As soon as a matching appointment"
+                f"Your sign-up is active. As soon as a matching appointment"
                 f"{where} opens up, you will get an email.\n\n"
                 f"Your management link, to change your settings or "
                 f"unsubscribe at any time:\n\n{url}\n")

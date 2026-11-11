@@ -250,6 +250,7 @@ def test_confirmation_says_to_click_and_puts_the_link_on_its_own_line(lang, clic
     assert click in item.body
     assert own in item.body
     assert "https://site.example/confirm/" in item.body
+    assert ("\n\nDu hast dich" if lang == "de" else "\n\nYou signed up") in item.body
     assert ("Automatische Mail – Bürgerwecker ist nicht die Stadt. Eine Antwort auf diese Mail bucht oder bestätigt nichts, nutze dafür die Links in dieser Mail." if lang == "de" else
             "Automatic email – Bürgerwecker is not the city. Replying to this email books or confirms nothing, use the links in this email instead.") in item.body
     url_lines = [ln for ln in item.body.splitlines()

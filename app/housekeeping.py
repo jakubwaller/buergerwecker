@@ -261,13 +261,15 @@ def _heartbeat_mail(lang: str, *, city: str | None, days: int,
                     manage_url: str, unsub_url: str) -> tuple[str, str]:
     """"Still subscribed, nothing matched" — says what the silence means and
     that a narrower filter is the usual reason, with each link labelled."""
+    from app.i18n import t
+    note = t("en" if lang == "en" else "de", "digest.no_booking_note")
     if lang == "en":
         where = f" in {city}" if city else ""
         for_city = f" for {city}" if city else ""
         subj = f"No matching appointments yet{where}"
         body = (
-            f"Hello,\n\n"
-            f"you are still signed up with Bürgerwecker{for_city}. In the last "
+            f"Hello,\n\n{note}\n\n"
+            f"You are still signed up with Bürgerwecker{for_city}. In the last "
             f"{days} days no appointment matched your filter, so we had "
             f"nothing to send. As soon as one opens up, you will get an "
             f"email.\n\n"
@@ -280,8 +282,8 @@ def _heartbeat_mail(lang: str, *, city: str | None, days: int,
         for_city = f" für {city}" if city else ""
         subj = f"Noch keine passenden Termine{where}"
         body = (
-            f"Hallo,\n\n"
-            f"du bist bei Bürgerwecker weiterhin{for_city} angemeldet. In den "
+            f"Hallo,\n\n{note}\n\n"
+            f"Du bist bei Bürgerwecker weiterhin{for_city} angemeldet. In den "
             f"letzten {days} Tagen war kein Termin frei, der zu deinem Filter "
             f"passt, deshalb kam keine Mail. Sobald einer auftaucht, bekommst "
             f"du eine.\n\n"
