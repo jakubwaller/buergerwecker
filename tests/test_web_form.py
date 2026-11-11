@@ -327,6 +327,7 @@ def test_queued_banner_points_to_the_app(client, lang, tip):
     banner = banner[:banner.index("</div>")]   # the footer has an App Store link too
     assert "https://apps.apple.com/app/id6819977614" in banner
     assert "https://groups.google.com/g/buergerwecker-beta" in banner
+    assert "https://play.google.com/apps/testing/de.buergerwecker.app" in banner
 
 
 def test_form_warns_when_the_providers_are_full_though_the_reserve_is_unused(client):
