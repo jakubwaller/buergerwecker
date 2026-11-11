@@ -534,6 +534,11 @@ def test_trailing_slash_redirects(client):
     assert r.status_code == 301 and r.headers["Location"] == "/impressum"
 
 
+def test_trailing_slash_with_newline_is_404_not_500(client):
+    for path in ("/x%0A/", "/leipzig%0D%0A/"):
+        assert client.get(path).status_code == 404, path
+
+
 def test_every_404_is_the_styled_page(client):
     for path, lang_marker in (("/a/b/c", "Die haben wir nicht"), ("/a/b/c/", "Die haben wir nicht")):
         r = client.get(path)

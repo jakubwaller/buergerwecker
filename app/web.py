@@ -920,7 +920,7 @@ def create_app() -> Flask:
             return e
         # /leipzig/ and /impressum/ are the same page as without the slash.
         stripped = path.rstrip("/")
-        if stripped and stripped != path and request.method in ("GET", "HEAD"):
+        if stripped and stripped != path and stripped.isprintable() and request.method in ("GET", "HEAD"):
             try:
                 app.url_map.bind("").match(stripped, method=request.method)
             except HTTPException:
