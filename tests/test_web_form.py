@@ -572,3 +572,29 @@ def test_stuttgart_picker_entry_names_the_office(client):
 def test_api_non_v1_paths_get_the_styled_404(client):
     r = client.get("/api/foo")
     assert r.status_code == 404 and 'class="city-grid"' in r.data.decode()
+
+
+def _form_script(html: str) -> str:
+    return next(s for s in html.split("<script>") if "bw-lang-switch-form" in s)
+
+
+def test_form_ships_lang_switch_state_script(client):
+    html = client.get("/leipzig").data.decode()
+    js = _form_script(html)
+    assert "sessionStorage" in js
+    assert "localStorage" not in js
+    assert "document.cookie" not in js
+
+
+def test_form_state_script_skips_consent_and_honeypot(client):
+    js = _form_script(client.get("/leipzig").data.decode())
+    assert "indexOf('consent') === 0" in js and "'website'" in js
+
+
+def test_privacy_page_mentions_session_storage(client):
+    de = client.get("/datenschutz").data.decode()
+    en = client.get("/datenschutz?lang=en").data.decode()
+    assert "Wechselst du auf der Anmeldeseite die Sprache" in de
+    assert "(Session Storage). Sie verlassen dein Gerät nicht und werden danach gelöscht." in de
+    assert "If you switch the language on the sign-up page" in en
+    assert "(session storage). It does not leave your device and is deleted afterwards." in en
