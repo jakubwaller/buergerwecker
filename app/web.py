@@ -432,7 +432,7 @@ def _send_manage_link_email(conn, sub_id: int, cfg) -> None:
         if end:
             body += (f"\nDeine Anmeldung läuft bis zum {end}. Kurz vorher "
                      f"fragen wir per E-Mail, ob du noch suchst. Ein Klick "
-                     f"verlängert sie, ohne Antwort endet sie automatisch.\n")
+                     f"verlängert sie, ohne Klick endet sie automatisch.\n")
         body += "\nBürgerwecker\n"
         subj = f"Anmeldung bestätigt{suffix}"
     else:
@@ -445,8 +445,8 @@ def _send_manage_link_email(conn, sub_id: int, cfg) -> None:
         if end:
             body += (f"\nYour subscription runs until {end}. Shortly before "
                      f"that we'll email you to ask whether you're still "
-                     f"looking. One click extends it, no reply ends it "
-                     f"automatically.\n")
+                     f"looking. One click extends it, without a click it "
+                     f"ends by itself.\n")
         body += "\nBürgerwecker\n"
         subj = f"Sign-up confirmed{suffix}"
     key = _idem_key(sub_id, [], f"manage-link-{sub_id}")
