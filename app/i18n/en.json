@@ -12,7 +12,7 @@
   "digest.book_instructions": "There, first select the service “{services}”, then the location “{locations}”.",
   "digest.book_instructions_service_only": "There, select the service “{services}”.",
   "digest.book_instructions_any_location": "There, first select the service “{services}”, then whichever location suits you.",
-  "digest.no_booking_note": "Bürgerwecker does not book – replying to this email reserves nothing. Book it yourself via the link above.",
+  "digest.no_booking_note": "Automatic email – Bürgerwecker is not the city. Replying to this email books or confirms nothing, use the links in this email instead.",
   "digest.no_deeplink_note": "(The city's booking software unfortunately does not support direct links to individual appointments.)",
   "digest.burst_warning": "Open appointments are often taken quickly — book right away if one fits.",
   "digest.no_repeat_note": "Note: each email only lists appointments that are new since your last notification. Previously reported ones may still be available.",

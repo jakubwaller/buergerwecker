@@ -217,7 +217,8 @@ def _checkin_mail(lang: str, *, city: str | None, expires_at: str,
                   grace_days: int, renew_url: str, unsub_url: str,
                   manage_url: str) -> tuple[str, str]:
     """Subject and plain-text body of the still-looking check-in."""
-    from app.i18n import format_date
+    from app.i18n import format_date, t
+    note = t("en" if lang == "en" else "de", "digest.no_booking_note")
     stop = datetime.fromisoformat(expires_at[:19]).date()
     resume_until = stop + timedelta(days=grace_days)
     fmt = lambda d: format_date(d, lang)  # noqa: E731
@@ -226,6 +227,8 @@ def _checkin_mail(lang: str, *, city: str | None, expires_at: str,
         subj = f"Still looking for an appointment{where}?"
         body = (
             f"Still looking for an appointment{where}?\n"
+            f"\n"
+            f"{note}\n"
             f"\n"
             f"Yes, keep looking: {renew_url}\n"
             f"No, I've got one: {unsub_url}\n"
@@ -241,10 +244,12 @@ def _checkin_mail(lang: str, *, city: str | None, expires_at: str,
         body = (
             f"Suchst du noch einen Termin{where}?\n"
             f"\n"
+            f"{note}\n"
+            f"\n"
             f"Ja, weiter suchen: {renew_url}\n"
             f"Nein, ich habe einen: {unsub_url}\n"
             f"\n"
-            f"Ohne Antwort stoppen die Benachrichtigungen am {fmt(stop)}. "
+            f"Ohne Klick stoppen die Benachrichtigungen am {fmt(stop)}. "
             f"Bis {fmt(resume_until)} kannst du sie mit dem ersten Link wieder "
             f"einschalten.\n"
             f"\n"
