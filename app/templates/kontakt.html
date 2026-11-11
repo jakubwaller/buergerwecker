@@ -59,14 +59,14 @@
   <p class="disclaimer">
     {% if lang == 'en' %}
       Your email address is used only to reply to this message. Beyond that
-      we keep only a non-reversible check value (hash) for 14 days, to detect
-      duplicate submissions. See the <a href="/datenschutz?lang=en">privacy
+      we keep only a check value (hash) of your address and message for 14
+      days, to detect duplicate submissions. See the <a href="/datenschutz?lang=en">privacy
       policy</a> for details.
     {% else %}
       Deine E-Mail-Adresse wird ausschließlich zur Beantwortung dieser
-      Nachricht verwendet. Darüber hinaus speichern wir nur einen nicht
-      umkehrbaren Prüfwert (Hash) für 14 Tage, um doppelte Sendungen zu
-      erkennen. Details in der <a href="/datenschutz">Datenschutzerklärung</a>.
+      Nachricht verwendet. Darüber hinaus speichern wir nur einen
+      Prüfwert (Hash) aus Adresse und Nachricht für 14 Tage, um doppelte
+      Sendungen zu erkennen. Details in der <a href="/datenschutz">Datenschutzerklärung</a>.
     {% endif %}
   </p>
 {% endblock %}
