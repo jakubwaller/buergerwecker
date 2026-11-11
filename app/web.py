@@ -621,6 +621,12 @@ def _count_webhook_rejection(cfg, provider: str) -> None:
     except Exception:
         log.exception("failed to record webhook rejection")
 
+# Paths the trailing-slash redirect may answer: one leading "/", plain segments,
+# no "//", backslash, "@", ":" or encoded slash/backslash. re.A keeps [A-Za-z]
+# ASCII under re.I (else U+212A Kelvin sign etc. match).
+_SAFE_REDIRECT_PATH = re.compile(
+    r"(?!.*%(?:2f|5c))/[A-Za-z0-9._~%\-]+(?:/[A-Za-z0-9._~%\-]+)*", re.I | re.S | re.A)
+
 def create_app() -> Flask:
     app = Flask(__name__,
                 template_folder="templates",
@@ -913,9 +919,6 @@ def create_app() -> Flask:
                                unknown_city=what,
                                kofi_url=app.config["TERMINE_CONFIG"].kofi_url), 404
 
-    _SAFE_REDIRECT_PATH = re.compile(
-        r"(?!.*%(?:2f|5c))/[A-Za-z0-9._~%\-]+(?:/[A-Za-z0-9._~%\-]+)*", re.I | re.S)
-
     @app.errorhandler(404)
     def _not_found(e):
         path = request.path
@@ -934,9 +937,9 @@ def create_app() -> Flask:
                 pass
             else:
                 # Raw, still percent-encoded query bytes, appended after "?"
-                # so they cannot start a new Location; non-printable is dropped.
-                args = request.query_string.decode("ascii", "ignore")
-                if not args.isprintable():
+                # so they cannot start a new Location; anything but printable ASCII drops it.
+                args = request.query_string.decode("latin-1")
+                if not (args.isascii() and args.isprintable()):
                     args = ""
                 return redirect(stripped + (f"?{args}" if args else ""), code=301)
         lang = request.args.get("lang", "de")
