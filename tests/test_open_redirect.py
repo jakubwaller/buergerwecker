@@ -107,3 +107,58 @@ def test_load_catalog_rejects_anything_that_is_not_a_slug(slug):
 def test_load_catalog_still_loads_real_tenants():
     assert load_catalog("leipzig").city == "leipzig"
     assert load_catalog("muenster-standesamt").city == "muenster-standesamt"
+
+
+SLASH_PAYLOADS = [
+    "//evil.example/", "///evil.example/", "/%5Cevil.example/", "/%5cevil.example/",
+    "/%2F%2Fevil.example/", "/\\evil.example/", "//evil.example/%2e%2e/",
+    "/leipzig//", "/@evil.example/", "/leipzig//evil.example/", "/a//b/",
+    "//evil.example", "/evil.example:80/", "/%2fx/",
+]
+
+
+@pytest.mark.parametrize("payload", SLASH_PAYLOADS)
+def test_trailing_slash_redirect_cannot_leave_the_site(client, payload):
+    from urllib.parse import urlsplit
+    # PATH_INFO directly: the test client would parse "//host/" as a URL authority
+    r = client.get("/", environ_overrides={"PATH_INFO": payload})
+    assert r.status_code in (301, 404), (r.status_code, r.headers.get("Location"))
+    if r.status_code == 404:
+        assert "Location" not in r.headers
+        return
+    u = urlsplit(r.headers["Location"])
+    assert u.netloc == "" and u.scheme == ""
+    assert u.path[0] == "/" and u.path[1:2] not in ("/", "\\", "")
+
+
+def test_trailing_slash_post_is_never_redirected(client):
+    r = client.post("/leipzig/")
+    assert r.status_code != 301 and "Location" not in r.headers
+
+
+def test_trailing_slash_keeps_query(client):
+    r = client.get("/leipzig/?lang=en&x=%0D%0Ay")
+    assert r.status_code == 301 and r.headers["Location"] == "/leipzig?lang=en&x=%0D%0Ay"
+    r = client.get("/impressum/?a=1")
+    assert r.status_code == 301 and r.headers["Location"] == "/impressum?a=1"
+
+
+@pytest.mark.parametrize("path,ok", [
+    ("/leipzig", True), ("/muenster-kfz", True), ("/impressum", True),
+    ("//evil.example", False), ("/a//b", False), ("/\\evil.example", False),
+    ("/@evil.example", False), ("/a:b", False), ("/%2fx", False), ("/%5Cx", False),
+    ("/\u212a", False), ("", False),
+])
+def test_safe_redirect_path_pattern(path, ok):
+    from app.web import _SAFE_REDIRECT_PATH
+    assert bool(_SAFE_REDIRECT_PATH.fullmatch(path)) is ok
+
+
+def test_kelvin_sign_slash_is_404(client):
+    r = client.get("/%E2%84%AA/")
+    assert r.status_code == 404 and "Location" not in r.headers
+
+
+def test_non_ascii_query_is_dropped_from_redirect(client):
+    r = client.get("/leipzig/?a=\u00fc")
+    assert r.status_code == 301 and r.headers["Location"] == "/leipzig"

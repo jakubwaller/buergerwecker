@@ -8,6 +8,7 @@ import time as time_mod
 from collections import Counter
 from datetime import datetime
 from urllib.parse import urlencode
+from werkzeug.exceptions import HTTPException
 from html import escape
 from pathlib import Path
 from flask import (Flask, Response, request, render_template, redirect,
@@ -495,6 +496,7 @@ def _tenant_switcher(city: str | None, lang: str):
     tenants_per_city = Counter(cname for cname, _, _ in tenants)
     current_city_name = next((cname for cname, _, slug in tenants if slug == city), None)
 
+    dedicated = {cname: bool(ocat.display_text("office", lang)) for cname, ocat, _ in tenants}
     by_city: dict[str, list[tuple[str, str]]] = {}
     sibling_offices: list[tuple[str, str | None]] = []
     for cname, ocat, slug in tenants:
@@ -513,12 +515,17 @@ def _tenant_switcher(city: str | None, lang: str):
         if cname == current_city_name:
             continue  # already covered by the sibling row
         offices = sorted(by_city[cname], key=lambda pair: pair[0].casefold())
-        if tenants_per_city[cname] > 1:
+        # A lone dedicated office (Stuttgart: Führerscheinstelle) is shown like
+        # the multi-Amt cities, so the link says which office it leads to.
+        if tenants_per_city[cname] > 1 or dedicated[cname]:
             other_cities.append((cname, None, offices))
         else:
             other_cities.append((cname, offices[0][1], []))
     sibling_offices.sort(key=lambda pair: pair[0].casefold())
     return other_cities, sibling_offices
+
+
+_SLUG_FOLD = str.maketrans({"ü": "ue", "ö": "oe", "ä": "ae", "ß": "ss"})
 
 
 def _is_tenant(city: str | None) -> bool:
@@ -613,6 +620,12 @@ def _count_webhook_rejection(cfg, provider: str) -> None:
         _stamp_meta_now(conn, f"last_webhook_rejected_at_{provider}")
     except Exception:
         log.exception("failed to record webhook rejection")
+
+# Paths the trailing-slash redirect may answer: one leading "/", plain segments,
+# no "//", backslash, "@", ":" or encoded slash/backslash. re.A keeps [A-Za-z]
+# ASCII under re.I (else U+212A Kelvin sign etc. match).
+_SAFE_REDIRECT_PATH = re.compile(
+    r"(?!.*%(?:2f|5c))/[A-Za-z0-9._~%\-]+(?:/[A-Za-z0-9._~%\-]+)*", re.I | re.S | re.A)
 
 def create_app() -> Flask:
     app = Flask(__name__,
@@ -900,6 +913,38 @@ def create_app() -> Flask:
         finally:
             conn.close()
 
+    def _not_found_page(what: str, lang: str):
+        all_cities, _ = _tenant_switcher(None, lang)
+        return render_template("cities.html", lang=lang, cities=all_cities,
+                               unknown_city=what,
+                               kofi_url=app.config["TERMINE_CONFIG"].kofi_url), 404
+
+    @app.errorhandler(404)
+    def _not_found(e):
+        path = request.path
+        if path == "/api/v1" or path.startswith("/api/v1/"):
+            return e
+        # /leipzig/ and /impressum/ are the same page as without the slash.
+        stripped = path.rstrip("/")
+        # Allowlist, not Werkzeug's quirks: one leading "/", plain segments, no
+        # "//", backslash, "@", ":" or encoded slash/backslash, so the Location
+        # can only ever be a same-site path.
+        if (_SAFE_REDIRECT_PATH.fullmatch(stripped) and stripped != path
+                and request.method in ("GET", "HEAD")):
+            try:
+                app.url_map.bind("").match(stripped, method=request.method)
+            except HTTPException:
+                pass
+            else:
+                # Raw, still percent-encoded query bytes, appended after "?"
+                # so they cannot start a new Location; anything but printable ASCII drops it.
+                args = request.query_string.decode("latin-1")
+                if not (args.isascii() and args.isprintable()):
+                    args = ""
+                return redirect(stripped + (f"?{args}" if args else ""), code=301)
+        lang = request.args.get("lang", "de")
+        return _not_found_page(path.strip("/"), lang if lang in ("de", "en") else "de")
+
     @app.route("/<city>")
     def city_page(city):
         """A tenant's sign-up form. Werkzeug ranks static rules above this one,
@@ -912,13 +957,17 @@ def create_app() -> Flask:
         try:
             catalog = load_catalog(city)
         except CatalogError:
+            # /Leipzig or /münster: the city exists, the spelling does not.
+            canon = city.lower().translate(_SLUG_FOLD)
+            if canon != city and _is_tenant(canon):
+                args = request.args.to_dict(flat=True)
+                args.pop("city", None)  # the legacy /?city=x entry carries it
+                return redirect(f"/{canon}" + (f"?{urlencode(args)}" if args else ""),
+                                code=301)
             # Not a tenant. 404 rather than redirect to /, so a mistyped or
             # retired city is not a soft 404 in the index — but render the
             # picker with it, because the useful next step is choosing a city.
-            all_cities, _ = _tenant_switcher(None, lang)
-            return render_template("cities.html", lang=lang, cities=all_cities,
-                                   unknown_city=city,
-                                   kofi_url=app.config["TERMINE_CONFIG"].kofi_url), 404
+            return _not_found_page(city, lang)
         other_cities, sibling_offices = _tenant_switcher(city, lang)
         # A shared city link should preview as that city. The Amt deliberately
         # stays out of it: for a special-category tenant the office name is the
@@ -933,6 +982,7 @@ def create_app() -> Flask:
                                city=city,
                                mail_pressure=_mail_pressure_now(),
                                queue=_queue_now(city),
+                               website_only=catalog.website_only,
                                **og,
                                confirmed=confirmed,
                                error=error,

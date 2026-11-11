@@ -147,7 +147,7 @@
 {# The mail pool under pressure, said before anyone signs up: mail alerts
    are thinned to `p.cap` a day and/or the confirmation mail may wait.
    Push uses no mail quota, so the app is the way around both. #}
-{% macro mail_pressure_notice(p, lang) %}
+{% macro mail_pressure_notice(p, lang, website_only=false) %}
   {% if p and (p.cap or p.held) %}
     <div class="notice notice-warn" role="status">
       {% if lang == 'en' %}
@@ -155,15 +155,15 @@
           most {{ p.cap }} email alert{% if p.cap != 1 %}s{% endif %} a day.{% endif %}
         {% if p.held %}Lots of sign-ups right now – the confirmation email may
           be delayed, possibly until tomorrow.{% endif %}
-        With the app, notifications come by push, with no email limit:
+        {% if not website_only %}With the app, notifications come by push, with no email limit:{% endif %}
       {% else %}
         {% if p.cap %}E-Mails sind gerade knapp: Per E-Mail schicken wir
           vorerst höchstens {{ p.cap }} Benachrichtigung{% if p.cap != 1 %}en{% endif %} am Tag.{% endif %}
         {% if p.held %}Gerade sind viele Anmeldungen da – die Bestätigungs-E-Mail
           kann sich verzögern, eventuell bis morgen.{% endif %}
-        Mit der App kommen Benachrichtigungen per Push, ohne E-Mail-Limit:
+        {% if not website_only %}Mit der App kommen Benachrichtigungen per Push, ohne E-Mail-Limit:{% endif %}
       {% endif %}
-      {{ app_links(lang) }}
+      {% if not website_only %}{{ app_links(lang) }}{% endif %}
     </div>
   {% endif %}
 {% endmacro %}
@@ -184,7 +184,7 @@
   {% endif %}
 {% endmacro %}
 
-{% macro banners(confirmed, error, lang) %}
+{% macro banners(confirmed, error, lang, website_only=false) %}
   {% if confirmed == 'pending' %}
     <div class="notice notice-success" role="status">
       {% if lang == 'en' %}
@@ -218,8 +218,10 @@
         gespeichert und die E-Mail wird automatisch verschickt; du musst dich
         nicht erneut anmelden. (Schau bitte auch im Spam-Ordner nach.)
       {% endif %}
+      {% if not website_only %}
       <br>{% if lang == 'en' %}Tip: in the Bürgerwecker app, notifications come by push, with no email limit.{% else %}Tipp: In der Bürgerwecker-App kommen Benachrichtigungen per Push, ohne E-Mail-Limit.{% endif %}
       {{ app_links(lang) }}
+      {% endif %}
     </div>
   {% endif %}
 

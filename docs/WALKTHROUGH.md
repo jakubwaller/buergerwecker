@@ -65,14 +65,22 @@ sign-up without an email address, anything that needs the installed iOS/Android 
   (Münster Gesundheitsamt STI-Beratung, the SBGG declaration), the service is offered with a separate Art. 9
   consent box that appears only while that service is selected; its mails never name the service or the office.
   Three offices are website-only and not in the app: the Leipzig Ausländerbehörde (`/leipzig-abh`), the Münster Einbürgerung (`/muenster-einbuergerung`) and the Münster Gesundheitsamt (`/muenster-gesundheitsamt`).
+- **Website-only pages do not offer the app in the notices.** On the three website-only offices the mail-pressure notice and the
+  post-sign-up "queued" banner leave out the app sentence and its links; the rest of each notice stays, as in the digest mail.
+  The FAQ and the footer still link the app.
+- **Empty selections are wide.** No office ticked means all offices, and no weekday ticked means every day.
+- **Server-side only checks.** The Art. 9 consent box and the time window are validated on the server, not in the
+  browser, so the form does not warn before the button.
+- **The hidden honeypot field's English text on German pages is intended** (it is invisible to visitors).
+- **The footer names the operator**, and the privacy page says Cloudflare may set an anti-bot cookie.
 - **Offices without the chosen service are hidden.** Changing Anliegen hides offices that do not offer it and
   unchecks them. A service the site has no map for shows every office.
 - **Dedicated Kfz, Führerschein and Ausländerbehörde pages exist only for a few cities** (Kfz: Münster, Bochum;
   Führerschein: Bochum, Stuttgart; Ausländerbehörde: Leipzig). Some Bürgeramt dropdowns also list single Kfz or
   Führerschein services, which is not a bug.
-- **Dresden (and every other TEVIS city, such as Münster and Braunschweig) reports only the earliest slot per
-  office; Leipzig lists all slots.** This shows in the mails, not on the web pages, and a later slot on an
-  already-reported day stays quiet. Not visible on a web walk.
+- **TEVIS cities (Dresden, Braunschweig, Münster and others) report the earliest slot per office, except Münster
+  Kfz, which reports all free times on the earliest day (PR #172); Leipzig lists all slots.** This shows in the
+  mails, not on the web pages, and a later slot on an already-reported day stays quiet. Not visible on a web walk.
 - **A queue notice** ("Für X warten gerade N Personen auf einen Termin. Rechne also mit Wartezeit.") appears
   only on busy city pages. Its number counts mail and app subscribers of that city.
 - **Android is a closed test with two steps** (Google Group, then Play opt-in); production access is not open yet.
@@ -81,7 +89,9 @@ sign-up without an email address, anything that needs the installed iOS/Android 
 - **No accounts, no login, no cookies, no third-party scripts.** Subscriptions are managed through a link in
   the mail, not through the site.
 - **Not affiliated with any city.** Every page carries the disclaimer. The footer carries Impressum, Datenschutz, the iPhone and Android app links, "Kaffee spendieren" (Ko-fi) and "Quellcode".
-- **`/?city=x` redirects (301) to `/x`.** An unknown city gives a 404 page, on purpose.
+- **`/?city=x` redirects (301) to `/x`.** Capitalised or umlaut slugs (`/Leipzig`, `/münster`) and a trailing slash
+  (`/leipzig/`, `/impressum/`) also redirect (301) to the canonical path. An unknown city or path gives a 404 page
+  with the picker, on purpose.
 - **Impressum and Datenschutz** exist in German and English.
   `/kontakt` is the contact form required by § 5 DDG and serves several sites; its "Um welche Seite geht es?" menu lists them.
 - Outbound links send no Referer (`no-referrer`).
