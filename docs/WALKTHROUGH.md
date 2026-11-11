@@ -95,6 +95,7 @@ sign-up without an email address, anything that needs the installed iOS/Android 
 - **Impressum and Datenschutz** exist in German and English.
   `/kontakt` is the contact form required by § 5 DDG and serves several sites; its "Um welche Seite geht es?" menu lists them.
 - Outbound links send no Referer (`no-referrer`).
+- **Form input survives the DE/EN switch** through the browser's session storage (kept for that one page change, then deleted), except the Art. 9 consent box, which must be ticked again.
 
 ## Out of bounds
 

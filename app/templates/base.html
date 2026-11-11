@@ -413,6 +413,12 @@
         });
       })();
     </script>
+    <script>
+      // A language-switch entry that never reached the form page must not linger.
+      if (!document.querySelector('form[action="/subscribe"]')) {
+        try { sessionStorage.removeItem('bw-lang-switch-form'); } catch (e) {}
+      }
+    </script>
     <footer>
       Made with ♥ in Hamburg ·
       <a href="/impressum{% if lang == 'en' %}?lang=en{% endif %}">{% if lang == 'en' %}Imprint{% else %}Impressum{% endif %}</a> ·

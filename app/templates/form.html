@@ -137,5 +137,75 @@
     </script>
   {% endif %}
 
+  <script>
+    // Keep what was typed across the DE/EN switch (a plain link, so the page
+    // reloads). Saved to sessionStorage only on that click, restored once
+    // and deleted at once. Never the consent box, the honeypot or hidden
+    // fields; nothing goes into the URL, a cookie or a request.
+    (function () {
+      var KEY = 'bw-lang-switch-form', MAX_AGE_MS = 120000;
+      var form = document.querySelector('form[action="/subscribe"]');
+      if (!form) return;
+      function skip(el) {
+        return !el.name || el.type === 'hidden' || el.type === 'submit' ||
+          el.name.indexOf('consent') === 0 || el.name === 'website' ||
+          !!el.closest('.hidden');
+      }
+      function id(el) {
+        return el.type === 'checkbox' ? el.name + '|' + el.value : el.name;
+      }
+      function changed(el) {
+        if (el.type === 'checkbox') return el.checked !== el.defaultChecked;
+        if (el.tagName === 'SELECT') {
+          var d = 0;
+          for (var i = 0; i < el.options.length; i++) {
+            if (el.options[i].defaultSelected) { d = i; break; }
+          }
+          return el.selectedIndex !== d;
+        }
+        return el.value !== el.defaultValue;
+      }
+      document.addEventListener('click', function (e) {
+        var link = e.target.closest && e.target.closest('a.lang-pill');
+        if (!link || e.button || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+        try {
+          var vals = {}, dirty = false;
+          Array.prototype.forEach.call(form.elements, function (el) {
+            if (skip(el)) return;
+            vals[id(el)] = el.type === 'checkbox' ? el.checked : el.value;
+            if (changed(el)) dirty = true;
+          });
+          if (dirty) {
+            sessionStorage.setItem(KEY, JSON.stringify(
+              {path: location.pathname, t: Date.now(), v: vals}));
+          }
+        } catch (err) { /* storage unavailable: switch as before */ }
+      });
+      function restore() {
+        try {
+          var raw = sessionStorage.getItem(KEY);
+          if (raw === null) return;
+          sessionStorage.removeItem(KEY);
+          var s = JSON.parse(raw);
+          if (!s || s.path !== location.pathname || !(Date.now() - s.t < MAX_AGE_MS) || Date.now() < s.t) return;
+          var touched = [];
+          Array.prototype.forEach.call(form.elements, function (el) {
+            if (skip(el) || !(id(el) in s.v)) return;
+            if (el.type === 'checkbox') el.checked = s.v[id(el)] === true;
+            else if (el.tagName !== 'SELECT') el.value = s.v[id(el)];
+            else if (Array.prototype.some.call(el.options, function (o) { return o.value === s.v[id(el)]; })) el.value = s.v[id(el)];
+            else return; // unknown option: leave the select as rendered
+            touched.push(el);
+          });
+          touched.forEach(function (el) {
+            el.dispatchEvent(new Event('change', {bubbles: true}));
+          });
+        } catch (err) { /* a bad entry is simply dropped */ }
+      }
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', restore);
+      else restore();
+    })();
+  </script>
+
   {{ faq(lang) }}
 {% endblock %}
