@@ -421,7 +421,7 @@ def test_queue_line_shows_waiting_from_50(client):
 def test_queue_line_names_the_office_of_the_tenant(client):
     _queue_sub(_queue_db(client), 50, city="muenster-kfz")
     de = client.get("/muenster-kfz").data.decode()
-    assert "Für Münster (KFZ-Zulassungsstelle) warten gerade 50 Personen" in de
+    assert "Für Münster (Kfz-Zulassungsstelle) warten gerade 50 Personen" in de
     en = client.get("/muenster-kfz?lang=en").data.decode()
     assert "in Münster (Vehicle registration office) right now" in en
     _queue_sub(_queue_db(client), 50, city="augsburg")      # no `office` in display.json
@@ -481,3 +481,84 @@ def test_queue_ignores_subscriptions_of_unverified_devices(client):
                      "confirmed_at, expires_at, device_id) VALUES ('', 'leipzig', "
                      "'{}', datetime('now'), datetime('now','+30 days'), ?)", (did,))
     assert "warten gerade" not in client.get("/leipzig").data.decode()
+
+
+# --- walk fixes 2026-11 -------------------------------------------------
+
+def _notices(body):
+    """Just the notice boxes: the FAQ and footer legitimately name the app."""
+    import re
+    return "".join(re.findall(r'<div class="notice.*?</div>', body, re.S))
+
+
+def _pressure(monkeypatch):
+    monkeypatch.setattr("app.cycle.subscriber_cap", lambda conn, cfg: (3, True))
+    monkeypatch.setattr("app.confirmations.confirmation_held", lambda *a, **k: True)
+
+
+@pytest.mark.parametrize("lang", ["de", "en"])
+def test_website_only_pages_do_not_offer_the_app(client, monkeypatch, lang):
+    _pressure(monkeypatch)
+    q = f"?confirmed=queued&lang={lang}"
+    for slug in ("leipzig-abh", "muenster-einbuergerung", "muenster-gesundheitsamt"):
+        body = _notices(client.get(f"/{slug}{q}").data.decode())
+        assert "apps.apple.com" not in body and "buergerwecker-beta" not in body
+        for phrase in ("Mit der App", "With the app", "Tipp: In der", "Tip: in the"):
+            assert phrase not in body
+        # the rest of both notices stays
+        assert ("E-Mails sind gerade knapp" if lang == "de" else "Email is tight") in body
+        assert ("Du bist registriert" if lang == "de" else "You're registered") in body
+
+
+@pytest.mark.parametrize("lang,app_sentence,tip", [
+    ("de", "Mit der App", "Tipp: In der"), ("en", "With the app", "Tip: in the")])
+def test_normal_pages_still_offer_the_app(client, monkeypatch, lang, app_sentence, tip):
+    _pressure(monkeypatch)
+    body = _notices(client.get(f"/leipzig?confirmed=queued&lang={lang}").data.decode())
+    assert app_sentence in body and tip in body
+    assert body.count("apps.apple.com") == 2
+
+
+def test_capitalised_and_umlaut_slugs_redirect(client):
+    r = client.get("/Leipzig?lang=en&x=1")
+    assert r.status_code == 301 and r.headers["Location"] == "/leipzig?lang=en&x=1"
+    r = client.get("/münster")
+    assert r.status_code == 301 and r.headers["Location"] == "/muenster"
+    assert client.get("/Nonexistent").status_code == 404
+
+
+def test_trailing_slash_redirects(client):
+    r = client.get("/leipzig/?lang=en")
+    assert r.status_code == 301 and r.headers["Location"] == "/leipzig?lang=en"
+    r = client.get("/impressum/")
+    assert r.status_code == 301 and r.headers["Location"] == "/impressum"
+
+
+def test_every_404_is_the_styled_page(client):
+    for path, lang_marker in (("/a/b/c", "Die haben wir nicht"), ("/a/b/c/", "Die haben wir nicht")):
+        r = client.get(path)
+        assert r.status_code == 404, path
+        body = r.data.decode()
+        assert lang_marker in body and 'class="city-grid"' in body
+    r = client.get("/a/b/c?lang=en")
+    assert r.status_code == 404 and "We don't have that one" in r.data.decode()
+
+
+def test_english_says_immigration_office_everywhere(client):
+    for path in ("/?lang=en", "/leipzig-abh?lang=en"):
+        body = client.get(path).data.decode()
+        assert "oreigners" not in body
+    assert "Immigration office" in client.get("/?lang=en").data.decode()
+    assert "immigration office" in client.get("/leipzig-abh?lang=en").data.decode()
+
+
+def test_kfz_label_is_spelled_alike(client):
+    body = client.get("/").data.decode()
+    assert "KFZ-Zulassungsstelle" not in body
+    assert body.count("Kfz-Zulassungsstelle") >= 2
+
+
+def test_stuttgart_picker_entry_names_the_office(client):
+    body = client.get("/").data.decode()
+    assert 'href="/stuttgart-fuehrerschein"' in body
+    assert 'title="Stuttgart: Führerscheinstelle"' in body
