@@ -913,20 +913,31 @@ def create_app() -> Flask:
                                unknown_city=what,
                                kofi_url=app.config["TERMINE_CONFIG"].kofi_url), 404
 
+    _SAFE_REDIRECT_PATH = re.compile(
+        r"(?!.*%(?:2f|5c))/[A-Za-z0-9._~%\-]+(?:/[A-Za-z0-9._~%\-]+)*", re.I | re.S)
+
     @app.errorhandler(404)
     def _not_found(e):
         path = request.path
-        if path.startswith("/api/"):
+        if path == "/api/v1" or path.startswith("/api/v1/"):
             return e
         # /leipzig/ and /impressum/ are the same page as without the slash.
         stripped = path.rstrip("/")
-        if stripped and stripped != path and stripped.isprintable() and request.method in ("GET", "HEAD"):
+        # Allowlist, not Werkzeug's quirks: one leading "/", plain segments, no
+        # "//", backslash, "@", ":" or encoded slash/backslash, so the Location
+        # can only ever be a same-site path.
+        if (_SAFE_REDIRECT_PATH.fullmatch(stripped) and stripped != path
+                and request.method in ("GET", "HEAD")):
             try:
                 app.url_map.bind("").match(stripped, method=request.method)
             except HTTPException:
                 pass
             else:
-                args = request.query_string.decode()
+                # Raw, still percent-encoded query bytes, appended after "?"
+                # so they cannot start a new Location; non-printable is dropped.
+                args = request.query_string.decode("ascii", "ignore")
+                if not args.isprintable():
+                    args = ""
                 return redirect(stripped + (f"?{args}" if args else ""), code=301)
         lang = request.args.get("lang", "de")
         return _not_found_page(path.strip("/"), lang if lang in ("de", "en") else "de")

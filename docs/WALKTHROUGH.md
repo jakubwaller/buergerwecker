@@ -65,8 +65,9 @@ sign-up without an email address, anything that needs the installed iOS/Android 
   (Münster Gesundheitsamt STI-Beratung, the SBGG declaration), the service is offered with a separate Art. 9
   consent box that appears only while that service is selected; its mails never name the service or the office.
   Three offices are website-only and not in the app: the Leipzig Ausländerbehörde (`/leipzig-abh`), the Münster Einbürgerung (`/muenster-einbuergerung`) and the Münster Gesundheitsamt (`/muenster-gesundheitsamt`).
-- **Website-only pages do not offer the app.** On the three website-only offices the mail-pressure notice and the
+- **Website-only pages do not offer the app in the notices.** On the three website-only offices the mail-pressure notice and the
   post-sign-up "queued" banner leave out the app sentence and its links; the rest of each notice stays, as in the digest mail.
+  The FAQ and the footer still link the app.
 - **Empty selections are wide.** No office ticked means all offices, and no weekday ticked means every day.
 - **Server-side only checks.** The Art. 9 consent box and the time window are validated on the server, not in the
   browser, so the form does not warn before the button.

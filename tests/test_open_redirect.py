@@ -107,3 +107,34 @@ def test_load_catalog_rejects_anything_that_is_not_a_slug(slug):
 def test_load_catalog_still_loads_real_tenants():
     assert load_catalog("leipzig").city == "leipzig"
     assert load_catalog("muenster-standesamt").city == "muenster-standesamt"
+
+
+SLASH_PAYLOADS = [
+    "//evil.example/", "///evil.example/", "/%5Cevil.example/", "/%5cevil.example/",
+    "/%2F%2Fevil.example/", "/\\evil.example/", "//evil.example/%2e%2e/",
+    "/leipzig//", "/@evil.example/",
+]
+
+
+@pytest.mark.parametrize("payload", SLASH_PAYLOADS)
+def test_trailing_slash_redirect_cannot_leave_the_site(client, payload):
+    from urllib.parse import urlsplit
+    r = client.get(payload)
+    if r.status_code != 301:  # a page or a styled 404, never a redirect
+        assert "Location" not in r.headers
+        return
+    u = urlsplit(r.headers["Location"])
+    assert u.netloc == "" and u.scheme == ""
+    assert u.path[0] == "/" and u.path[1:2] not in ("/", "\\", "")
+
+
+def test_trailing_slash_post_is_never_redirected(client):
+    r = client.post("/leipzig/")
+    assert r.status_code != 301 and "Location" not in r.headers
+
+
+def test_trailing_slash_keeps_query(client):
+    r = client.get("/leipzig/?lang=en&x=%0D%0Ay")
+    assert r.status_code == 301 and r.headers["Location"] == "/leipzig?lang=en&x=%0D%0Ay"
+    r = client.get("/impressum/?a=1")
+    assert r.status_code == 301 and r.headers["Location"] == "/impressum?a=1"

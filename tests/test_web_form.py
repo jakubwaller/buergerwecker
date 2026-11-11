@@ -567,3 +567,8 @@ def test_stuttgart_picker_entry_names_the_office(client):
     body = client.get("/").data.decode()
     assert 'href="/stuttgart-fuehrerschein"' in body
     assert 'title="Stuttgart: Führerscheinstelle"' in body
+
+
+def test_api_non_v1_paths_get_the_styled_404(client):
+    r = client.get("/api/foo")
+    assert r.status_code == 404 and 'class="city-grid"' in r.data.decode()
