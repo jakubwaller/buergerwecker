@@ -51,6 +51,18 @@ def test_get_renders_form_with_project_preselected(client):
     assert '<option value="zapfkompass" selected' in body
 
 
+def test_get_discloses_hash_retention_not_stored(client):
+    de = " ".join(client.get("/kontakt").get_data(as_text=True).split())
+    assert ("Darüber hinaus speichern wir nur einen nicht umkehrbaren "
+            "Prüfwert (Hash) für 14 Tage, um doppelte Sendungen zu erkennen."
+            ) in de
+    assert "nicht gespeichert" not in de
+    en = " ".join(client.get("/kontakt?lang=en").get_data(as_text=True).split())
+    assert ("Beyond that we keep only a non-reversible check value (hash) "
+            "for 14 days, to detect duplicate submissions.") in en
+    assert "not stored beyond" not in en
+
+
 def test_crashgap_is_a_selectable_project(client):
     body = client.get("/kontakt?projekt=crashgap").get_data(as_text=True)
     assert '<option value="crashgap" selected' in body
