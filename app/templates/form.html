@@ -187,12 +187,14 @@
           if (raw === null) return;
           sessionStorage.removeItem(KEY);
           var s = JSON.parse(raw);
-          if (!s || s.path !== location.pathname || !(Date.now() - s.t < MAX_AGE_MS)) return;
+          if (!s || s.path !== location.pathname || !(Date.now() - s.t < MAX_AGE_MS) || Date.now() < s.t) return;
           var touched = [];
           Array.prototype.forEach.call(form.elements, function (el) {
             if (skip(el) || !(id(el) in s.v)) return;
             if (el.type === 'checkbox') el.checked = s.v[id(el)] === true;
-            else el.value = s.v[id(el)];
+            else if (el.tagName !== 'SELECT') el.value = s.v[id(el)];
+            else if (Array.prototype.some.call(el.options, function (o) { return o.value === s.v[id(el)]; })) el.value = s.v[id(el)];
+            else return; // unknown option: leave the select as rendered
             touched.push(el);
           });
           touched.forEach(function (el) {
