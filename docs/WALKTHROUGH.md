@@ -64,11 +64,12 @@ sign-up without an email address, anything that needs the installed iOS/Android 
   are left out on purpose, so a city's dropdown can look shorter than the city's own portal. Where a city has agreed
   (Münster Gesundheitsamt STI-Beratung, the SBGG declaration), the service is offered with a separate Art. 9
   consent box that appears only while that service is selected; its mails never name the service or the office.
-  The Ausländerbehörde (Leipzig) is website-only, not in the app.
+  Three offices are website-only and not in the app: the Leipzig Ausländerbehörde (`/leipzig-abh`), the Münster Einbürgerung (`/muenster-einbuergerung`) and the Münster Gesundheitsamt (`/muenster-gesundheitsamt`).
 - **Offices without the chosen service are hidden.** Changing Anliegen hides offices that do not offer it and
   unchecks them. A service the site has no map for shows every office.
-- **Only some cities have a given service.** The Ausländerbehörde exists for Leipzig only; Kfz and Führerschein
-  only for a few cities (Kfz: Münster, Bochum; Führerschein: Bochum, Stuttgart). This is not a bug in the picker.
+- **Dedicated Kfz, Führerschein and Ausländerbehörde pages exist only for a few cities** (Kfz: Münster, Bochum;
+  Führerschein: Bochum, Stuttgart; Ausländerbehörde: Leipzig). Some Bürgeramt dropdowns also list single Kfz or
+  Führerschein services, which is not a bug.
 - **Dresden (and every other TEVIS city, such as Münster and Braunschweig) reports only the earliest slot per
   office; Leipzig lists all slots.** This shows in the mails, not on the web pages, and a later slot on an
   already-reported day stays quiet. Not visible on a web walk.
@@ -96,8 +97,8 @@ The site is production. The walk must never create anything or put load on a cit
 - **Never open token links:** `/confirm/…`, `/manage/…`, `/unsubscribe/…`, `/renew/…`, `/go/sub/…`, or any check-in link,
   even if one is shown or guessable.
 - **No `/admin`**, no `/webhooks/…`, no `/api/v1` calls (the app's backend; writes are real).
-- **No load testing and no rapid reloads.** There is a per-IP rate limiter that also guards real visitors;
-  keep to a page every few seconds and no crawl of all 30 cities.
+- **No load testing and no rapid reloads.** Out of courtesy to a small production server, keep to a page every few
+  seconds and do not crawl all 30 cities. (The per-IP rate limiter only covers sign-up and contact POSTs, which you never send.)
 - **City portals:** `/go/<slug>` redirects to the city's booking page. Open one at most per city and go no further than
   its first page; select nothing, submit nothing, book nothing. Prefer not to open it at all and note the target.
 - **Store pages:** open the App Store link, not the install. The Google Group and Play opt-in links: read the
