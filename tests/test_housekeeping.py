@@ -229,6 +229,8 @@ def test_checkin_asks_with_two_one_click_answers(db):
     assert "https://x/renew/" in body
     assert "https://x/unsubscribe/" in body
     assert "https://x/manage/" in body          # the "only certain times?" nudge
+    assert "Automatische Mail – Bürgerwecker ist nicht die Stadt. Eine Antwort auf diese Mail bucht oder bestätigt nichts, nutze dafür die Links in dieser Mail." in body
+    assert "Ohne Klick stoppen" in body and "Ohne Antwort" not in body
     # One-click unsubscribe header too, like every other subscriber mail.
     assert call.unsub_url.startswith("https://x/unsubscribe/")
     # Dates in the mail: when digests stop, and until when "weiter" still works.
@@ -286,6 +288,7 @@ def test_heartbeat_says_what_the_silence_means(db):
     assert call.subject == "Noch keine passenden Termine in Leipzig"
     body = call.body
     assert "In den letzten 30 Tagen war kein Termin frei" in body
+    assert body.startswith("Hallo,\n\nAutomatische Mail – Bürgerwecker ist nicht die Stadt.")
     assert "\n\nhttps://x/manage/" in body
     assert "Abmelden: https://x/unsubscribe/" in body
 

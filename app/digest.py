@@ -67,7 +67,8 @@ def render_digest_text(sub: Subscription, slots: list[Slot], *,
             return redaction
         return catalog.location_label(uuid, lang) if catalog else uuid
 
-    lines = [t(lang, "digest.greeting"), "", t(lang, "digest.intro"), ""]
+    lines = [t(lang, "digest.greeting"), "", t(lang, "digest.no_booking_note"), "",
+             t(lang, "digest.intro"), ""]
 
     # "Deine Auswahl" — echo the subscriber's filter (what they selected).
     f = sub.sub_filter
@@ -162,7 +163,6 @@ def render_digest_text(sub: Subscription, slots: list[Slot], *,
     else:
         lines.append(t(lang, "digest.book_instructions",
                        services=services, locations=locations))
-    lines.append(t(lang, "digest.no_booking_note"))
     lines.append(t(lang, "digest.no_deeplink_note"))
     lines.append("")
 

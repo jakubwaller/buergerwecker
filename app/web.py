@@ -22,7 +22,7 @@ from app.repo import (insert_pending, confirm,
                       soft_delete, suppression_reason, clear_delivery_block, update_filter)
 from app.ratelimit import GLOBAL_IP_LIMITER, email_rate_limit_ok
 from app.tokens import sign, verify, InvalidToken
-from app.i18n import format_date
+from app.i18n import format_date, t
 from app.planning import refused_by_plan_cap
 from app.mail import send as mail_send, _idem_key
 from app.webhooks import (PARSERS, apply_events, check_secret,
@@ -419,33 +419,34 @@ def _send_manage_link_email(conn, sub_id: int, cfg) -> None:
     suffix = f" ({city_name})" if city_name else ""
     end = _end_date(row["expires_at"], row["language"])
     # Arrives the second after the confirm click, when the reader expects
-    # "Anmeldung bestätigt" — so say that first, then the link, then the
-    # term. "Verwaltungs-Link" stays as a word: the FAQ calls it that.
+    # "Anmeldung bestätigt" — so the note comes first, then that, the link
+    # and the term. "Verwaltungs-Link" stays as a word: the FAQ calls it that.
+    note = t("de" if row["language"] == "de" else "en", "digest.no_booking_note")
     if row["language"] == "de":
         where = f" in {city_name}" if city_name else ""
-        body = (f"Hallo,\n\n"
-                f"deine Anmeldung ist aktiv. Sobald ein passender Termin{where} "
+        body = (f"Hallo,\n\n{note}\n\n"
+                f"Deine Anmeldung ist aktiv. Sobald ein passender Termin{where} "
                 f"frei wird, bekommst du eine Mail.\n\n"
                 f"Dein Verwaltungs-Link, mit dem du deine Einstellungen "
                 f"jederzeit ändern oder dich abmelden kannst:\n\n{url}\n")
         if end:
             body += (f"\nDeine Anmeldung läuft bis zum {end}. Kurz vorher "
                      f"fragen wir per E-Mail, ob du noch suchst. Ein Klick "
-                     f"verlängert sie, ohne Antwort endet sie automatisch.\n")
+                     f"verlängert sie, ohne Klick endet sie automatisch.\n")
         body += "\nBürgerwecker\n"
         subj = f"Anmeldung bestätigt{suffix}"
     else:
         where = f" in {city_name}" if city_name else ""
-        body = (f"Hello,\n\n"
-                f"your sign-up is active. As soon as a matching appointment"
+        body = (f"Hello,\n\n{note}\n\n"
+                f"Your sign-up is active. As soon as a matching appointment"
                 f"{where} opens up, you will get an email.\n\n"
                 f"Your management link, to change your settings or "
                 f"unsubscribe at any time:\n\n{url}\n")
         if end:
             body += (f"\nYour subscription runs until {end}. Shortly before "
                      f"that we'll email you to ask whether you're still "
-                     f"looking. One click extends it, no reply ends it "
-                     f"automatically.\n")
+                     f"looking. One click extends it, without a click it "
+                     f"ends by itself.\n")
         body += "\nBürgerwecker\n"
         subj = f"Sign-up confirmed{suffix}"
     key = _idem_key(sub_id, [], f"manage-link-{sub_id}")

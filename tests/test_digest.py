@@ -371,5 +371,9 @@ def test_digest_asks_android_users_to_test():
 
 def test_digest_says_replying_does_not_book():
     slots = [Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")]
-    assert "Bürgerwecker bucht nicht – eine Antwort auf diese Mail reserviert nichts." in _render(_sub("de"), slots)
-    assert "Bürgerwecker does not book – replying to this email reserves nothing." in _render(_sub("en"), slots)
+    de = _render(_sub("de"), slots)
+    assert "Automatische Mail – Bürgerwecker ist nicht die Stadt. Eine Antwort auf diese Mail bucht oder bestätigt nichts, nutze dafür die Links in dieser Mail." in de
+    assert "Automatic email – Bürgerwecker is not the city. Replying to this email books or confirms nothing, use the links in this email instead." in _render(_sub("en"), slots)
+    # first thing after the greeting, before any slot or link
+    assert de.index("Automatische Mail") < de.index("10:30")
+    assert de.index("Automatische Mail") < de.index("/go/")

@@ -180,8 +180,10 @@ def test_manage_link_email_states_the_end_date(client):
     assert r.status_code == 200
     body = ms.call_args.args[3]
     assert ms.call_args.args[2].startswith("Anmeldung bestätigt")
-    assert "deine Anmeldung ist aktiv" in body
+    assert "Deine Anmeldung ist aktiv" in body
+    assert "Automatische Mail – Bürgerwecker ist nicht die Stadt. Eine Antwort auf diese Mail bucht oder bestätigt nichts, nutze dafür die Links in dieser Mail." in body
     assert "Verwaltungs-Link" in body          # the FAQ calls it that
+    assert "ohne Klick endet sie automatisch" in body and "ohne Antwort" not in body
     assert f"läuft bis zum {_expected_end_date(sid)}" in body
 
 

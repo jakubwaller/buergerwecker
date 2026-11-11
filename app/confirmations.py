@@ -13,16 +13,17 @@ import sqlite3
 from urllib.parse import urlsplit
 from app.mail import send_batch, pool_usage, pool_room, daily_room, Outgoing, _idem_key, _dead_addresses
 from app.repo import set_confirmation_sent, pending_confirmations
+from app.i18n import t as t_i18n
 from app.tokens import sign
 
 
 _TEXT = {
     "de": {
         "subject": "Bitte bestätige deine Anmeldung bei Bürgerwecker",
-        "signed_up_city": "du hast dich auf {host} für Terminbenachrichtigungen in {city} angemeldet.",
-        "signed_up": "du hast dich auf {host} für Terminbenachrichtigungen angemeldet.",
+        "signed_up_city": "Du hast dich auf {host} für Terminbenachrichtigungen in {city} angemeldet.",
+        "signed_up": "Du hast dich auf {host} für Terminbenachrichtigungen angemeldet.",
         "body": (
-            "Hallo,\n\n{signed_up}\n\n"
+            "Hallo,\n\n{note}\n\n{signed_up}\n\n"
             "Klick auf diesen Link, um die Anmeldung zu bestätigen:\n\n{url}\n\n"
             "Erst danach bekommst du eine Mail, sobald ein passender Termin frei "
             "wird. Falls der Link nicht anklickbar ist, kopiere ihn in die "
@@ -32,10 +33,10 @@ _TEXT = {
     },
     "en": {
         "subject": "Please confirm your Bürgerwecker sign-up",
-        "signed_up_city": "you signed up on {host} for appointment notifications in {city}.",
-        "signed_up": "you signed up on {host} for appointment notifications.",
+        "signed_up_city": "You signed up on {host} for appointment notifications in {city}.",
+        "signed_up": "You signed up on {host} for appointment notifications.",
         "body": (
-            "Hello,\n\n{signed_up}\n\n"
+            "Hello,\n\n{note}\n\n{signed_up}\n\n"
             "Click this link to confirm your sign-up:\n\n{url}\n\n"
             "Only then will you get an email as soon as a matching slot opens "
             "up. If the link is not clickable, copy it into your browser's "
@@ -62,7 +63,8 @@ def build_confirmation(sub_id: int, email: str, lang: str, city: str,
     subject = f"{t['subject']} ({city_name})" if city_name else t["subject"]
     signed_up = (t["signed_up_city"].format(host=host, city=city_name)
                  if city_name else t["signed_up"].format(host=host))
-    body = t["body"].format(signed_up=signed_up, url=url)
+    body = t["body"].format(note=t_i18n(lang, "digest.no_booking_note"),
+                         signed_up=signed_up, url=url)
     # Stable per-subscription key: a deferred send and its later retry share it,
     # so the idempotency layer never double-sends a confirmation.
     return Outgoing(to=email, subject=subject, body=body,
