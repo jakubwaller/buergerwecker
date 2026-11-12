@@ -3,6 +3,7 @@ import hashlib
 import os
 import smtplib
 import sqlite3
+import ssl
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from email.message import EmailMessage
@@ -221,7 +222,7 @@ def _send_ops_smtp(to: str, subject: str, body: str,
     with smtplib.SMTP(os.environ["OPS_SMTP_HOST"],
                       int(os.environ.get("OPS_SMTP_PORT") or 587),
                       timeout=30) as smtp:
-        smtp.starttls()
+        smtp.starttls(context=ssl.create_default_context())  # stdlib default skips cert checks
         smtp.login(user, os.environ["OPS_SMTP_PASSWORD"])
         smtp.send_message(msg)
 
