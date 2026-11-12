@@ -5,6 +5,8 @@ RUN pip install --no-cache-dir .
 COPY app/ app/
 COPY catalog/ catalog/
 ENV PYTHONUNBUFFERED=1
+# 2 sync workers; --preload builds the app once in the master and forks. Safe:
+# create_app() only calls load_config() (no DB, thread or socket at creation).
 # Application-factory form: gunicorn calls create_app() at startup, so
 # load_config() runs only when the container actually boots — not on import.
-CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:8000", "app.web:create_app()"]
+CMD ["gunicorn", "-w", "2", "--preload", "-b", "0.0.0.0:8000", "app.web:create_app()"]
