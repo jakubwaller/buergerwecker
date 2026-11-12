@@ -1,9 +1,11 @@
 from __future__ import annotations
 import hashlib
 import os
+import smtplib
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from email.message import EmailMessage
 from typing import Any
 import requests
 
@@ -198,6 +200,31 @@ def _claim(conn: sqlite3.Connection, idem_key: str) -> bool:
     )
     return cur.rowcount == 1
 
+def _ops_smtp_applies(to: str) -> bool:
+    """Mail to DEVELOPER_EMAIL goes via Proton SMTP, outside the provider pool."""
+    dev = (os.environ.get("DEVELOPER_EMAIL") or "").strip().lower()
+    return bool(dev and to.strip().lower() == dev
+                and os.environ.get("OPS_SMTP_HOST")
+                and os.environ.get("OPS_SMTP_PASSWORD"))
+
+def _send_ops_smtp(to: str, subject: str, body: str,
+                   reply_to: str | None) -> None:
+    user = os.environ.get("OPS_SMTP_USER", "")
+    msg = EmailMessage()
+    msg["From"] = user  # Proton requires From == the token's address
+    msg["To"] = to
+    msg["Subject"] = subject
+    reply_to = reply_to or os.environ.get("REPLY_TO_EMAIL")
+    if reply_to:
+        msg["Reply-To"] = reply_to
+    msg.set_content(body)
+    with smtplib.SMTP(os.environ["OPS_SMTP_HOST"],
+                      int(os.environ.get("OPS_SMTP_PORT") or 587),
+                      timeout=30) as smtp:
+        smtp.starttls()
+        smtp.login(user, os.environ["OPS_SMTP_PASSWORD"])
+        smtp.send_message(msg)
+
 def send(conn: sqlite3.Connection, to: str, subject: str, body: str,
          *, idem_key: str, unsub_url: str | None = None,
          reply_to: str | None = None) -> None:
@@ -228,12 +255,19 @@ def send(conn: sqlite3.Connection, to: str, subject: str, body: str,
         return  # already sent, or claimed by a call still in flight
     provider = None
     last_error = "no provider configured"
+    if _ops_smtp_applies(to):
+        try:
+            _send_ops_smtp(to, subject, body, reply_to)
+            provider = "proton-smtp"
+        except Exception as exc:
+            print(f"mail: proton-smtp raised {exc!r}; using provider chain",
+                  flush=True)
     try:
         # Fail over on ANY provider error: a 4xx (incl. 401/403 account
         # blocks), a 5xx/429, or the call not completing at all — a timeout or
         # connection error is the provider being down just as much as a 503,
         # and it used to escape this loop and skip the fallback chain.
-        for name, call in _single_send_chain():  # never empty: mailjet is the last resort
+        for name, call in (_single_send_chain() if provider is None else []):  # never empty: mailjet is the last resort
             try:
                 resp = call(to, subject, body, unsub_url, reply_to)
             except Exception as exc:
@@ -254,7 +288,8 @@ def send(conn: sqlite3.Connection, to: str, subject: str, body: str,
         "UPDATE sent_idempotency SET provider=? WHERE idem_key=?",
         (provider, idem_key),
     )
-    _record_send_count(conn, provider)
+    if provider != "proton-smtp":  # outside the pool, so outside its quota maths
+        _record_send_count(conn, provider)
 
 
 # --------------------------------------------------------------------------

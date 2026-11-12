@@ -447,3 +447,60 @@ def test_send_batch_takes_over_a_stale_pending_claim(db, monkeypatch):
     with patch("app.mail._call_mailjet_batch", return_value=200):
         result = send_batch(db, [Outgoing("a@example.com", "s", "b", key)], cfg)
     assert key in result.delivered
+
+
+# --- developer mail via Proton SMTP ---------------------------------------
+
+@pytest.fixture
+def ops_smtp(monkeypatch):
+    monkeypatch.setenv("DEVELOPER_EMAIL", "Dev@Example.com ")
+    monkeypatch.setenv("OPS_SMTP_HOST", "smtp.example.com")
+    monkeypatch.setenv("OPS_SMTP_USER", "ops@example.com")
+    monkeypatch.setenv("OPS_SMTP_PASSWORD", "tok")
+    smtp = MagicMock()
+    smtp.__enter__.return_value = smtp
+    factory = MagicMock(return_value=smtp)
+    monkeypatch.setattr("app.mail.smtplib.SMTP", factory)
+    return factory, smtp
+
+def _provider(db, key):
+    return db.execute("SELECT provider FROM sent_idempotency WHERE idem_key=?",
+                      (key,)).fetchone()["provider"]
+
+def test_developer_mail_goes_via_proton_smtp(db, ops_smtp):
+    factory, smtp = ops_smtp
+    with patch("app.mail._call_mailjet") as mj:
+        send(db, "dev@example.com", "Wärme", "Grüße", idem_key="d1",
+             reply_to="visitor@example.com")
+    factory.assert_called_once_with("smtp.example.com", 587, timeout=30)
+    smtp.starttls.assert_called_once()
+    smtp.login.assert_called_once_with("ops@example.com", "tok")
+    msg = smtp.send_message.call_args.args[0]
+    assert msg["From"] == "ops@example.com"
+    assert msg["Reply-To"] == "visitor@example.com"
+    assert msg["Subject"] == "Wärme"
+    mj.assert_not_called()
+    assert _provider(db, "d1") == "proton-smtp"
+    assert db.execute("SELECT COUNT(*) FROM email_send_counts").fetchone()[0] == 0
+
+def test_developer_mail_falls_back_when_smtp_fails(db, ops_smtp):
+    _factory, smtp = ops_smtp
+    smtp.login.side_effect = OSError("down")
+    with patch("app.mail._call_mailjet", return_value=_ok()) as mj:
+        send(db, "dev@example.com", "s", "b", idem_key="d2")
+    mj.assert_called_once()
+    assert _provider(db, "d2") == "mailjet"
+
+def test_other_recipients_never_touch_smtp(db, ops_smtp):
+    factory, _smtp = ops_smtp
+    with patch("app.mail._call_mailjet", return_value=_ok()):
+        send(db, "alice@example.com", "s", "b", idem_key="d3")
+    factory.assert_not_called()
+
+def test_developer_mail_without_ops_smtp_uses_chain(db, ops_smtp, monkeypatch):
+    factory, _smtp = ops_smtp
+    monkeypatch.delenv("OPS_SMTP_HOST")
+    with patch("app.mail._call_mailjet", return_value=_ok()) as mj:
+        send(db, "dev@example.com", "s", "b", idem_key="d4")
+    factory.assert_not_called()
+    mj.assert_called_once()
