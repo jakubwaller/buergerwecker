@@ -85,7 +85,7 @@ sign-up without an email address, anything that needs the installed iOS/Android 
   only on busy city pages. Its number counts mail and app subscribers of that city.
 - **Android is a closed test with two steps** (Google Group, then Play opt-in); production access is not open yet.
   iPhone has a normal App Store link.
-- **Text-only mails**, no HTML, no button, no tracking pixel.
+- **Text-only mails**, no HTML, no button. We add no tracking pixel; Brevo, one of the three mail providers, adds its own anonymous open-count image to mail it delivers (cannot be switched off, named on /datenschutz).
 - **No accounts, no login, no cookies, no third-party scripts.** Subscriptions are managed through a link in
   the mail, not through the site.
 - **Not affiliated with any city.** Every page carries the disclaimer. The footer carries Impressum, Datenschutz, the iPhone and Android app links, "Kaffee spendieren" (Ko-fi) and "Quellcode".
