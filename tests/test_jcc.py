@@ -35,6 +35,13 @@ ANSWER = {"data": [
 ], "success": True}
 
 
+@pytest.fixture(autouse=True)
+def _today():
+    # The recorded answer is from 2026-11-23; times before today raise.
+    with freeze_time("2026-11-23 08:00:00") as clock:
+        yield clock
+
+
 def _encrypt(text: str) -> str:
     """CryptoJS AES.encrypt as the bundle's encryptUsingAES256 does it."""
     padder = padding.PKCS7(128).padder()
@@ -133,7 +140,9 @@ def test_c_an_empty_list_gives_no_slots():
 
 # d. selected offices only
 def test_d_a_plan_with_selected_offices_asks_for_those_only():
-    http, portal = _session(ANSWER, token=TOKEN)
+    answer = {"success": True, "data": [
+        r for r in ANSWER["data"] if r["locationId"] in (GILDEHOF, STEELE)]}
+    http, portal = _session(answer, token=TOKEN)
     slots = jcc.poll(_plan([GILDEHOF, STEELE]), http)
     assert sorted(_query(portal.sent[0])["locationNumber"]) == ["5", "8"]
     assert {s.location_uuid for s in slots} == {GILDEHOF, STEELE}
@@ -174,6 +183,8 @@ def test_f_the_page_headers_are_sent_and_the_user_agent_is_ours():
     assert h["language"] == "de"
     assert h["connection-source-id"] == "f59ddbf9-9158-42d0-ac39-f6065c003da4"
     assert h["User-Agent"] == "Buergerwecker/1.0 (+https://buergerwecker.de)"
+    assert h["Origin"] == "https://termine.essen.de"
+    assert h["Referer"] == "https://termine.essen.de/"
     assert "Authorization" not in http.headers  # per request, not per session
 
 
@@ -214,7 +225,7 @@ def test_h_a_broken_answer_raises(answer):
 # i. horizon
 @freeze_time("2026-11-23 23:30:00")  # UTC; already 24 November in Essen
 def test_i_to_date_is_today_in_berlin_plus_the_horizon():
-    http, portal = _session(ANSWER, token=TOKEN)
+    http, portal = _session({"success": True, "data": []}, token=TOKEN)
     jcc.poll(_plan(), http)
     assert _query(portal.sent[0])["toDate"] == ["2027-1-23"]
 
@@ -250,3 +261,65 @@ def test_k_essen_tenant():
 def test_l_booking_start_url_is_the_portal_start_page():
     scfg = load_catalog("essen").scraper_config
     assert booking_start_url(scfg) == "https://termine.essen.de/"
+
+
+def test_f_the_module_sets_no_user_agent():
+    assert "user-agent" not in inspect.getsource(jcc._earliest).lower()
+
+
+# m. strict rows
+def _row(**kw):
+    return {"success": True, "data": [{"locationId": ALTENESSEN,
+                                       "firstAvailableTime": "2026-11-24T08:00:00", **kw}]}
+
+
+@pytest.mark.parametrize("answer", [
+    {"success": True, "data": [{"firstAvailableTime": "2026-11-24T08:00:00"}]},
+    {"success": True, "data": [{"locationId": ALTENESSEN}]},
+    _row(locationId="11111111-1111-4111-8111-111111111111"),
+    _row(firstAvailableTime="morgen"),
+    _row(firstAvailableTime="2026-11-22T23:00:00"),
+    _row(firstAvailableTime="0001-01-01T00:00:00"),
+])
+def test_m_an_odd_row_raises(answer):
+    http, _ = _session(answer, token=TOKEN)
+    with pytest.raises((RuntimeError, ValueError)):
+        jcc.poll(_plan(), http)
+
+
+def test_m_a_null_time_is_no_slot():
+    http, _ = _session(_row(firstAvailableTime=None), token=TOKEN)
+    assert jcc.poll(_plan(), http) == []
+
+
+# n. refusal storm
+def test_n_a_persistent_401_costs_four_requests_per_interval(_today):
+    http, portal = _session((401, ""), token="stale")
+    for _ in range(3):
+        with pytest.raises(RuntimeError):
+            jcc.poll(_plan(), http)
+    assert len(portal.sent) == 4  # 2 refused GETs + version.json + config
+    _today.tick(181)
+    with pytest.raises(RuntimeError):
+        jcc.poll(_plan(), http)
+    assert len(portal.sent) == 8
+
+
+def test_n_a_good_answer_clears_the_refusal(_today):
+    http, portal = _session((401, ""), token="stale")
+    with pytest.raises(RuntimeError):
+        jcc.poll(_plan(), http)
+    portal.routes["/firstAvailableAppointmentTime"] = [ANSWER]
+    _today.tick(181)
+    assert len(jcc.poll(_plan(), http)) == 7
+    assert jcc.poll(_plan(), http)
+
+
+# o. offsets
+def test_o_an_offset_time_is_converted_to_berlin_and_a_naive_one_is_not():
+    answer = {"success": True, "data": [
+        {"locationId": STEELE, "firstAvailableTime": "2026-11-24T22:30:00Z"},
+        {"locationId": GILDEHOF, "firstAvailableTime": "2026-11-24T22:30:00"}]}
+    http, _ = _session(answer, token=TOKEN)
+    got = {s.location_uuid: (s.date, s.time_str) for s in jcc.poll(_plan(), http)}
+    assert got == {STEELE: ("2026-11-24", "23:30"), GILDEHOF: ("2026-11-24", "22:30")}

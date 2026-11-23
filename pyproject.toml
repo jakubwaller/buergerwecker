@@ -14,6 +14,8 @@ dependencies = [
   # FCM OAuth exchange authenticate with a signed JWT (ES256 / RS256).
   "httpx[http2]>=0.27",
   "PyJWT[crypto]>=2.9",
+  # AES for the jcc scraper's public-config token (app/scrapers/jcc.py).
+  "cryptography>=42",
 ]
 
 [project.optional-dependencies]
