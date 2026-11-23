@@ -20,7 +20,7 @@ from typing import Protocol
 import requests
 from app.catalog import CatalogError, load_catalog
 from app.models import PollPlan, Slot
-from app.scrapers import konsentas, smartcjm, tevis
+from app.scrapers import jcc, konsentas, smartcjm, tevis
 
 class ScraperProtocol(Protocol):
     """Structural type used for documentation / mypy. Not enforced at runtime."""
@@ -33,6 +33,7 @@ _VENDORS: dict[str, ModuleType] = {
     "smartcjm": smartcjm,
     "tevis": tevis,
     "konsentas": konsentas,
+    "jcc": jcc,
 }
 
 def get_scraper(city: str) -> ModuleType:

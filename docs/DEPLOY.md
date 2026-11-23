@@ -742,7 +742,7 @@ are missing or wrong on the VPS: check `docker compose logs poller | grep
   Read from `slot_snapshots`, one row per (city, service) that the poller
   rewrites after every cycle in which all of the service's plans succeeded
   (`app/snapshots.py`), so the overview adds no upstream request: the
-  poll's own requests per poll plan per cycle (one GET on TEVIS,
+  poll's own requests per poll plan per cycle (one GET on TEVIS and on jcc,
   three on a `read_times` tenant, a service watched by two plans read twice, see `app/scrapers/tevis.py`) stay what the
   cities see. A service
   nobody watches has no entry; a failed poll keeps the previous row with its
@@ -951,7 +951,7 @@ last-polled timestamp untouched.
 ## Notification granularity
 
 What counts as one piece of news is decided per tenant by `notify_granularity`,
-which **defaults by vendor** — `day` for TEVIS, `slot` for everything else — and
+which **defaults by vendor** — `day` for TEVIS and jcc, `slot` for everything else — and
 can be overridden per tenant in `scraper_config.json`:
 
 - `slot` — a distinct (day, time, office, service). Right for a vendor that

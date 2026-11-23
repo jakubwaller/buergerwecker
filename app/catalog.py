@@ -20,10 +20,11 @@ def _default_granularity(scfg: dict) -> str:
 
     TEVIS is "day" because earliest-slot-only is how *our* scraper reads it
     (tevis.parse_slots: one earliest Slot per office), so every TEVIS tenant
-    has the same shape and the same redundancy. Everything else lists real
-    inventory and keeps per-slot identity.
+    has the same shape and the same redundancy; jcc reads the same way
+    (jcc.parse_slots). Everything else lists real inventory and keeps
+    per-slot identity.
     """
-    return "day" if scfg.get("vendor") == "tevis" else "slot"
+    return "day" if scfg.get("vendor") in ("tevis", "jcc") else "slot"
 
 
 class CatalogError(Exception):
@@ -316,6 +317,8 @@ def booking_start_url(scfg: dict, lang: str = "de") -> str:
         return f"{scfg['base_url']}/select2?md={scfg['md']}"
     if vendor == "konsentas":
         return f"{scfg['base_url']}/form/{scfg['form_id']}/?signup_new=1"
+    if vendor == "jcc":
+        return f"{scfg['base_url']}/"
     raise CatalogError(f"no booking-start URL for vendor: {vendor}")
 
 

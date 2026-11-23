@@ -9,7 +9,7 @@ walk re-reports the same intentional behaviour every time.
 - Live: https://buergerwecker.de (production, real subscribers, real city portals behind it).
 - Languages: German by default, `?lang=en` on any page for English. No redirect by browser locale.
 - What it is: it watches German city appointment portals (Bürgeramt, Kfz, Führerschein, Ausländerbehörde,
-  Standesamt and more, 30 cities) and tells a subscriber by email, or by push in the iPhone/Android app,
+  Standesamt and more, 31 cities) and tells a subscriber by email, or by push in the iPhone/Android app,
   when a matching slot opens. The subscriber books on the city's own page. No account, no login, no cookies.
 - Pages: city picker `/`; one sign-up page per city or office at `/<slug>` (for example `/muenster-kfz`,
   `/leipzig`, `/leipzig-abh`, `/dresden`, `/bonn`); `/datenschutz`, `/impressum`, `/kontakt`. The FAQ sits at the
@@ -79,7 +79,7 @@ sign-up without an email address, anything that needs the installed iOS/Android 
   Führerschein: Bochum, Stuttgart; Ausländerbehörde: Leipzig). Some Bürgeramt dropdowns also list single Kfz or
   Führerschein services, which is not a bug.
 - **TEVIS cities (Dresden, Braunschweig, Münster and others) report the earliest slot per office, except Münster
-  Kfz, which reports the free times of its suggestion list, on every day it lists (PR #172 kept only the earliest day); Leipzig lists all slots.** This shows in the
+  Kfz, which reports the free times of its suggestion list, on every day it lists (PR #172 kept only the earliest day); Essen (jcc) also reports the earliest slot per office; Leipzig lists all slots.** This shows in the
   mails, not on the web pages, and a later slot on an already-reported day stays quiet (Münster Kfz tells each listed day on its own). Not visible on a web walk.
 - **A queue notice** ("Für X warten gerade N Personen auf einen Termin. Rechne also mit Wartezeit.") appears
   only on busy city pages. Its number counts mail and app subscribers of that city.
@@ -109,7 +109,7 @@ The site is production. The walk must never create anything or put load on a cit
   even if one is shown or guessable.
 - **No `/admin`**, no `/webhooks/…`, no `/api/v1` calls (the app's backend; writes are real).
 - **No load testing and no rapid reloads.** Out of courtesy to a small production server, keep to a page every few
-  seconds and do not crawl all 30 cities. (The per-IP rate limiter only covers sign-up and contact POSTs, which you never send.)
+  seconds and do not crawl all 31 cities. (The per-IP rate limiter only covers sign-up and contact POSTs, which you never send.)
 - **City portals:** `/go/<slug>` redirects to the city's booking page. Open one at most per city and go no further than
   its first page; select nothing, submit nothing, book nothing. Prefer not to open it at all and note the target.
 - **Store pages:** open the App Store link, not the install. The Google Group and Play opt-in links: read the
