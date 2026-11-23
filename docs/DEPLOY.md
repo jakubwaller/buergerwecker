@@ -973,8 +973,10 @@ can be overridden per tenant in `scraper_config.json`:
   as a later day is not told again when it becomes the earliest unless a
   strictly earlier time appears, and the per-slot cap counts each day key once.
   The cadence counts matched keys, so three listed days land on the x2 rung.
-  The admin page marks the availability series break (the day `read_times`
-  went live) through `availability_break` in that tenant's `scraper_config.json`.
+  The admin page marks the availability series break (the day the tenant's
+  counting last changed: 2026-11-10, `read_times` live, PR #172, the earliest
+  day's times; 2026-11-23, every listed day) through `availability_break` in
+  that tenant's `scraper_config.json`.
 
 History, for anyone tempted to narrow this again: the first version of `day`
 was a plain date key that suppressed cancellations along with bookings, so it
@@ -984,8 +986,9 @@ vendor ever needs checking, `SELECT city, MAX(n_slots) FROM availability_samples
 WHERE location_uuid <> '' GROUP BY city` reads exactly 1 for earliest-slot-only
 tenants and hundreds or thousands for real inventory. A `read_times` tenant
 reads up to the length of its suggestion list (a handful): its availability
-series counts the whole suggestion list (from 2026-11-23; before, the earliest
-day's times only), so it is not comparable with the samples before.
+series counts the whole suggestion list (from 2026-11-23; the earliest day's
+times only from 2026-11-10; one slot per office before), so it is not
+comparable with the samples before.
 
 Rows written under `day` before `seen_slots.best_time` existed (schema 11)
 carry no time and keep suppressing the whole day, as they always did, until
