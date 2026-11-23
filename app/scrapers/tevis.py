@@ -16,14 +16,14 @@ on 2026-11-10 that reading the free times holds nothing, only selecting one
 does) goes one wizard step further for each office the plan watches that has a
 free slot: it selects the office as a browser does (POST /location, answered
 with a redirect) and reads the suggestion list (GET /suggest), so the poll
-yields every free time the list shows on that office's earliest free day and
-the time window can match any of them. That is 1 + 2 × offices requests per
+yields every free time the list shows, on every day it lists, and the time
+window can match any of them. That is 1 + 2 × offices requests per
 poll plan instead of 1 (3 for muenster-kfz's one office; a service watched by
 two plans is read twice). It stops at
 the list: a time is chosen by POSTing one of the list's own forms, which
 nothing here does. If the step fails or parses to nothing, the office falls
-back to its earliest slot. Only the earliest day is kept, so seen_slots stays
-one day key per office as before (see Catalog.seen_key).
+back to its earliest slot. PR #172 kept only the earliest listed day; every listed day is kept now,
+each its own day key per office (see Catalog.seen_key).
 
 The office list renders only for a session that has visited the Anliegen page
 (`/select2?md=…`) first; a cookie-less request gets a generic help page. The
@@ -125,14 +125,14 @@ def _fetch_location_page(http: requests.Session, base: str, scfg: dict,
 
 def parse_times(html: str, earliest: Slot) -> list[Slot]:
     """Parse the TEVIS suggestion list (/suggest) into one Slot per free time
-    on its first day, for `earliest`'s office and service.
+    on every day it lists, sorted by (date, time), for `earliest`'s office and
+    service.
 
     A free time is a <form class="suggestion_form"> with a hidden `date`
     (YYYYMMDD) and the time as its button text; a taken time is a disabled
     button outside any form, so it never matches. The list is capped by TEVIS
-    and can run into later days; only the first is kept, since a later day
-    would be a new day key and a mail the earliest-slot reading never sent.
-    That day must not be later than `earliest.date`: a list starting later
+    and can run into later days; all listed days are kept, each its own day
+    key (PR #172 kept only the first). The first day must not be later than `earliest.date`: a list starting later
     than the office page's earliest slot does not show the earliest day, so
     [] (the caller falls back to `earliest`); an earlier first day is kept (a
     cancellation appeared between the two requests).
@@ -160,12 +160,11 @@ def parse_times(html: str, earliest: Slot) -> list[Slot]:
             found.add((f"{d[1]}-{d[2]}-{d[3]}", f"{int(t[1]):02d}:{t[2]}"))
     if not found:
         return []
-    day = min(found)[0]
-    if day > earliest.date:
+    if min(found)[0] > earliest.date:
         return []
     loc = earliest.location_uuid
     return [replace(earliest, date=d, time_str=t, booking_token=f"{d}T{t}@{loc}")
-            for d, t in sorted(found) if d == day]
+            for d, t in sorted(found)]
 
 
 def _office_form_data(html: str, loc: str) -> dict[str, str]:
@@ -182,7 +181,8 @@ def _office_form_data(html: str, loc: str) -> dict[str, str]:
 
 def _read_times(http: requests.Session, base: str, scfg: dict, plan: PollPlan,
                 html: str, earliest: Slot) -> list[Slot]:
-    """The free times on `earliest`'s day at its office, or [earliest] when
+    """The free times the suggestion list shows for `earliest`'s office (every
+    listed day), or [earliest] when
     they cannot be read: the extra step must never make a tenant go blind.
     Two requests, both before any time is chosen (see the module docstring)."""
     try:
@@ -195,7 +195,7 @@ def _read_times(http: requests.Session, base: str, scfg: dict, plan: PollPlan,
         times = parse_times(r.text, earliest)
         if times:
             return times
-        reason = "no free time for the earliest day"
+        reason = "no free time in the suggestion list"
     except Exception as exc:
         reason = repr(exc)
     print(f"tevis {plan.city}/{plan.appointment_type}: times list not read "
@@ -212,7 +212,7 @@ def _has_office_list(html: str) -> bool:
 
 def poll(plan: PollPlan, http: requests.Session) -> list[Slot]:
     """Fetch the earliest free slot per office for the plan's appointment type
-    (with `read_times`, the free times of that slot's day)."""
+    (with `read_times`, every free time of the office's suggestion list)."""
     catalog = load_catalog(plan.city)
     scfg = catalog.scraper_config
     if scfg.get("vendor") != "tevis":

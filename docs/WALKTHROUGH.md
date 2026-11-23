@@ -79,8 +79,8 @@ sign-up without an email address, anything that needs the installed iOS/Android 
   Führerschein: Bochum, Stuttgart; Ausländerbehörde: Leipzig). Some Bürgeramt dropdowns also list single Kfz or
   Führerschein services, which is not a bug.
 - **TEVIS cities (Dresden, Braunschweig, Münster and others) report the earliest slot per office, except Münster
-  Kfz, which reports all free times on the earliest day (PR #172); Leipzig lists all slots.** This shows in the
-  mails, not on the web pages, and a later slot on an already-reported day stays quiet. Not visible on a web walk.
+  Kfz, which reports the free times of its suggestion list, on every day it lists (PR #172 kept only the earliest day); Leipzig lists all slots.** This shows in the
+  mails, not on the web pages, and a later slot on an already-reported day stays quiet (Münster Kfz tells each listed day on its own). Not visible on a web walk.
 - **A queue notice** ("Für X warten gerade N Personen auf einen Termin. Rechne also mit Wartezeit.") appears
   only on busy city pages. Its number counts mail and app subscribers of that city.
 - **Android is a closed test with two steps** (Google Group, then Play opt-in); production access is not open yet.

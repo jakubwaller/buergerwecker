@@ -966,12 +966,17 @@ can be overridden per tenant in `scraper_config.json`:
   somebody books is the same inventory a minute later, while the earliest slot
   only ever moves *back* when somebody cancels — exactly the news worth sending.
   A `read_times` tenant (`muenster-kfz`, see `app/scrapers/tevis.py`) reports
-  every free time its suggestion list shows on that earliest day, still one
-  office's earliest day only, so it stays `day`: one key per day as before, and
-  the extra times only let a subscriber's time window match a later one. The
-  cadence counts matched keys, not slots, so they do not slow it down either.
-  The admin page marks the availability series break (the day `read_times`
-  went live) through `availability_break` in that tenant's `scraper_config.json`.
+  every free time its suggestion list shows, on every day it lists (PR #172
+  kept only the earliest listed day; the list is capped, a handful of times).
+  It stays `day`: each listed day is its own key whose `best_time` is its
+  earliest listed time, so one digest can carry several days, a day first told
+  as a later day is not told again when it becomes the earliest unless a
+  strictly earlier time appears, and the per-slot cap counts each day key once.
+  The cadence counts matched keys, so three listed days land on the x2 rung.
+  The admin page marks the availability series break (the day the tenant's
+  counting last changed: 2026-11-10, `read_times` live, PR #172, the earliest
+  day's times; 2026-11-23, every listed day) through `availability_break` in
+  that tenant's `scraper_config.json`.
 
 History, for anyone tempted to narrow this again: the first version of `day`
 was a plain date key that suppressed cancellations along with bookings, so it
@@ -981,8 +986,9 @@ vendor ever needs checking, `SELECT city, MAX(n_slots) FROM availability_samples
 WHERE location_uuid <> '' GROUP BY city` reads exactly 1 for earliest-slot-only
 tenants and hundreds or thousands for real inventory. A `read_times` tenant
 reads up to the length of its suggestion list (a handful): its availability
-series counts free times on the earliest day from the deploy that enabled it,
-so it is not comparable with the samples before.
+series counts the whole suggestion list (from 2026-11-23; the earliest day's
+times only from 2026-11-10; one slot per office before), so it is not
+comparable with the samples before.
 
 Rows written under `day` before `seen_slots.best_time` existed (schema 11)
 carry no time and keep suppressing the whole day, as they always did, until
@@ -1054,8 +1060,8 @@ code wrote cover everything inside the new horizon.
 
 `earliest_slot_changes` is purely observational data (no personal data) for
 the `day` tenants, which expose only the earliest free slot per office and
-service (a `read_times` tenant also shows the other free times of that day;
-only the earliest is logged). `record_snapshots` appends a row whenever that earliest slot of an
+service (a `read_times` tenant also shows the other listed free times, maybe on
+later days; only the earliest is logged). `record_snapshots` appends a row whenever that earliest slot of an
 office changes (a baseline row on the first poll; `slot_date`/`slot_time` NULL
 = nothing free any more). Tenants that list real inventory write nothing; their
 counts are in `availability_samples`. Rows are pruned after 90 days.

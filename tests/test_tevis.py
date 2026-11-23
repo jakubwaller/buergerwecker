@@ -184,22 +184,23 @@ def _kfz(service="2407"):
     return PollPlan(city="muenster-kfz", appointment_type=service, locations="all")
 
 
-def test_parse_times_keeps_the_free_times_of_the_first_day_only():
-    """Taken times are disabled buttons, not forms. 02.12 07:50 is free but on
-    a later day: a new day key, i.e. a mail the earliest-slot reading never
-    sent, so it is dropped."""
+def test_parse_times_keeps_every_free_time_on_every_listed_day():
+    """Taken times are disabled buttons, not forms. 02.12 07:50 is free on a
+    later listed day: kept, as its own day key downstream."""
     slots = tevis.parse_times(SUGGEST, _earliest())
     assert [(s.date, s.time_str) for s in slots] == [("2026-12-01", "08:10"),
-                                                     ("2026-12-01", "09:30")]
+                                                     ("2026-12-01", "09:30"),
+                                                     ("2026-12-02", "07:50")]
     assert {(s.location_uuid, s.service_uuid) for s in slots} == {("243", "2407")}
-    assert slots[1].booking_token == "2026-12-01T09:30@243"
+    assert slots[2].booking_token == "2026-12-02T07:50@243"
 
 
 def test_parse_times_needs_the_list_to_start_on_the_earliest_day_or_before():
     later = Slot("2026-11-30", "08:10", "243", "2407", "t")  # list starts 12-01
     assert tevis.parse_times(SUGGEST, later) == []
     earlier = Slot("2026-12-05", "08:10", "243", "2407", "t")  # cancellation
-    assert {s.date for s in tevis.parse_times(SUGGEST, earlier)} == {"2026-12-01"}
+    assert {s.date for s in tevis.parse_times(SUGGEST, earlier)} == {"2026-12-01",
+                                                                     "2026-12-02"}
 
 
 @pytest.mark.parametrize("earliest", [_earliest(service="2408"),
@@ -218,7 +219,7 @@ def test_only_muenster_kfz_reads_times():
 def test_read_times_selects_the_office_reads_the_list_and_never_a_time():
     http = _http(["anliegen", MUENSTER_LOCATION, SUGGEST])
     slots = tevis.poll(_kfz(), http=http)
-    assert [s.time_str for s in slots] == ["08:10", "09:30"]
+    assert [s.time_str for s in slots] == ["08:10", "09:30", "07:50"]
     # The one POST is the office's "Weiter", to /location, nothing of a time.
     (args, kw), = [c[:2] for c in http.post.call_args_list]
     assert args[0].endswith("/location")

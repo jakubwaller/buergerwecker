@@ -208,6 +208,14 @@ def test_several_times_per_office_log_only_the_earliest(db, day):
                                              ("a", "2026-06-10", "11:00", 0)]
 
 
+def test_a_later_day_slot_coming_or_going_is_no_change_of_the_earliest(db, day):
+    d2 = dict(d="2026-06-11")
+    _poll(db, [_slot(loc="a"), _slot(loc="a", **d2)])
+    _poll(db, [_slot(loc="a")], n=1)
+    _poll(db, [_slot(loc="a"), _slot(loc="a", t="08:00", **d2)], n=2)
+    assert [r[1:] for r in _changes(db)] == [("a", "2026-06-10", "10:30", 1)]
+
+
 def test_a_missing_snapshot_writes_a_new_baseline_row(db, day):
     _poll(db, [_slot(loc="a")])
     db.execute("DELETE FROM slot_snapshots")      # pruned after a gap

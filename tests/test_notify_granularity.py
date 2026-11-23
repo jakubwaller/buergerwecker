@@ -454,3 +454,44 @@ def test_reading_the_days_times_sends_what_the_earliest_slot_alone_sent(db, read
     assert told.count("late@example.com") == (2 if read_times else 0)
     assert db.execute("SELECT last_match_count FROM subscriptions WHERE id=?",
                       (all_day,)).fetchone()[0] == 1
+
+
+def test_later_listed_days_are_their_own_day_keys(db, monkeypatch):
+    """read_times lists times on several days. Each day is a key whose
+    best_time is its earliest time; a day first told as a later day is not told
+    again when it becomes the earliest, unless a strictly earlier time shows."""
+    monkeypatch.setenv("MAX_DIGESTS_PER_SUBSCRIBER_PER_DAY", "0")
+    D1, D2 = "2026-06-10", "2026-06-11"  # Wednesday, Thursday
+    def sub(email, start, end, weekdays):
+        f = Filter(appointment_types=["2408"], locations="all", weekdays=weekdays,
+                   time_window_start=start, time_window_end=end)
+        sid = insert_pending(db, email=email, city="muenster-kfz",
+                             language="de", filter_=f, ttl_days=90)
+        confirm(db, sid)
+        return sid
+    every = [1, 2, 3, 4, 5, 6, 7]
+    all_ = sub("all@example.com", time(0, 0), time(23, 59), every)
+    sub("late@example.com", time(10, 0), time(12, 0), every)
+    sub("thu@example.com", time(0, 0), time(23, 59), [4])
+
+    def poll(n, listing):
+        sent = []
+        _make_due_again(db)
+        _run(db, [Slot(d, t, "243", "2408", f"{d}T{t}@243") for d, t in listing],
+             cycle_id=f"c{n}", sent=sent)
+        return {it.to: it for it in sent}
+
+    p1 = poll(1, [(D1, "09:00"), (D2, "08:00"), (D2, "10:40")])
+    assert set(p1) == {"all@example.com", "late@example.com", "thu@example.com"}
+    body = lambda it: repr(it.__dict__)
+    assert "09:00" in body(p1["all@example.com"]) and "08:00" in body(p1["all@example.com"])
+    assert "10:40" in body(p1["late@example.com"])
+    assert "09:00" not in body(p1["late@example.com"]) and "08:00" not in body(p1["late@example.com"])
+    assert "09:00" not in body(p1["thu@example.com"]) and "08:00" in body(p1["thu@example.com"])
+    assert db.execute("SELECT last_match_count FROM subscriptions WHERE id=?",
+                      (all_,)).fetchone()[0] == 2
+
+    assert poll(2, [(D1, "09:00"), (D2, "08:00"), (D2, "10:40")]) == {}
+    assert poll(3, [(D2, "08:00"), (D2, "10:40"), (D2, "11:00")]) == {}
+    assert set(poll(4, [(D2, "07:30"), (D2, "08:00"), (D2, "10:40")])) == {
+        "all@example.com", "thu@example.com"}
