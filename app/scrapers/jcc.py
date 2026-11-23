@@ -124,11 +124,12 @@ def _earliest(http: requests.Session, scfg: dict, service: str,
 
 def parse_slots(data: list, *, service_id: str, locations) -> list[Slot]:
     """One Slot per office with a first available time. A row whose
-    firstAvailableTime is null has nothing free. Anything else odd raises
-    instead of reading as "nothing free": a row without a locationId or
-    firstAvailableTime key, an office not asked for, an unparseable time, a
-    date before today (the .NET empty date 0001-01-01). An offset-aware time
-    is converted to Europe/Berlin, a naive one is taken as Berlin local."""
+    firstAvailableTime is null has nothing free, and a row for an office not
+    asked for is skipped (the API may answer more than the filter). Anything
+    else odd raises instead of reading as "nothing free": a row without a
+    locationId or firstAvailableTime key, an unparseable time, a date before
+    today (the .NET empty date 0001-01-01). An offset-aware time is converted
+    to Europe/Berlin, a naive one is taken as Berlin local."""
     slots: list[Slot] = []
     today = datetime.now(_TZ).date()
     for row in data:
@@ -136,7 +137,7 @@ def parse_slots(data: list, *, service_id: str, locations) -> list[Slot]:
             raise RuntimeError(f"jcc: row without locationId/time {str(row)[:200]}")
         loc, first = row["locationId"], row["firstAvailableTime"]
         if loc not in locations:
-            raise RuntimeError(f"jcc: office {loc} was not asked for")
+            continue
         if first is None:
             continue
         at = datetime.fromisoformat(first)  # malformed raises, never []

@@ -140,9 +140,7 @@ def test_c_an_empty_list_gives_no_slots():
 
 # d. selected offices only
 def test_d_a_plan_with_selected_offices_asks_for_those_only():
-    answer = {"success": True, "data": [
-        r for r in ANSWER["data"] if r["locationId"] in (GILDEHOF, STEELE)]}
-    http, portal = _session(answer, token=TOKEN)
+    http, portal = _session(ANSWER, token=TOKEN)
     slots = jcc.poll(_plan([GILDEHOF, STEELE]), http)
     assert sorted(_query(portal.sent[0])["locationNumber"]) == ["5", "8"]
     assert {s.location_uuid for s in slots} == {GILDEHOF, STEELE}
@@ -276,7 +274,6 @@ def _row(**kw):
 @pytest.mark.parametrize("answer", [
     {"success": True, "data": [{"firstAvailableTime": "2026-11-24T08:00:00"}]},
     {"success": True, "data": [{"locationId": ALTENESSEN}]},
-    _row(locationId="11111111-1111-4111-8111-111111111111"),
     _row(firstAvailableTime="morgen"),
     _row(firstAvailableTime="2026-11-22T23:00:00"),
     _row(firstAvailableTime="0001-01-01T00:00:00"),
@@ -285,6 +282,13 @@ def test_m_an_odd_row_raises(answer):
     http, _ = _session(answer, token=TOKEN)
     with pytest.raises((RuntimeError, ValueError)):
         jcc.poll(_plan(), http)
+
+
+def test_m_an_unasked_office_is_skipped_before_its_time_is_parsed():
+    answer = _row(locationId="11111111-1111-4111-8111-111111111111",
+                  firstAvailableTime="morgen")
+    http, _ = _session(answer, token=TOKEN)
+    assert jcc.poll(_plan(), http) == []
 
 
 def test_m_a_null_time_is_no_slot():
