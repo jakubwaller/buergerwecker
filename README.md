@@ -4,8 +4,8 @@ Free email notifications for free Amt appointments in German cities.
 
 **Live: [buergerwecker.de](https://buergerwecker.de)**
 
-**Covered cities (30):** Augsburg, Bochum, Bonn, Bottrop, Braunschweig,
-Darmstadt, Dresden, Düsseldorf, Hagen, Ingolstadt, Kaiserslautern, Kassel,
+**Covered cities (31):** Augsburg, Bochum, Bonn, Bottrop, Braunschweig,
+Darmstadt, Dresden, Düsseldorf, Essen, Hagen, Ingolstadt, Kaiserslautern, Kassel,
 Kiel, Leipzig, Ludwigshafen, Lübeck, Mainz, Moers, Mönchengladbach,
 Münster, Neuss, Nürnberg, Oberhausen, Oldenburg, Paderborn, Remscheid,
 Saarbrücken, Salzgitter, Stuttgart, Trier.

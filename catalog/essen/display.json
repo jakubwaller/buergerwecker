@@ -1,0 +1,22 @@
+{
+  "city_name": {
+    "de": "Essen",
+    "en": "Essen"
+  },
+  "office": {
+    "de": "Bürgeramt",
+    "en": "Citizens' office"
+  },
+  "label": {
+    "de": "Essen: Bürgeramt-Termine",
+    "en": "Essen: citizens' office appointments"
+  },
+  "heading": {
+    "de": "Nie wieder freie Bürgeramt-Termine in Essen verpassen",
+    "en": "Never miss a free appointment at Essen's citizens' offices"
+  },
+  "note": {
+    "de": "Hinweis: Dieser Dienst meldet je Standort den jeweils frühesten freien Termin (so zeigt es auch die Terminseite der Stadt an). Gebucht wird weiterhin selbst auf der offiziellen Terminseite der Stadt Essen.",
+    "en": "Note: this service reports the earliest free slot per office (matching what the city's appointment page shows). You still book yourself on the City of Essen's official appointment page."
+  }
+}

@@ -107,9 +107,9 @@ def test_the_two_key_spaces_cannot_alias():
 # --- reading the tenant declaration ---------------------------------------
 
 def test_the_default_follows_the_vendor():
-    """TEVIS is earliest-slot-only by construction of our scraper, so every
-    TEVIS tenant is `day` without saying so; real-inventory vendors are
-    `slot`."""
+    """TEVIS and jcc are earliest-slot-only by construction of our scrapers,
+    so every such tenant is `day` without saying so; real-inventory vendors
+    are `slot`."""
     assert load_catalog("muenster-kfz").notify_granularity == "day"
     assert load_catalog("mainz").notify_granularity == "day"
     assert load_catalog("leipzig").notify_granularity == "slot"     # smartcjm
@@ -118,7 +118,8 @@ def test_the_default_follows_the_vendor():
                  if (d / "scraper_config.json").exists()):
         cat = load_catalog(city)
         vendor = cat.scraper_config.get("vendor")
-        assert cat.notify_granularity == ("day" if vendor == "tevis" else "slot"), city
+        assert cat.notify_granularity == (
+            "day" if vendor in ("tevis", "jcc") else "slot"), city
 
 
 def test_an_explicit_key_overrides_the_vendor_default(tmp_path, monkeypatch):
@@ -495,3 +496,26 @@ def test_later_listed_days_are_their_own_day_keys(db, monkeypatch):
     assert poll(3, [(D2, "08:00"), (D2, "10:40"), (D2, "11:00")]) == {}
     assert set(poll(4, [(D2, "07:30"), (D2, "08:00"), (D2, "10:40")])) == {
         "all@example.com", "thu@example.com"}
+
+
+def test_jcc_tenant_tells_an_office_earliest_slot_once_until_it_moves_back(db):
+    """Essen (jcc) reports one earliest slot per office, like TEVIS: the next
+    slot surfacing the same day after a booking is not news, a cancellation
+    opening an earlier one is."""
+    service, office = ("b3360d40-76af-4e46-9628-188e216edbbb",
+                       "79ea260d-2b42-4465-9a81-57c7d045bb51")
+    sid = insert_pending(db, email="a@example.com", city="essen",
+                         language="de", filter_=_f([service]), ttl_days=90)
+    confirm(db, sid)
+    sent = []
+
+    def cycle(n, t):
+        _make_due_again(db)
+        _run(db, [Slot("2026-12-01", t, office, service,
+                       f"2026-12-01T{t}@{office}")], cycle_id=f"c{n}", sent=sent)
+        return len(sent)
+
+    assert cycle(1, "10:45") == 1
+    assert cycle(2, "11:05") == 1, "the next slot the same day is not news"
+    assert cycle(3, "09:30") == 2, "an earlier slot that day is"
+    assert "09:30" in sent[-1].body
