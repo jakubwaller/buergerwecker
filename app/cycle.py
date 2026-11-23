@@ -439,8 +439,7 @@ def run_cycle(conn: sqlite3.Connection, *, max_plans_per_city: int,
             # Catalog.seen_key and models.SeenKey.
             key = seen_key(slot)
             # The abundance is counted in keys: a read_times tenant's free
-            # times on one day are one day key, as its single earliest slot
-            # was, so they must not stretch the cadence. Elsewhere one slot
+            # times on one day are one day key; each listed day counts as one. Elsewhere one slot
             # is one key and this equals matched_total.
             matched_keys.add(key.key)
             if not has_seen_slot(conn, sub.id, key.key, at=key.best_time):

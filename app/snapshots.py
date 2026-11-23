@@ -106,8 +106,8 @@ def _log_earliest_changes(conn: sqlite3.Connection, fulls: dict, now_ts: str) ->
     """Append a row to earliest_slot_changes for every office whose earliest
     slot differs from the previous snapshot (all offices once, when there is
     none). Only for 'day' tenants, which expose just the earliest slot per
-    office (read_times: a handful of times on its day), so the capped stored
-    list still holds each office's earliest.
+    office (read_times: a handful of times, maybe on several days), so the capped
+    stored list still holds each office's earliest.
     Runs before the upsert replaces the old list. Never raises."""
     from app.catalog import load_catalog
     granularity: dict[str, bool] = {}
