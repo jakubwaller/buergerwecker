@@ -304,7 +304,7 @@ def test_form_warns_of_a_held_confirmation_only_when_held(client, lang, text):
         body = client.get(f"/leipzig?lang={lang}").data.decode()
     notice = body[body.index(text):body.index('<button type="submit"')]
     assert "https://apps.apple.com/app/id6819977614" in notice
-    assert "https://groups.google.com/g/buergerwecker-beta" in notice
+    assert "https://play.google.com/store/apps/details?id=de.buergerwecker.app" in notice
     # the notice sits above the submit button
     assert body.index(text) < body.index('<button type="submit"')
 
@@ -326,8 +326,7 @@ def test_queued_banner_points_to_the_app(client, lang, tip):
     banner = body[body.index(tip):]
     banner = banner[:banner.index("</div>")]   # the footer has an App Store link too
     assert "https://apps.apple.com/app/id6819977614" in banner
-    assert "https://groups.google.com/g/buergerwecker-beta" in banner
-    assert "https://play.google.com/apps/testing/de.buergerwecker.app" in banner
+    assert "https://play.google.com/store/apps/details?id=de.buergerwecker.app" in banner
 
 
 def test_form_warns_when_the_providers_are_full_though_the_reserve_is_unused(client):
@@ -354,7 +353,7 @@ def test_pages_nudge_to_the_app_only_under_mail_pressure(client, lang, text, pat
     notice = notice[:notice.index("</div>")]
     assert "1 email alert a day" in notice or "1 Benachrichtigung am Tag" in notice
     assert "https://apps.apple.com/app/id6819977614" in notice
-    assert "https://groups.google.com/g/buergerwecker-beta" in notice
+    assert "https://play.google.com/store/apps/details?id=de.buergerwecker.app" in notice
 
 
 def test_main_page_notice_sits_above_the_city_grid(client):
@@ -502,7 +501,7 @@ def test_website_only_pages_do_not_offer_the_app(client, monkeypatch, lang):
     q = f"?confirmed=queued&lang={lang}"
     for slug in ("leipzig-abh", "muenster-einbuergerung", "muenster-gesundheitsamt"):
         body = _notices(client.get(f"/{slug}{q}").data.decode())
-        assert "apps.apple.com" not in body and "buergerwecker-beta" not in body
+        assert "apps.apple.com" not in body and "play.google.com" not in body
         for phrase in ("Mit der App", "With the app", "Tipp: In der", "Tip: in the"):
             assert phrase not in body
         # the rest of both notices stays

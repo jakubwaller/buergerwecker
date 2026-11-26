@@ -353,17 +353,14 @@ def test_digest_app_hint_only_where_the_app_offers_the_service():
                                catalog=replace(_cat(), sensitive_services=frozenset({"svc-A"})))
 
 
-def test_digest_asks_android_users_to_test():
+def test_digest_links_android_users_to_play():
     slots = [Slot("2026-06-10", "10:30", "loc-1", "svc-A", "t")]
     from dataclasses import replace
-    url = "https://play.google.com/apps/testing/de.buergerwecker.app"
+    url = "https://play.google.com/store/apps/details?id=de.buergerwecker.app"
     for lang in ("de", "en"):
         assert url in _render(_sub(lang), slots, catalog=_cat())
-    assert "Auch dort kommen Benachrichtigungen in der App weiter" in _render(
-        _sub("de"), slots, catalog=_cat())
-    assert "notifications keep coming in the app even when we run short" in _render(
-        _sub("en"), slots, catalog=_cat())
-    assert "/kontakt?projekt=buergerwecker&lang=en" in _render(_sub("en"), slots, catalog=_cat())
+    assert "Bürgerwecker für Android" in _render(_sub("de"), slots, catalog=_cat())
+    assert "Bürgerwecker for Android" in _render(_sub("en"), slots, catalog=_cat())
     assert url not in _render(_sub("de"), slots, catalog=replace(_cat(), website_only=True))
     assert url not in _render(_sub("de"), slots,
                               catalog=replace(_cat(), sensitive_services=frozenset({"svc-A"})))
