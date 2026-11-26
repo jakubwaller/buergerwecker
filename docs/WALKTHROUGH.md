@@ -83,8 +83,7 @@ sign-up without an email address, anything that needs the installed iOS/Android 
   mails, not on the web pages, and a later slot on an already-reported day stays quiet (Münster Kfz tells each listed day on its own). Not visible on a web walk.
 - **A queue notice** ("Für X warten gerade N Personen auf einen Termin. Rechne also mit Wartezeit.") appears
   only on busy city pages. Its number counts mail and app subscribers of that city.
-- **Android is a closed test with two steps** (Google Group, then Play opt-in); production access is not open yet.
-  iPhone has a normal App Store link.
+- **Android and iPhone have normal store links** (Google Play since 2026-11-26, App Store since 2026-10-25).
 - **Text-only mails**, no HTML, no button. We add no tracking pixel; Brevo, one of the three mail providers, adds its own anonymous open-count image to mail it delivers (cannot be switched off, named on /datenschutz).
 - **No accounts, no login, no cookies, no third-party scripts.** Subscriptions are managed through a link in
   the mail, not through the site.
